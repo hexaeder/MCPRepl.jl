@@ -21,7 +21,8 @@ function execute_repllike(str)
     backend = repl.backendref
 
     REPL.prepare_next(repl)
-    printstyled("\nagent> $str\n", color=:red, bold=:true)
+    printstyled("\nagent> ", color=:red, bold=:true)
+    print(str, "\n")
 
     # Capture stdout/stderr during execution
     captured_output = Pipe()
@@ -62,6 +63,12 @@ function start!()
         "exec_repl",
         """
         Execute Julia code in a shared, persistent REPL session to avoid startup latency.
+
+        You may use this REPL to
+        - execute julia code
+        - execute test sets
+        - get julia function documentation (i.e. send @doc functionname)
+
         IMPORTANT: This REPL is shared with the user in real-time. Be respectful:
         (1) Don't clutter workspace with unnecessary variables,
         (2) Ask before adding packages with 'using',
