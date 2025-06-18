@@ -67,6 +67,12 @@ function create_handler(tools::Dict{String, MCPTool})
                 return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(response))
             end
 
+            # Handle initialized notification
+            if request.method == "notifications/initialized"
+                # This is a notification, no response needed
+                return HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
+            end
+
             # Handle tool listing
             if request.method == "tools/list"
                 tool_list = [
