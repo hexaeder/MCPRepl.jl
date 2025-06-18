@@ -22,7 +22,19 @@ function execute_repllike(str)
 
     REPL.prepare_next(repl)
     printstyled("\nagent> $str\n", color=:red, bold=:true)
-    response = REPL.eval_with_backend(expr, backend)
+
+    # Capture stdout/stderr during execution
+    captured_output = Pipe()
+    response = redirect_stdout(captured_output) do
+        redirect_stderr(captured_output) do
+            r = REPL.eval_with_backend(expr, backend)
+            close(Base.pipe_writer(captured_output))
+            r
+        end
+    end
+    captured_content = read(captured_output, String)
+    # reshow the stuff which was printed to stdout/stderr before
+    print(captured_content)
 
     disp = IOBufferDisplay()
 
@@ -34,7 +46,11 @@ function execute_repllike(str)
 
     REPL.prepare_next(repl)
     REPL.LineEdit.refresh_line(repl.mistate)
-    String(take!(disp.io))
+
+    # Combine captured output with display output
+    display_content = String(take!(disp.io))
+
+    return captured_content*display_content
 end
 
 SERVER = Ref{Union{Nothing, MCPServer}}(nothing)
@@ -52,13 +68,18 @@ function start!()
         (3) Ask before long-running commands (>5 seconds),
         (4) Use temporary variables when possible (e.g., let blocks),
         (5) Clean up variables the user doesn't need.
+        (6) The REPL uses Revise, so after changing julia functions in the src,
+            the changes should be picket up when you execut the same code again.
+            This does not work on redefining structs or constants! You need to ask the user
+            to restart the REPL in that case!
         """,
         MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`"),
         args -> begin
             try
                 execute_repllike(get(args, "expression", ""))
             catch e
-                "Error: $e"
+                println("Error during execute_repllike", e)
+                "Apparently there was an **internal** error to the MCP server: $e"
             end
         end
     )
