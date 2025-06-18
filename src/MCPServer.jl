@@ -14,9 +14,22 @@ struct MCPServer
 end
 
 # Create request handler with access to tools
-function create_handler(tools::Dict{String, MCPTool})
+function create_handler(tools::Dict{String, MCPTool}, port::Int)
     return function handle_request(req::HTTP.Request)
         try
+            # Handle OAuth well-known metadata requests first (before JSON parsing)
+            if req.target == "/.well-known/oauth-authorization-server"
+                oauth_metadata = Dict(
+                    "issuer" => "http://localhost:$port",
+                    "authorization_endpoint" => "http://localhost:$port/oauth/authorize",
+                    "token_endpoint" => "http://localhost:$port/oauth/token",
+                    "grant_types_supported" => ["authorization_code"],
+                    "response_types_supported" => ["code"],
+                    "scopes_supported" => ["read", "write"]
+                )
+                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(oauth_metadata))
+            end
+
             # Parse JSON-RPC request
             body = String(req.body)
 
@@ -72,6 +85,7 @@ function create_handler(tools::Dict{String, MCPTool})
                 # This is a notification, no response needed
                 return HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
             end
+
 
             # Handle tool listing
             if request.method == "tools/list"
@@ -172,9 +186,10 @@ end
 
 function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000)
     tools_dict = Dict(tool.name => tool for tool in tools)
-    handler = create_handler(tools_dict)
+    handler = create_handler(tools_dict, port)
     server = HTTP.serve!(handler, port)
     println("MCP Server running on port $port with $(length(tools)) tools")
+    println("To use with Claude Code, run: claude mcp add julia-repl http://localhost:$port --transport http")
     return MCPServer(port, server, tools_dict)
 end
 

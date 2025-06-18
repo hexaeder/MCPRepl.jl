@@ -64,6 +64,8 @@ function start!()
         """
         Execute Julia code in a shared, persistent REPL session to avoid startup latency.
 
+        Once this function is avaiable, **never** use `julia` commands in bash, allways use the REPL.
+
         You may use this REPL to
         - execute julia code
         - execute test sets
@@ -71,14 +73,15 @@ function start!()
 
         IMPORTANT: This REPL is shared with the user in real-time. Be respectful:
         (1) Don't clutter workspace with unnecessary variables,
-        (2) Ask before adding packages with 'using',
-        (3) Ask before long-running commands (>5 seconds),
-        (4) Use temporary variables when possible (e.g., let blocks),
-        (5) Clean up variables the user doesn't need.
-        (6) The REPL uses Revise, so after changing julia functions in the src,
+        (2) Ask before long-running commands (>5 seconds),
+        (3) Use temporary variables when possible (e.g., let blocks),
+        (4) Clean up variables the user doesn't need.
+        (5) The REPL uses Revise, so after changing julia functions in the src,
             the changes should be picket up when you execut the same code again.
             This does not work on redefining structs or constants! You need to ask the user
             to restart the REPL in that case!
+        (6) Don't change the active environment! Expect that you are in a sensible environment for your tasks.
+            Allways prompt user if you need more pacakges.
         """,
         MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`"),
         args -> begin
