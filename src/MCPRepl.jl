@@ -80,7 +80,7 @@ function start!()
             the changes should be picket up when you execut the same code again.
             This does not work on redefining structs or constants! You need to ask the user
             to restart the REPL in that case!
-        (6) Don't change the active environment! Expect that you are in a sensible environment for your tasks.
+        (6) Never use `Pkg.activate` to change the current environment! Expect that you are in a sensible environment for your tasks.
             Allways prompt user if you need more pacakges.
         """,
         MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`"),
