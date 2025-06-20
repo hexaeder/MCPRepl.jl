@@ -23,11 +23,56 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "issuer" => "http://localhost:$port",
                     "authorization_endpoint" => "http://localhost:$port/oauth/authorize",
                     "token_endpoint" => "http://localhost:$port/oauth/token",
-                    "grant_types_supported" => ["authorization_code"],
+                    "registration_endpoint" => "http://localhost:$port/oauth/register",
+                    "grant_types_supported" => ["authorization_code", "client_credentials"],
                     "response_types_supported" => ["code"],
-                    "scopes_supported" => ["read", "write"]
+                    "scopes_supported" => ["read", "write"],
+                    "client_registration_types_supported" => ["dynamic"]
                 )
                 return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(oauth_metadata))
+            end
+
+            # Handle dynamic client registration
+            if req.target == "/oauth/register" && req.method == "POST"
+                client_id = "claude-code-" * string(rand(UInt64), base=16)
+                client_secret = string(rand(UInt128), base=16)
+
+                registration_response = Dict(
+                    "client_id" => client_id,
+                    "client_secret" => client_secret,
+                    "client_id_issued_at" => Int(floor(time())),
+                    "grant_types" => ["authorization_code", "client_credentials"],
+                    "response_types" => ["code"],
+                    "token_endpoint_auth_method" => "client_secret_basic"
+                )
+                return HTTP.Response(201, ["Content-Type" => "application/json"], JSON3.write(registration_response))
+            end
+
+            # Handle authorization endpoint
+            if startswith(req.target, "/oauth/authorize")
+                # For local development, auto-approve all requests
+                uri = HTTP.URI(req.target)
+                query_params = HTTP.queryparams(uri)
+                redirect_uri = get(query_params, "redirect_uri", "")
+                state = get(query_params, "state", "")
+
+                auth_code = "auth_" * string(rand(UInt64), base=16)
+                redirect_url = "$redirect_uri?code=$auth_code&state=$state"
+
+                return HTTP.Response(302, ["Location" => redirect_url], "")
+            end
+
+            # Handle token endpoint
+            if req.target == "/oauth/token" && req.method == "POST"
+                access_token = "access_" * string(rand(UInt128), base=16)
+
+                token_response = Dict(
+                    "access_token" => access_token,
+                    "token_type" => "Bearer",
+                    "expires_in" => 3600,
+                    "scope" => "read write"
+                )
+                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(token_response))
             end
 
             # Parse JSON-RPC request
