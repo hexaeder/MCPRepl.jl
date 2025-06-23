@@ -201,7 +201,8 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
             return HTTP.Response(404, ["Content-Type" => "application/json"], JSON3.write(error_response))
 
         catch e
-            # Internal error
+            # Internal error - show in REPL and return to client
+            printstyled("\nMCP Server error: $e\n", color=:red)
             error_response = Dict(
                 "jsonrpc" => "2.0",
                 "id" => nothing,
