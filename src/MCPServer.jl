@@ -27,7 +27,8 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "grant_types_supported" => ["authorization_code", "client_credentials"],
                     "response_types_supported" => ["code"],
                     "scopes_supported" => ["read", "write"],
-                    "client_registration_types_supported" => ["dynamic"]
+                    "client_registration_types_supported" => ["dynamic"],
+                    "code_challenge_methods_supported" => ["S256"]
                 )
                 return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(oauth_metadata))
             end
@@ -43,7 +44,9 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "client_id_issued_at" => Int(floor(time())),
                     "grant_types" => ["authorization_code", "client_credentials"],
                     "response_types" => ["code"],
-                    "token_endpoint_auth_method" => "client_secret_basic"
+                    "redirect_uris" => ["http://localhost:8080/callback", "http://127.0.0.1:8080/callback"],
+                    "token_endpoint_auth_method" => "client_secret_basic",
+                    "scope" => "read write"
                 )
                 return HTTP.Response(201, ["Content-Type" => "application/json"], JSON3.write(registration_response))
             end
