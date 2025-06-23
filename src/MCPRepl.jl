@@ -96,7 +96,27 @@ function start!()
 
     # Create and start server
     SERVER[] = start_mcp_server([repl_tool], 3000)
+
+    if isdefined(Base, :active_repl)
+        set_prefix!(Base.active_repl)
+    else
+        atreplinit(set_prefix!)
+    end
     nothing
+end
+
+function set_prefix!(repl)
+    mode = get_mainmode(repl)
+    mode.prompt = REPL.contextual_prompt(repl, "✻ julia> ")
+end
+function unset_prefix!(repl)
+    mode = get_mainmode(repl)
+    mode.prompt = REPL.contextual_prompt(repl, REPL.JULIA_PROMPT)
+end
+function get_mainmode(repl)
+    only(filter(repl.interface.modes) do mode
+        mode isa REPL.Prompt && mode.prompt isa Function && contains(mode.prompt(), "julia>")
+    end)
 end
 
 function stop!()
@@ -104,6 +124,7 @@ function stop!()
         println("Stop existing server...")
         stop_mcp_server(SERVER[])
         SERVER[] = nothing
+        unset_prefix!(Base.active_repl) # Reset the prompt prefix
     else
         println("No server running to stop.")
     end
