@@ -15,6 +15,16 @@ Base.display(d::IOBufferDisplay, x) = show(d.io, x)
 Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 
 function execute_repllike(str)
+    # Check for Pkg.activate usage
+    if contains(str, "activate(") && !contains(str, r"#.*overwrite no-activate-rule")
+        return """
+            ERROR: Using Pkg.activate to change environments is not allowed.
+            You should assume you are in the correct environment for your tasks.
+            You may use Pkg.status() to see the current environment and available packages.
+            If you need to use a third-party 'activate' function, add '# overwrite no-activate-rule' at the end of your command.
+        """
+    end
+
     repl = Base.active_repl
     # expr = Meta.parse(str)
     expr = Base.parse_input_line(str)
@@ -81,7 +91,8 @@ function start!()
             This does not work on redefining structs or constants! You need to ask the user
             to restart the REPL in that case!
         (6) Never use `Pkg.activate` to change the current environment! Expect that you are in a sensible environment for your tasks.
-            Always prompt user if you need more packages.
+            Always prompt user if you need more packages. If you need to use a third-party `activate` function,
+            add '# overwrite no-activate-rule' at the end of your command to bypass this check.
         """,
         MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`"),
         args -> begin

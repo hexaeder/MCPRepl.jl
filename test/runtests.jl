@@ -217,4 +217,23 @@ using Dates
             end
         end
     end
+
+    @testset "Pkg.activate Prevention Tests" begin
+        # Test that Pkg.activate is blocked
+        result = MCPRepl.execute_repllike("Pkg.activate(\"/some/path\")")
+        @test contains(result, "ERROR: Using Pkg.activate to change environments is not allowed")
+        @test contains(result, "You should assume you are in the correct environment")
+
+        # Test that override comment works
+        result = MCPRepl.execute_repllike("Pkg.activate(\"/some/path\") # overwrite no-activate-rule")
+        @test !contains(result, "ERROR: Using Pkg.activate to change environments is not allowed")
+
+        # Test that third-party activate functions work (not Pkg.activate)
+        result = MCPRepl.execute_repllike("MyModule.activate(\"something\")")
+        @test !contains(result, "ERROR: Using Pkg.activate to change environments is not allowed")
+
+        # Test that Pkg.status is allowed
+        result = MCPRepl.execute_repllike("using Pkg; Pkg.status()")
+        @test !contains(result, "ERROR: Using Pkg.activate to change environments is not allowed")
+    end
 end
