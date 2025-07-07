@@ -9,11 +9,11 @@ JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 
 [compat]
-Dates = "1.11.0"
-HTTP = "1.10.16"
+Dates = "1.10"
+HTTP = "1.10"
 JSON3 = "1.14.3"
-REPL = "1.11.0"
-Test = "1.11.0"
+REPL = "1.10"
+Test = "1.10"
 
 [extras]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
