@@ -1,7 +1,14 @@
 # MCPRepl.jl
 
-MCPRepl.jl is a Julia package which exposes your REPL as an MCP server -- so that coding can connect to it and execute code in your environment.
-I strongly believe that REPL driven development is the best thing you can do in Julia, so the Agents should learn it to.
+I strongly believe that REPL-driven development is the best thing you can do in Julia, so AI Agents should learn it too!
+
+MCPRepl.jl is a Julia package which exposes your REPL as an MCP server -- so that the agent can connect to it and execute code in your environment.
+The code the Agent sends will show up in the REPL as well as your own commands. You're both working in the same state.
+
+
+Ideally, this enables the Agent to, for example, execute and fix testsets interactively one by one, circumventing any time-to-first-plot issues.
+
+## Showcase
 
 
 ## Installation
@@ -25,14 +32,14 @@ julia> using MCPRepl; MCPRepl.start!()
 ```
 to open the HTTP endpoints.
 
-For claude code, you can run the follwing command to make it aware of the MCP server
+For Claude Code, you can run the following command to make it aware of the MCP server
 ```sh
 claude mcp add julia-repl http://localhost:3000 --transport http
 ```
 
 ## Disclaimer and Security Warning
 
-The core functionality of MCPRepl.jl involves opening a network port and executing any code that is sent to it. This is inherently dangerous and borderline stupid, but thats how it is in the great new world of coding agents.
+The core functionality of MCPRepl.jl involves opening a network port and executing any code that is sent to it. This is inherently dangerous and borderline stupid, but that's how it is in the great new world of coding agents.
 
 By using this software, you acknowledge and accept the following:
 
