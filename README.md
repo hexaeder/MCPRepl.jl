@@ -10,6 +10,8 @@ Ideally, this enables the Agent to, for example, execute and fix testsets intera
 
 ## Showcase
 
+https://github.com/user-attachments/assets/1c7546c4-23a3-4528-b222-fc8635af810d
+
 ## Installation
 
 This package is not registered in the official Julia General registry due to the security implications of its use. To install it, you must do so directly from the source repository.
