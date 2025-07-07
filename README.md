@@ -10,6 +10,7 @@ Ideally, this enables the Agent to, for example, execute and fix testsets intera
 
 ## Showcase
 
+https://github.com/user-attachments/assets/1df42505-70df-458d-9154-631ca33e49d6
 
 ## Installation
 
