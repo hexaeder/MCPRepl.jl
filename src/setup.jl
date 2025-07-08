@@ -1,3 +1,5 @@
+using JSON3
+
 function check_claude_status()
     # Check if claude command exists
     try
@@ -57,7 +59,9 @@ function write_gemini_settings(settings::Dict)
     end
     
     try
-        content = JSON3.write(settings, Dict(:indent => 2))
+        io = IOBuffer()
+        JSON3.pretty(io, settings)
+        content = String(take!(io))
         write(settings_path, content)
         return true
     catch

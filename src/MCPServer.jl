@@ -203,9 +203,21 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
         catch e
             # Internal error - show in REPL and return to client
             printstyled("\nMCP Server error: $e\n", color=:red)
+
+            # Try to get the original request ID for proper JSON-RPC error response
+            request_id = nothing
+            try
+                if !isempty(body)
+                    parsed_request = JSON3.read(body)
+                    request_id = get(parsed_request, :id, nothing)
+                end
+            catch
+                # If we can't parse the request, leave id as nothing
+            end
+
             error_response = Dict(
                 "jsonrpc" => "2.0",
-                "id" => nothing,
+                "id" => request_id,
                 "error" => Dict(
                     "code" => -32603,
                     "message" => "Internal error: $e"
