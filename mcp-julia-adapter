@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""
+MCP Julia REPL Adapter
+
+This adapter bridges stdin/stdout MCP clients to the HTTP-based Julia MCP server.
+It reads JSON-RPC messages from stdin and forwards them to http://localhost:3000,
+then returns responses to stdout.
+
+Usage:
+    ./mcp-julia-adapter
+
+The Julia MCP server must be running first:
+    julia --project -e "using MCPRepl; MCPRepl.start!()"
+"""
+
+import json
+import sys
+import urllib.request
+import urllib.error
+
+
+def main():
+    """Main adapter loop - reads stdin, forwards to HTTP server, writes to stdout"""
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            # Parse JSON-RPC request from stdin
+            request = json.loads(line)
+
+            # Forward to HTTP server
+            data = json.dumps(request).encode('utf-8')
+            req = urllib.request.Request('http://localhost:3000',
+                                       data=data,
+                                       headers={'Content-Type': 'application/json'})
+
+            with urllib.request.urlopen(req) as response:
+                result = json.loads(response.read().decode('utf-8'))
+                print(json.dumps(result), flush=True)
+
+        except json.JSONDecodeError as e:
+            # Invalid JSON from stdin
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {
+                    "code": -32700,
+                    "message": f"Parse error: {str(e)}"
+                }
+            }
+            print(json.dumps(error_response), flush=True)
+
+        except urllib.error.URLError as e:
+            # Connection failed to HTTP server
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id") if 'request' in locals() else None,
+                "error": {
+                    "code": -32603,
+                    "message": f"Connection failed: {str(e)}. Is the Julia MCP server running?"
+                }
+            }
+            print(json.dumps(error_response), flush=True)
+
+        except Exception as e:
+            # Other errors
+            error_response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id") if 'request' in locals() else None,
+                "error": {
+                    "code": -32603,
+                    "message": f"Internal error: {str(e)}"
+                }
+            }
+            print(json.dumps(error_response), flush=True)
+
+
+if __name__ == "__main__":
+    main()

@@ -66,7 +66,7 @@ end
 
 SERVER = Ref{Union{Nothing, MCPServer}}(nothing)
 
-function start!()
+function start!(; verbose::Bool = true)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     repl_tool = MCPTool(
@@ -106,7 +106,7 @@ function start!()
     )
 
     # Create and start server
-    SERVER[] = start_mcp_server([repl_tool], 3000)
+    SERVER[] = start_mcp_server([repl_tool], 3000; verbose=verbose)
 
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)

@@ -233,12 +233,31 @@ function text_parameter(name::String, description::String, required::Bool = true
     return schema
 end
 
-function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000)
+function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Bool = true)
     tools_dict = Dict(tool.name => tool for tool in tools)
     handler = create_handler(tools_dict, port)
     server = HTTP.serve!(handler, port)
-    println("MCP Server running on port $port with $(length(tools)) tools")
-    println("To use with Claude Code, run: claude mcp add julia-repl http://localhost:$port --transport http")
+
+    if verbose
+        println("🚀 MCP Server running on port $port with $(length(tools)) tools")
+        println()
+        println("📡 Add to Claude Code:")
+        println()
+        println("  HTTP Transport (direct):")
+        print("    ")
+        printstyled("claude mcp add julia-repl http://localhost:$port --transport http", color=:cyan, bold=true)
+        println()
+        println()
+        println("  Stdin/Stdout Transport (via adapter):")
+        print("    ")
+        printstyled("claude mcp add julia-repl $(pwd())/mcp-julia-adapter", color=:cyan, bold=true)
+        println()
+        println()
+        println("💡 Use HTTP for direct connection, stdin/stdout for agent compatibility")
+    else
+        println("MCP Server running on port $port with $(length(tools)) tools")
+    end
+
     return MCPServer(port, server, tools_dict)
 end
 
