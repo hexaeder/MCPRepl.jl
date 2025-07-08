@@ -236,24 +236,42 @@ end
 function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Bool = true)
     tools_dict = Dict(tool.name => tool for tool in tools)
     handler = create_handler(tools_dict, port)
-    server = HTTP.serve!(handler, port)
+
+    # Suppress HTTP server logging
+    server = HTTP.serve!(handler, port; verbose=false)
 
     if verbose
+        # Check MCP status and show contextual message
+        status = MCPRepl.check_mcp_status()
+        if status == :configured_http
+            println("✅ MCP server is set up for Claude (HTTP transport). To alter the setup call MCPRepl.setup()")
+        elseif status == :configured_script
+            println("✅ MCP server is set up for Claude (script transport). To alter the setup call MCPRepl.setup()")
+        elseif status == :configured_unknown
+            println("✅ MCP server is set up for Claude. To alter the setup call MCPRepl.setup()")
+        elseif status == :claude_not_found
+            println("⚠️ Claude Code not found in PATH. Please install Claude Code first.")
+        else
+            println("⚠️ MCP server is not registered yet. Call MCPRepl.setup() to set up interactively")
+            println()
+            println("📡 Or add manually to Claude Code:")
+            println()
+            println("  HTTP Transport (direct):")
+            print("    ")
+            printstyled("claude mcp add julia-repl http://localhost:$port --transport http", color=:cyan, bold=true)
+            println()
+            println()
+            println("  Stdin/Stdout Transport (via adapter):")
+            print("    ")
+            printstyled("claude mcp add julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter", color=:cyan, bold=true)
+            println()
+            println()
+            println("💡 Use HTTP for direct connection, stdin/stdout for agent compatibility")
+        end
+
+        println()
         println("🚀 MCP Server running on port $port with $(length(tools)) tools")
-        println()
-        println("📡 Add to Claude Code:")
-        println()
-        println("  HTTP Transport (direct):")
-        print("    ")
-        printstyled("claude mcp add julia-repl http://localhost:$port --transport http", color=:cyan, bold=true)
-        println()
-        println()
-        println("  Stdin/Stdout Transport (via adapter):")
-        print("    ")
-        printstyled("claude mcp add julia-repl $(pwd())/mcp-julia-adapter", color=:cyan, bold=true)
-        println()
-        println()
-        println("💡 Use HTTP for direct connection, stdin/stdout for agent compatibility")
+        println()  # Add blank line at end of splash
     else
         println("MCP Server running on port $port with $(length(tools)) tools")
     end
