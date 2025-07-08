@@ -5,6 +5,7 @@ using HTTP
 using JSON3
 
 include("MCPServer.jl")
+include("setup.jl")
 
 struct IOBufferDisplay <: AbstractDisplay
     io::IOBuffer
@@ -66,126 +67,6 @@ end
 
 SERVER = Ref{Union{Nothing, MCPServer}}(nothing)
 
-function check_mcp_status()
-    # Check if claude command exists
-    try
-        run(pipeline(`which claude`, devnull))
-    catch
-        return :claude_not_found
-    end
-
-    # Check if MCP server is already configured
-    try
-        output = read(`claude mcp list`, String)
-        if contains(output, "julia-repl")
-            # Detect transport method
-            if contains(output, "http://localhost:3000")
-                return :configured_http
-            elseif contains(output, "mcp-julia-adapter")
-                return :configured_script
-            else
-                return :configured_unknown
-            end
-        else
-            return :not_configured
-        end
-    catch
-        return :not_configured
-    end
-end
-
-function setup()
-    status = check_mcp_status()
-
-    if status == :claude_not_found
-        println("⚠️  Claude Code not found in PATH")
-        println("   Please install Claude Code first: https://docs.anthropic.com/en/docs/claude-code")
-        return
-    end
-
-    # Show current status
-    println("🔧 MCPRepl Setup")
-    println()
-    if status == :configured_http
-        println("📊 Current status: ✅ MCP server configured (HTTP transport)")
-    elseif status == :configured_script
-        println("📊 Current status: ✅ MCP server configured (script transport)")
-    elseif status == :configured_unknown
-        println("📊 Current status: ✅ MCP server configured (unknown transport)")
-    else
-        println("📊 Current status: ❌ MCP server not configured")
-    end
-    println()
-
-    # Show options
-    println("Available actions:")
-    if status in [:configured_http, :configured_script, :configured_unknown]
-        println("   [1] Remove current MCP configuration")
-        println("   [2] Add/Replace with HTTP transport")
-        println("   [3] Add/Replace with script transport")
-    else
-        println("   [1] Add HTTP transport")
-        println("   [2] Add script transport")
-    end
-    println()
-    print("   Enter choice: ")
-
-    choice = readline()
-
-    if status in [:configured_http, :configured_script, :configured_unknown]
-        if choice == "1"
-            println("\n   Removing MCP configuration...")
-            try
-                run(`claude mcp remove julia-repl`)
-                println("   ✅ Successfully removed MCP configuration")
-            catch e
-                println("   ❌ Failed to remove MCP configuration: $e")
-            end
-        elseif choice == "2"
-            println("\n   Adding/Replacing with HTTP transport...")
-            try
-                run(`claude mcp add julia-repl http://localhost:3000 --transport http`)
-                println("   ✅ Successfully configured HTTP transport")
-            catch e
-                println("   ❌ Failed to configure HTTP transport: $e")
-            end
-        elseif choice == "3"
-            println("\n   Adding/Replacing with script transport...")
-            try
-                run(`claude mcp add julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`)
-                println("   ✅ Successfully configured script transport")
-            catch e
-                println("   ❌ Failed to configure script transport: $e")
-            end
-        else
-            println("\n   Invalid choice. Please run MCPRepl.setup() again.")
-            return
-        end
-    else
-        if choice == "1"
-            println("\n   Adding HTTP transport...")
-            try
-                run(`claude mcp add julia-repl http://localhost:3000 --transport http`)
-                println("   ✅ Successfully configured HTTP transport")
-            catch e
-                println("   ❌ Failed to configure HTTP transport: $e")
-            end
-        elseif choice == "2"
-            println("\n   Adding script transport...")
-            try
-                run(`claude mcp add julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`)
-                println("   ✅ Successfully configured script transport")
-            catch e
-                println("   ❌ Failed to configure script transport: $e")
-            end
-        else
-            println("\n   Invalid choice. Please run MCPRepl.setup() again.")
-            return
-        end
-    end
-
-    println("   💡 HTTP for direct connection, script for agent compatibility")
-end
 
 function start!(; verbose::Bool = true)
     SERVER[] !== nothing && stop!() # Stop existing server if running
