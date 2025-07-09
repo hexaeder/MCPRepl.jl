@@ -21,7 +21,7 @@ This prompt teaches AI agents the proper workflow for Julia development using th
 - **Server management is ALWAYS user responsibility**
 - When encountering server issues:
   ```
-  "I've encountered an issue with the MCP server. Server management is your responsibility. 
+  "I've encountered an issue with the MCP server. Server management is your responsibility.
   Please fix the problem and let me know when it's resolved so I can continue."
   ```
 
@@ -91,7 +91,22 @@ methodswith(String)
 ```
 
 ## Environment Management
-Check environment without modifying it:
+
+### Environment Investigation
+Before starting work, use the `investigate_environment` tool to understand your development setup:
+
+```julia
+# This tool provides comprehensive environment information including:
+# - Current working directory and active project
+# - Development packages tracked by Revise.jl
+# - Regular packages in the environment
+# - Revise.jl status for hot reloading
+```
+
+**Best Practice**: Always call `investigate_environment` at the start of Julia development sessions to understand what packages are available and which ones are in development mode.
+
+### Manual Environment Checks
+You can also check environment manually without modifying it:
 
 ```julia
 using Pkg

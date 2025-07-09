@@ -285,19 +285,7 @@ function start!(; verbose::Bool = true)
         - execute julia code
         - execute test sets
         - get julia function documentation (i.e. send @doc functionname)
-
-        IMPORTANT: This REPL is shared with the user in real-time. Be respectful:
-        (1) Don't clutter workspace with unnecessary variables,
-        (2) Ask before long-running commands (>5 seconds),
-        (3) Use temporary variables when possible (e.g., let blocks),
-        (4) Clean up variables the user doesn't need.
-        (5) The REPL uses Revise, so after changing julia functions in the src,
-            the changes should be picked up when you execute the same code again.
-            This does not work on redefining structs or constants! You need to ask the user
-            to restart the REPL in that case!
-        (6) Never use `Pkg.activate` to change the current environment! Expect that you are in a sensible environment for your tasks.
-            Always prompt user if you need more packages. If you need to use a third-party `activate` function,
-            add '# overwrite no-activate-rule' at the end of your command to bypass this check.
+        - investigate the environment (use investigate_environment tool for comprehensive setup info)
         """,
         MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`"),
         args -> begin
