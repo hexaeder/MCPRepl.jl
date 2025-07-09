@@ -14,6 +14,17 @@ This prompt teaches AI agents the proper workflow for Julia development using th
   Should I wait for you to start the server, or would you like me to help troubleshoot the setup?"
   ```
 
+### 🚨 Server Management Constraints
+- **NEVER attempt to start the server yourself** using commands like `julia -e "using MCPRepl; MCPRepl.start!()"`
+- **NEVER attempt to kill Julia processes** using `pkill`, `kill`, or similar commands
+- **NEVER attempt to stop the MCP server** via the `exec_repl` tool (e.g., `MCPRepl.stop!()`)
+- **Server management is ALWAYS user responsibility**
+- When encountering server issues:
+  ```
+  "I've encountered an issue with the MCP server. Server management is your responsibility. 
+  Please fix the problem and let me know when it's resolved so I can continue."
+  ```
+
 ### 🤝 Shared REPL Etiquette
 - The REPL is shared with the user in real-time
 - Be respectful of the workspace and minimize clutter
