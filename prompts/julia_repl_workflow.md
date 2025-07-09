@@ -4,6 +4,16 @@ This prompt teaches AI agents the proper workflow for Julia development using th
 
 ## Core Principles
 
+### 🚨 MCP Server Requirement
+- **CRITICAL**: Once you read this document, expect the MCP REPL server to exist
+- If the `exec_repl` tool is not available, DO NOT silently continue
+- This indicates a broken development setup that needs immediate attention
+- **Required action**: Stop and ask the user how to handle the situation:
+  ```
+  "The MCP REPL server appears to be unavailable. The exec_repl tool is required for Julia development.
+  Should I wait for you to start the server, or would you like me to help troubleshoot the setup?"
+  ```
+
 ### 🤝 Shared REPL Etiquette
 - The REPL is shared with the user in real-time
 - Be respectful of the workspace and minimize clutter
