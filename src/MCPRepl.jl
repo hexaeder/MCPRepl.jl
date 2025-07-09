@@ -71,10 +71,34 @@ SERVER = Ref{Union{Nothing, MCPServer}}(nothing)
 function start!(; verbose::Bool = true)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
+    usage_instructions_tool = MCPTool(
+        "usage_instructions",
+        "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(),
+            "required" => []
+        ),
+        args -> begin
+            try
+                workflow_path = joinpath(dirname(dirname(@__FILE__)), "prompts", "julia_repl_workflow.md")
+                if isfile(workflow_path)
+                    return read(workflow_path, String)
+                else
+                    return "Error: julia_repl_workflow.md not found at $workflow_path"
+                end
+            catch e
+                return "Error reading usage instructions: $e"
+            end
+        end
+    )
+
     repl_tool = MCPTool(
         "exec_repl",
         """
         Execute Julia code in a shared, persistent REPL session to avoid startup latency.
+
+        **PREREQUISITE**: Before using this tool, you MUST first call the `usage_instructions` tool to understand proper Julia REPL workflow, best practices, and etiquette for shared REPL usage.
 
         Once this function is available, **never** use `julia` commands in bash, always use the REPL.
 
@@ -108,7 +132,7 @@ function start!(; verbose::Bool = true)
     )
 
     # Create and start server
-    SERVER[] = start_mcp_server([repl_tool], 3000; verbose=verbose)
+    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool], 3000; verbose=verbose)
 
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
