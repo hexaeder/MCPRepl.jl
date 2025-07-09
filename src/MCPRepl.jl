@@ -131,8 +131,47 @@ function start!(; verbose::Bool = true)
         end
     )
 
+    whitespace_tool = MCPTool(
+        "remove-trailing-whitespace",
+        """Remove trailing whitespace from all lines in a file.
+
+        This tool should be called to clean up any trailing spaces that AI agents tend to leave in files after editing.
+
+        **Usage Guidelines:**
+        - For single file edits: Call immediately after editing the file
+        - For multiple file edits: Call once on each modified file at the very end, before handing back to the user
+        - Always call this tool on files you've edited to maintain clean, professional code formatting
+
+        The tool efficiently removes all types of trailing whitespace (spaces, tabs, mixed) from every line in the file.""",
+        MCPRepl.text_parameter("file_path", "Absolute path to the file to clean up"),
+        args -> begin
+            try
+                file_path = get(args, "file_path", "")
+                if isempty(file_path)
+                    return "Error: file_path parameter is required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File does not exist: $file_path"
+                end
+
+                # Use sed to remove trailing whitespace (similar to emacs delete-trailing-whitespace)
+                # This removes all trailing whitespace characters from each line
+                result = run(pipeline(`sed -i 's/[[:space:]]*$//' $file_path`, stderr=devnull))
+
+                if result.exitcode == 0
+                    return "Successfully removed trailing whitespace from $file_path"
+                else
+                    return "Error: Failed to remove trailing whitespace from $file_path"
+                end
+            catch e
+                return "Error removing trailing whitespace: $e"
+            end
+        end
+    )
+
     # Create and start server
-    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool], 3000; verbose=verbose)
+    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool, whitespace_tool], 3000; verbose=verbose)
 
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
