@@ -12,7 +12,7 @@ struct IOBufferDisplay <: AbstractDisplay
     IOBufferDisplay() = new(IOBuffer())
 end
 Base.displayable(::IOBufferDisplay, _) = true
-Base.display(d::IOBufferDisplay, x) = show(d.io, x)
+Base.display(d::IOBufferDisplay, x) = show(d.io, MIME("text/plain"), x)
 Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 
 function execute_repllike(str)
