@@ -16,6 +16,9 @@ end
 # Create request handler with access to tools
 function create_handler(tools::Dict{String, MCPTool}, port::Int)
     return function handle_request(req::HTTP.Request)
+        # Parse JSON-RPC request
+        body = String(req.body)
+
         try
             # Handle OAuth well-known metadata requests first (before JSON parsing)
             if req.target == "/.well-known/oauth-authorization-server"
@@ -78,14 +81,11 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                 return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(token_response))
             end
 
-            # Parse JSON-RPC request
-            body = String(req.body)
-
             # Handle empty body (like GET requests)
             if isempty(body)
                 error_response = Dict(
                     "jsonrpc" => "2.0",
-                    "id" => nothing,
+                    "id" => 0,
                     "error" => Dict(
                         "code" => -32600,
                         "message" => "Invalid Request - empty body"
@@ -100,7 +100,7 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
             if !haskey(request, :method)
                 error_response = Dict(
                     "jsonrpc" => "2.0",
-                    "id" => get(request, :id, nothing),
+                    "id" => get(request, :id, 0),
                     "error" => Dict(
                         "code" => -32600,
                         "message" => "Invalid Request - missing method field"
@@ -192,7 +192,7 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
             # Method not found
             error_response = Dict(
                 "jsonrpc" => "2.0",
-                "id" => get(request, :id, nothing),
+                "id" => get(request, :id, 0),
                 "error" => Dict(
                     "code" => -32601,
                     "message" => "Method not found"
@@ -205,14 +205,19 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
             printstyled("\nMCP Server error: $e\n", color=:red)
 
             # Try to get the original request ID for proper JSON-RPC error response
-            request_id = nothing
+            request_id = 0  # Default to 0 instead of nothing to satisfy JSON-RPC schema
             try
                 if !isempty(body)
                     parsed_request = JSON3.read(body)
-                    request_id = get(parsed_request, :id, nothing)
+                    # Only use the request ID if it's a valid JSON-RPC ID (string or number)
+                    raw_id = get(parsed_request, :id, 0)
+                    if raw_id isa Union{String, Number}
+                        request_id = raw_id
+                    end
                 end
             catch
-                # If we can't parse the request, leave id as nothing
+                # If we can't parse the request, use default ID
+                request_id = 0
             end
 
             error_response = Dict(

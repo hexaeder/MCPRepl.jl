@@ -281,6 +281,8 @@ function start!(; verbose::Bool = true)
 
         Once this function is available, **never** use `julia` commands in bash, always use the REPL.
 
+        The tool returns raw text output containing: all printed content from stdout and stderr streams, plus the mime text/plain representation of the expression's return value (unless the expression ends with a semicolon).
+
         You may use this REPL to
         - execute julia code
         - execute test sets
