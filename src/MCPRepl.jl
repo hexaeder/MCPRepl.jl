@@ -50,8 +50,12 @@ function execute_repllike(str)
 
     disp = IOBufferDisplay()
 
-    # generate printout, err goest to disp.err, val goes to "specialdisplay" disp
-    REPL.print_response(disp.io, response, backend, !REPL.ends_with_semicolon(str), false, disp)
+    # generate printout, err goes to disp.err, val goes to "specialdisplay" disp
+    if VERSION >= v"1.11"
+        REPL.print_response(disp.io, response, backend, !REPL.ends_with_semicolon(str), false, disp)
+    else
+        REPL.print_response(disp.io, response, !REPL.ends_with_semicolon(str), false, disp)
+    end
 
     # generate the printout again for the "normal" repl
     REPL.print_response(repl, response, !REPL.ends_with_semicolon(str), repl.hascolor)

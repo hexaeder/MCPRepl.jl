@@ -10,7 +10,7 @@ REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 
 [compat]
 Dates = "1.10"
-HTTP = "1.10"
+HTTP = "1.9, 1.10"
 JSON3 = "1.14.3"
 REPL = "1.10"
 Test = "1.10"
