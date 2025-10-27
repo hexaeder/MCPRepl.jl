@@ -3,7 +3,7 @@ using HTTP
 struct MCPTool
     name::String
     description::String
-    parameters::Dict{String, Any}
+    parameters::Dict{String,Any}
     handler::Function
 end
 
@@ -11,11 +11,11 @@ end
 struct MCPServer
     port::Int
     server::HTTP.Server
-    tools::Dict{String, MCPTool}
+    tools::Dict{String,MCPTool}
 end
 
 # Create request handler with access to tools
-function create_handler(tools::Dict{String, MCPTool}, port::Int)
+function create_handler(tools::Dict{String,MCPTool}, port::Int)
     return function handle_request(req::HTTP.Request)
         # Parse JSON-RPC request
         body = String(req.body)
@@ -28,19 +28,24 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "authorization_endpoint" => "http://localhost:$port/oauth/authorize",
                     "token_endpoint" => "http://localhost:$port/oauth/token",
                     "registration_endpoint" => "http://localhost:$port/oauth/register",
-                    "grant_types_supported" => ["authorization_code", "client_credentials"],
+                    "grant_types_supported" =>
+                        ["authorization_code", "client_credentials"],
                     "response_types_supported" => ["code"],
                     "scopes_supported" => ["read", "write"],
                     "client_registration_types_supported" => ["dynamic"],
-                    "code_challenge_methods_supported" => ["S256"]
+                    "code_challenge_methods_supported" => ["S256"],
                 )
-                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(oauth_metadata))
+                return HTTP.Response(
+                    200,
+                    ["Content-Type" => "application/json"],
+                    JSON3.write(oauth_metadata),
+                )
             end
 
             # Handle dynamic client registration
             if req.target == "/oauth/register" && req.method == "POST"
-                client_id = "claude-code-" * string(rand(UInt64), base=16)
-                client_secret = string(rand(UInt128), base=16)
+                client_id = "claude-code-" * string(rand(UInt64), base = 16)
+                client_secret = string(rand(UInt128), base = 16)
 
                 registration_response = Dict(
                     "client_id" => client_id,
@@ -48,11 +53,18 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "client_id_issued_at" => Int(floor(time())),
                     "grant_types" => ["authorization_code", "client_credentials"],
                     "response_types" => ["code"],
-                    "redirect_uris" => ["http://localhost:8080/callback", "http://127.0.0.1:8080/callback"],
+                    "redirect_uris" => [
+                        "http://localhost:8080/callback",
+                        "http://127.0.0.1:8080/callback",
+                    ],
                     "token_endpoint_auth_method" => "client_secret_basic",
-                    "scope" => "read write"
+                    "scope" => "read write",
                 )
-                return HTTP.Response(201, ["Content-Type" => "application/json"], JSON3.write(registration_response))
+                return HTTP.Response(
+                    201,
+                    ["Content-Type" => "application/json"],
+                    JSON3.write(registration_response),
+                )
             end
 
             # Handle authorization endpoint
@@ -63,7 +75,7 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                 redirect_uri = get(query_params, "redirect_uri", "")
                 state = get(query_params, "state", "")
 
-                auth_code = "auth_" * string(rand(UInt64), base=16)
+                auth_code = "auth_" * string(rand(UInt64), base = 16)
                 redirect_url = "$redirect_uri?code=$auth_code&state=$state"
 
                 return HTTP.Response(302, ["Location" => redirect_url], "")
@@ -71,15 +83,19 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
 
             # Handle token endpoint
             if req.target == "/oauth/token" && req.method == "POST"
-                access_token = "access_" * string(rand(UInt128), base=16)
+                access_token = "access_" * string(rand(UInt128), base = 16)
 
                 token_response = Dict(
                     "access_token" => access_token,
                     "token_type" => "Bearer",
                     "expires_in" => 3600,
-                    "scope" => "read write"
+                    "scope" => "read write",
                 )
-                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(token_response))
+                return HTTP.Response(
+                    200,
+                    ["Content-Type" => "application/json"],
+                    JSON3.write(token_response),
+                )
             end
 
             # Handle empty body (like GET requests)
@@ -89,10 +105,14 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "id" => 0,
                     "error" => Dict(
                         "code" => -32600,
-                        "message" => "Invalid Request - empty body"
-                    )
+                        "message" => "Invalid Request - empty body",
+                    ),
                 )
-                return HTTP.Response(400, ["Content-Type" => "application/json"], JSON3.write(error_response))
+                return HTTP.Response(
+                    400,
+                    ["Content-Type" => "application/json"],
+                    JSON3.write(error_response),
+                )
             end
 
             request = JSON3.read(body)
@@ -104,10 +124,14 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "id" => get(request, :id, 0),
                     "error" => Dict(
                         "code" => -32600,
-                        "message" => "Invalid Request - missing method field"
-                    )
+                        "message" => "Invalid Request - missing method field",
+                    ),
                 )
-                return HTTP.Response(400, ["Content-Type" => "application/json"], JSON3.write(error_response))
+                return HTTP.Response(
+                    400,
+                    ["Content-Type" => "application/json"],
+                    JSON3.write(error_response),
+                )
             end
 
             # Handle initialization
@@ -117,16 +141,18 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     "id" => request.id,
                     "result" => Dict(
                         "protocolVersion" => "2024-11-05",
-                        "capabilities" => Dict(
-                            "tools" => Dict()
-                        ),
+                        "capabilities" => Dict("tools" => Dict()),
                         "serverInfo" => Dict(
                             "name" => "julia-mcp-server",
-                            "version" => "1.0.0"
-                        )
-                    )
+                            "version" => "1.0.0",
+                        ),
+                    ),
                 )
-                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(response))
+                return HTTP.Response(
+                    200,
+                    ["Content-Type" => "application/json"],
+                    JSON3.write(response),
+                )
             end
 
             # Handle initialized notification
@@ -142,16 +168,20 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     Dict(
                         "name" => tool.name,
                         "description" => tool.description,
-                        "inputSchema" => tool.parameters
+                        "inputSchema" => tool.parameters,
                     ) for tool in values(tools)
                 ]
 
                 response = Dict(
                     "jsonrpc" => "2.0",
                     "id" => request.id,
-                    "result" => Dict("tools" => tool_list)
+                    "result" => Dict("tools" => tool_list),
                 )
-                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(response))
+                return HTTP.Response(
+                    200,
+                    ["Content-Type" => "application/json"],
+                    JSON3.write(response),
+                )
             end
 
             # Handle tool calls
@@ -168,25 +198,29 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                         "jsonrpc" => "2.0",
                         "id" => request.id,
                         "result" => Dict(
-                            "content" => [
-                                Dict(
-                                    "type" => "text",
-                                    "text" => result_text
-                                )
-                            ]
-                        )
+                            "content" =>
+                                [Dict("type" => "text", "text" => result_text)],
+                        ),
                     )
-                    return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(response))
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON3.write(response),
+                    )
                 else
                     error_response = Dict(
                         "jsonrpc" => "2.0",
                         "id" => request.id,
                         "error" => Dict(
                             "code" => -32602,
-                            "message" => "Tool not found: $tool_name"
-                        )
+                            "message" => "Tool not found: $tool_name",
+                        ),
                     )
-                    return HTTP.Response(404, ["Content-Type" => "application/json"], JSON3.write(error_response))
+                    return HTTP.Response(
+                        404,
+                        ["Content-Type" => "application/json"],
+                        JSON3.write(error_response),
+                    )
                 end
             end
 
@@ -194,16 +228,17 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
             error_response = Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, :id, 0),
-                "error" => Dict(
-                    "code" => -32601,
-                    "message" => "Method not found"
-                )
+                "error" => Dict("code" => -32601, "message" => "Method not found"),
             )
-            return HTTP.Response(404, ["Content-Type" => "application/json"], JSON3.write(error_response))
+            return HTTP.Response(
+                404,
+                ["Content-Type" => "application/json"],
+                JSON3.write(error_response),
+            )
 
         catch e
             # Internal error - show in REPL and return to client
-            printstyled("\nMCP Server error: $e\n", color=:red)
+            printstyled("\nMCP Server error: $e\n", color = :red)
 
             # Try to get the original request ID for proper JSON-RPC error response
             request_id = 0  # Default to 0 instead of nothing to satisfy JSON-RPC schema
@@ -212,7 +247,7 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     parsed_request = JSON3.read(body)
                     # Only use the request ID if it's a valid JSON-RPC ID (string or number)
                     raw_id = get(parsed_request, :id, 0)
-                    if raw_id isa Union{String, Number}
+                    if raw_id isa Union{String,Number}
                         request_id = raw_id
                     end
                 end
@@ -224,12 +259,13 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
             error_response = Dict(
                 "jsonrpc" => "2.0",
                 "id" => request_id,
-                "error" => Dict(
-                    "code" => -32603,
-                    "message" => "Internal error: $e"
-                )
+                "error" => Dict("code" => -32603, "message" => "Internal error: $e"),
             )
-            return HTTP.Response(500, ["Content-Type" => "application/json"], JSON3.write(error_response))
+            return HTTP.Response(
+                500,
+                ["Content-Type" => "application/json"],
+                JSON3.write(error_response),
+            )
         end
     end
 end
@@ -238,12 +274,8 @@ end
 function text_parameter(name::String, description::String, required::Bool = true)
     schema = Dict(
         "type" => "object",
-        "properties" => Dict(
-            name => Dict(
-                "type" => "string",
-                "description" => description
-            )
-        )
+        "properties" =>
+            Dict(name => Dict("type" => "string", "description" => description)),
     )
     if required
         schema["required"] = [name]
@@ -256,7 +288,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
     handler = create_handler(tools_dict, port)
 
     # Suppress HTTP server logging
-    server = HTTP.serve!(handler, port; verbose=false)
+    server = HTTP.serve!(handler, port; verbose = false)
 
     if verbose
         # Check MCP status and show contextual message

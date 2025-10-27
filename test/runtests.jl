@@ -7,28 +7,34 @@ using Dates
 
 @testset "MCPRepl Tests" begin
     include("setup_tests.jl")
-    
+
     @testset "MCP Server Tests" begin
         # Create test tools
         time_tool = MCPTool(
             "get_time",
             "Get current time in specified format",
-            MCPRepl.text_parameter("format", "DateTime format string (e.g., 'yyyy-mm-dd HH:MM:SS')"),
-            args -> Dates.format(now(), get(args, "format", "yyyy-mm-dd HH:MM:SS"))
+            MCPRepl.text_parameter(
+                "format",
+                "DateTime format string (e.g., 'yyyy-mm-dd HH:MM:SS')",
+            ),
+            args -> Dates.format(now(), get(args, "format", "yyyy-mm-dd HH:MM:SS")),
         )
 
         reverse_tool = MCPTool(
             "reverse_text",
             "Reverse the input text",
             MCPRepl.text_parameter("text", "Text to reverse"),
-            args -> reverse(get(args, "text", ""))
+            args -> reverse(get(args, "text", "")),
         )
 
         calc_tool = MCPTool(
             "calculate",
             "Evaluate a simple Julia expression",
-            MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4')"),
-            function(args)
+            MCPRepl.text_parameter(
+                "expression",
+                "Julia expression to evaluate (e.g., '2 + 3 * 4')",
+            ),
+            function (args)
                 try
                     expr = Meta.parse(get(args, "expression", "0"))
                     result = eval(expr)
@@ -36,7 +42,7 @@ using Dates
                 catch e
                     "Error: $e"
                 end
-            end
+            end,
         )
 
         tools = [time_tool, reverse_tool, calc_tool]
@@ -112,16 +118,14 @@ using Dates
 
             try
                 # Test tools/list request
-                request_body = JSON3.write(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => 1,
-                    "method" => "tools/list"
-                ))
+                request_body = JSON3.write(
+                    Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"),
+                )
 
                 response = HTTP.post(
                     "http://localhost:$test_port/",
                     ["Content-Type" => "application/json"],
-                    request_body
+                    request_body,
                 )
 
                 @test response.status == 200
@@ -158,20 +162,22 @@ using Dates
 
             try
                 # Test reverse_text tool
-                request_body = JSON3.write(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => 2,
-                    "method" => "tools/call",
-                    "params" => Dict(
-                        "name" => "reverse_text",
-                        "arguments" => Dict("text" => "hello")
-                    )
-                ))
+                request_body = JSON3.write(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => 2,
+                        "method" => "tools/call",
+                        "params" => Dict(
+                            "name" => "reverse_text",
+                            "arguments" => Dict("text" => "hello"),
+                        ),
+                    ),
+                )
 
                 response = HTTP.post(
                     "http://localhost:$test_port/",
                     ["Content-Type" => "application/json"],
-                    request_body
+                    request_body,
                 )
 
                 @test response.status == 200
@@ -188,20 +194,22 @@ using Dates
                 @test json_response.result.content[1].text == "olleh"
 
                 # Test calculate tool
-                request_body = JSON3.write(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => 3,
-                    "method" => "tools/call",
-                    "params" => Dict(
-                        "name" => "calculate",
-                        "arguments" => Dict("expression" => "2 + 3 * 4")
-                    )
-                ))
+                request_body = JSON3.write(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => 3,
+                        "method" => "tools/call",
+                        "params" => Dict(
+                            "name" => "calculate",
+                            "arguments" => Dict("expression" => "2 + 3 * 4"),
+                        ),
+                    ),
+                )
 
                 response = HTTP.post(
                     "http://localhost:$test_port/",
                     ["Content-Type" => "application/json"],
-                    request_body
+                    request_body,
                 )
 
                 @test response.status == 200

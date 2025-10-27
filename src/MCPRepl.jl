@@ -16,7 +16,11 @@ Base.displayable(::IOBufferDisplay, _) = true
 Base.display(d::IOBufferDisplay, x) = show(d.io, MIME("text/plain"), x)
 Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 
-function execute_repllike(str; silent::Bool=false, description::Union{String,Nothing}=nothing)
+function execute_repllike(
+    str;
+    silent::Bool = false,
+    description::Union{String,Nothing} = nothing,
+)
     # Check for Pkg.activate usage
     if contains(str, "activate(") && !contains(str, r"#.*overwrite no-activate-rule")
         return """
@@ -33,10 +37,10 @@ function execute_repllike(str; silent::Bool=false, description::Union{String,Not
     backend = repl.backendref
 
     REPL.prepare_next(repl)
-    
+
     # Only print the agent prompt if not silent
     if !silent
-        printstyled("\nagent> ", color=:red, bold=:true)
+        printstyled("\nagent> ", color = :red, bold = :true)
         # If description provided, show that instead of raw code
         if description !== nothing
             println(description)
@@ -55,7 +59,7 @@ function execute_repllike(str; silent::Bool=false, description::Union{String,Not
         end
     end
     captured_content = read(captured_output, String)
-    
+
     # Only reshow output if not silent
     if !silent
         print(captured_content)
@@ -64,7 +68,14 @@ function execute_repllike(str; silent::Bool=false, description::Union{String,Not
     disp = IOBufferDisplay()
 
     # generate printout, err goest to disp.err, val goes to "specialdisplay" disp
-    REPL.print_response(disp.io, response, backend, !REPL.ends_with_semicolon(str), false, disp)
+    REPL.print_response(
+        disp.io,
+        response,
+        backend,
+        !REPL.ends_with_semicolon(str),
+        false,
+        disp,
+    )
 
     # generate the printout again for the "normal" repl (only if not silent)
     if !silent
@@ -72,7 +83,7 @@ function execute_repllike(str; silent::Bool=false, description::Union{String,Not
     end
 
     REPL.prepare_next(repl)
-    
+
     if !silent
         REPL.LineEdit.refresh_line(repl.mistate)
     end
@@ -80,10 +91,10 @@ function execute_repllike(str; silent::Bool=false, description::Union{String,Not
     # Combine captured output with display output
     display_content = String(take!(disp.io))
 
-    return captured_content*display_content
+    return captured_content * display_content
 end
 
-SERVER = Ref{Union{Nothing, MCPServer}}(nothing)
+SERVER = Ref{Union{Nothing,MCPServer}}(nothing)
 
 function repl_status_report()
     if !isdefined(Main, :Pkg)
@@ -94,7 +105,7 @@ function repl_status_report()
     try
         # Basic environment info
         println("🔍 Julia Environment Investigation")
-        println("=" ^ 50)
+        println("="^50)
         println()
 
         # Current directory
@@ -135,7 +146,7 @@ function repl_status_report()
 
             # Parse dependencies for development packages
             deps = Pkg.dependencies()
-            dev_packages = Dict{String, String}()
+            dev_packages = Dict{String,String}()
 
             for (uuid, pkg_info) in deps
                 if pkg_info.is_direct_dep && pkg_info.is_tracking_path
@@ -167,7 +178,12 @@ function repl_status_report()
                         pkg_name = get(project_data, "name", basename(dirname(active_proj)))
                         pkg_version = get(project_data, "version", "dev")
                         pkg_uuid = project_data["uuid"]
-                        current_env_package = (name = pkg_name, version = pkg_version, uuid = pkg_uuid, path = dirname(active_proj))
+                        current_env_package = (
+                            name = pkg_name,
+                            version = pkg_version,
+                            uuid = pkg_uuid,
+                            path = dirname(active_proj),
+                        )
                     end
                 catch
                     # Not a package environment, that's fine
@@ -195,7 +211,9 @@ function repl_status_report()
 
                 # Show current environment package first if it exists
                 if current_env_package !== nothing
-                    println("      $(current_env_package.name) v$(current_env_package.version) [CURRENT ENV] => $(current_env_package.path)")
+                    println(
+                        "      $(current_env_package.name) v$(current_env_package.version) [CURRENT ENV] => $(current_env_package.path)",
+                    )
                     try
                         # Try to get canonical path using pkgdir
                         pkg_dir = pkgdir(current_env_package.name)
@@ -210,10 +228,13 @@ function repl_status_report()
                 # Then show other development packages
                 for pkg_info in dev_deps
                     # Skip if this is the same as the current environment package
-                    if current_env_package !== nothing && pkg_info.name == current_env_package.name
+                    if current_env_package !== nothing &&
+                       pkg_info.name == current_env_package.name
                         continue
                     end
-                    println("      $(pkg_info.name) v$(pkg_info.version) => $(dev_packages[pkg_info.name])")
+                    println(
+                        "      $(pkg_info.name) v$(pkg_info.version) => $(dev_packages[pkg_info.name])",
+                    )
                     try
                         # Try to get canonical path using pkgdir
                         pkg_dir = pkgdir(pkg_info.name)
@@ -265,20 +286,20 @@ function repl_status_report()
     end
 end
 
-function start!(;port=3000, verbose::Bool = true)
+function start!(; port = 3000, verbose::Bool = true)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     usage_instructions_tool = MCPTool(
         "usage_instructions",
         "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents.",
-        Dict(
-            "type" => "object",
-            "properties" => Dict(),
-            "required" => []
-        ),
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             try
-                workflow_path = joinpath(dirname(dirname(@__FILE__)), "prompts", "julia_repl_workflow.md")
+                workflow_path = joinpath(
+                    dirname(dirname(@__FILE__)),
+                    "prompts",
+                    "julia_repl_workflow.md",
+                )
                 if isfile(workflow_path)
                     return read(workflow_path, String)
                 else
@@ -287,7 +308,7 @@ function start!(;port=3000, verbose::Bool = true)
             catch e
                 return "Error reading usage instructions: $e"
             end
-        end
+        end,
     )
 
     repl_tool = MCPTool(
@@ -310,20 +331,26 @@ function start!(;port=3000, verbose::Bool = true)
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "expression" => Dict("type" => "string", "description" => "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`)"),
-                "silent" => Dict("type" => "boolean", "description" => "If true, suppress the 'agent>' prompt and output display (default: false)")
+                "expression" => Dict(
+                    "type" => "string",
+                    "description" => "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`)",
+                ),
+                "silent" => Dict(
+                    "type" => "boolean",
+                    "description" => "If true, suppress the 'agent>' prompt and output display (default: false)",
+                ),
             ),
-            "required" => ["expression"]
+            "required" => ["expression"],
         ),
         args -> begin
             try
                 silent = get(args, "silent", false)
-                execute_repllike(get(args, "expression", ""); silent=silent)
+                execute_repllike(get(args, "expression", ""); silent = silent)
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
             end
-        end
+        end,
     )
 
     whitespace_tool = MCPTool(
@@ -352,7 +379,9 @@ function start!(;port=3000, verbose::Bool = true)
 
                 # Use sed to remove trailing whitespace (similar to emacs delete-trailing-whitespace)
                 # This removes all trailing whitespace characters from each line
-                result = run(pipeline(`sed -i 's/[[:space:]]*$//' $file_path`, stderr=devnull))
+                result = run(
+                    pipeline(`sed -i 's/[[:space:]]*$//' $file_path`, stderr = devnull),
+                )
 
                 if result.exitcode == 0
                     return "Successfully removed trailing whitespace from $file_path"
@@ -362,7 +391,7 @@ function start!(;port=3000, verbose::Bool = true)
             catch e
                 return "Error removing trailing whitespace: $e"
             end
-        end
+        end,
     )
 
     investigate_tool = MCPTool(
@@ -378,18 +407,14 @@ function start!(;port=3000, verbose::Bool = true)
         - Revise.jl status for hot reloading
 
         This is useful for understanding the development setup and debugging environment issues.""",
-        Dict(
-            "type" => "object",
-            "properties" => Dict(),
-            "required" => []
-        ),
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             try
                 execute_repllike("MCPRepl.repl_status_report()")
             catch e
                 "Error investigating environment: $e"
             end
-        end
+        end,
     )
 
     search_methods_tool = MCPTool(
@@ -405,14 +430,17 @@ function start!(;port=3000, verbose::Bool = true)
         - Find methods in a module: `names(Module, all=true)`
 
         Returns a formatted list of all matching methods with their signatures.""",
-        MCPRepl.text_parameter("query", "Function name or type to search (e.g., 'println', 'String', 'Base.sort')"),
+        MCPRepl.text_parameter(
+            "query",
+            "Function name or type to search (e.g., 'println', 'String', 'Base.sort')",
+        ),
         args -> begin
             try
                 query = get(args, "query", "")
                 if isempty(query)
                     return "Error: query parameter is required"
                 end
-                
+
                 # Try to evaluate the query to get the actual function/type
                 code = """
                 using InteractiveUtils
@@ -427,11 +455,11 @@ function start!(;port=3000, verbose::Bool = true)
                     methods(target)
                 end
                 """
-                execute_repllike(code; description="[Searching methods for: $query]")
+                execute_repllike(code; description = "[Searching methods for: $query]")
             catch e
                 "Error searching methods: \$e"
             end
-        end
+        end,
     )
 
     macro_expand_tool = MCPTool(
@@ -439,30 +467,33 @@ function start!(;port=3000, verbose::Bool = true)
         """Expand a macro to see what code it generates.
 
         This is invaluable for understanding what macros do and debugging macro-heavy code.
-        
+
         # Examples
         - `@macroexpand @time sleep(1)`
         - `@macroexpand @test 1 + 1 == 2`
         - `@macroexpand @inbounds a[i]`
 
         Returns the expanded code that the macro generates.""",
-        MCPRepl.text_parameter("expression", "Macro expression to expand (e.g., '@time sleep(1)')"),
+        MCPRepl.text_parameter(
+            "expression",
+            "Macro expression to expand (e.g., '@time sleep(1)')",
+        ),
         args -> begin
             try
                 expr = get(args, "expression", "")
                 if isempty(expr)
                     return "Error: expression parameter is required"
                 end
-                
+
                 code = """
                 using InteractiveUtils
                 @macroexpand $expr
                 """
-                execute_repllike(code; description="[Expanding macro: $expr]")
+                execute_repllike(code; description = "[Expanding macro: $expr]")
             catch e
                 "Error expanding macro: \$e"
             end
-        end
+        end,
     )
 
     type_info_tool = MCPTool(
@@ -481,27 +512,30 @@ function start!(;port=3000, verbose::Bool = true)
         - `type_info(AbstractArray)`
 
         This is essential for understanding Julia's type system.""",
-        MCPRepl.text_parameter("type_expr", "Type expression to inspect (e.g., 'String', 'Vector{Int}', 'AbstractArray')"),
+        MCPRepl.text_parameter(
+            "type_expr",
+            "Type expression to inspect (e.g., 'String', 'Vector{Int}', 'AbstractArray')",
+        ),
         args -> begin
             try
                 type_expr = get(args, "type_expr", "")
                 if isempty(type_expr)
                     return "Error: type_expr parameter is required"
                 end
-                
+
                 code = """
                 using InteractiveUtils
                 T = $type_expr
                 println("Type Information for: \$T")
                 println("=" ^ 60)
                 println()
-                
+
                 # Basic type info
                 println("Abstract: ", isabstracttype(T))
                 println("Primitive: ", isprimitivetype(T))
                 println("Mutable: ", ismutabletype(T))
                 println()
-                
+
                 # Type hierarchy
                 println("Supertype: ", supertype(T))
                 if !isabstracttype(T)
@@ -516,7 +550,7 @@ function start!(;port=3000, verbose::Bool = true)
                         println("  (no fields)")
                     end
                 end
-                
+
                 println()
                 println("Direct subtypes:")
                 subs = subtypes(T)
@@ -528,11 +562,11 @@ function start!(;port=3000, verbose::Bool = true)
                     end
                 end
                 """
-                execute_repllike(code; description="[Getting type info for: $type_expr]")
+                execute_repllike(code; description = "[Getting type info for: $type_expr]")
             catch e
                 "Error getting type info: \$e"
             end
-        end
+        end,
     )
 
     profile_tool = MCPTool(
@@ -540,7 +574,7 @@ function start!(;port=3000, verbose::Bool = true)
         """Profile Julia code to identify performance bottlenecks.
 
         Uses Julia's built-in Profile stdlib to analyze where time is spent in your code.
-        
+
         # Example
         ```julia
         profile_code(\"\"\"
@@ -563,7 +597,7 @@ function start!(;port=3000, verbose::Bool = true)
                 if isempty(code_to_profile)
                     return "Error: code parameter is required"
                 end
-                
+
                 wrapper = """
                 using Profile
                 Profile.clear()
@@ -572,11 +606,11 @@ function start!(;port=3000, verbose::Bool = true)
                 end
                 Profile.print(format=:flat, sortedby=:count)
                 """
-                execute_repllike(wrapper; description="[Profiling code]")
+                execute_repllike(wrapper; description = "[Profiling code]")
             catch e
                 "Error profiling code: \$e"
             end
-        end
+        end,
     )
 
     list_names_tool = MCPTool(
@@ -590,25 +624,31 @@ function start!(;port=3000, verbose::Bool = true)
         - `list_names(Base)`
         - `list_names(Core)`
         - `list_names(MyPackage)`
-        
+
         Set all=true to include non-exported names.""",
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "module_name" => Dict("type" => "string", "description" => "Module name (e.g., 'Base', 'Core', 'Main')"),
-                "all" => Dict("type" => "boolean", "description" => "Include non-exported names (default: false)")
+                "module_name" => Dict(
+                    "type" => "string",
+                    "description" => "Module name (e.g., 'Base', 'Core', 'Main')",
+                ),
+                "all" => Dict(
+                    "type" => "boolean",
+                    "description" => "Include non-exported names (default: false)",
+                ),
             ),
-            "required" => ["module_name"]
+            "required" => ["module_name"],
         ),
         args -> begin
             try
                 module_name = get(args, "module_name", "")
                 show_all = get(args, "all", false)
-                
+
                 if isempty(module_name)
                     return "Error: module_name parameter is required"
                 end
-                
+
                 code = """
                 mod = $module_name
                 println("Names in \$mod" * (($show_all) ? " (all=true)" : " (exported only)") * ":")
@@ -620,11 +660,11 @@ function start!(;port=3000, verbose::Bool = true)
                 println()
                 println("Total: ", length(name_list), " names")
                 """
-                execute_repllike(code; description="[Listing names in: $module_name]")
+                execute_repllike(code; description = "[Listing names in: $module_name]")
             catch e
                 "Error listing names: \$e"
             end
-        end
+        end,
     )
 
     code_lowered_tool = MCPTool(
@@ -642,29 +682,38 @@ function start!(;port=3000, verbose::Bool = true)
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "function_expr" => Dict("type" => "string", "description" => "Function to inspect (e.g., 'sin', 'Base.sort')"),
-                "types" => Dict("type" => "string", "description" => "Argument types as tuple (e.g., '(Float64,)', '(Int, Int)')")
+                "function_expr" => Dict(
+                    "type" => "string",
+                    "description" => "Function to inspect (e.g., 'sin', 'Base.sort')",
+                ),
+                "types" => Dict(
+                    "type" => "string",
+                    "description" => "Argument types as tuple (e.g., '(Float64,)', '(Int, Int)')",
+                ),
             ),
-            "required" => ["function_expr", "types"]
+            "required" => ["function_expr", "types"],
         ),
         args -> begin
             try
                 func_expr = get(args, "function_expr", "")
                 types_expr = get(args, "types", "")
-                
+
                 if isempty(func_expr) || isempty(types_expr)
                     return "Error: function_expr and types parameters are required"
                 end
-                
+
                 code = """
                 using InteractiveUtils
                 @code_lowered $func_expr($types_expr...)
                 """
-                execute_repllike(code; description="[Getting lowered code for: $func_expr with types $types_expr]")
+                execute_repllike(
+                    code;
+                    description = "[Getting lowered code for: $func_expr with types $types_expr]",
+                )
             catch e
                 "Error getting lowered code: \$e"
             end
-        end
+        end,
     )
 
     code_typed_tool = MCPTool(
@@ -682,46 +731,59 @@ function start!(;port=3000, verbose::Bool = true)
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "function_expr" => Dict("type" => "string", "description" => "Function to inspect (e.g., 'sin', 'Base.sort')"),
-                "types" => Dict("type" => "string", "description" => "Argument types as tuple (e.g., '(Float64,)', '(Int, Int)')")
+                "function_expr" => Dict(
+                    "type" => "string",
+                    "description" => "Function to inspect (e.g., 'sin', 'Base.sort')",
+                ),
+                "types" => Dict(
+                    "type" => "string",
+                    "description" => "Argument types as tuple (e.g., '(Float64,)', '(Int, Int)')",
+                ),
             ),
-            "required" => ["function_expr", "types"]
+            "required" => ["function_expr", "types"],
         ),
         args -> begin
             try
                 func_expr = get(args, "function_expr", "")
                 types_expr = get(args, "types", "")
-                
+
                 if isempty(func_expr) || isempty(types_expr)
                     return "Error: function_expr and types parameters are required"
                 end
-                
+
                 code = """
                 using InteractiveUtils
                 @code_typed $func_expr($types_expr...)
                 """
-                execute_repllike(code; description="[Getting typed code for: $func_expr with types $types_expr]")
+                execute_repllike(
+                    code;
+                    description = "[Getting typed code for: $func_expr with types $types_expr]",
+                )
             catch e
                 "Error getting typed code: \$e"
             end
-        end
+        end,
     )
 
     # Create and start server
     println("Starting MCP server on port $port...")
-    SERVER[] = start_mcp_server([
-        usage_instructions_tool, 
-        repl_tool, 
-        whitespace_tool, 
-        investigate_tool,
-        search_methods_tool,
-        macro_expand_tool,
-        type_info_tool,
-        profile_tool,
-        list_names_tool,
-        code_lowered_tool,
-        code_typed_tool
-    ], port; verbose=verbose)
+    SERVER[] = start_mcp_server(
+        [
+            usage_instructions_tool,
+            repl_tool,
+            whitespace_tool,
+            investigate_tool,
+            search_methods_tool,
+            macro_expand_tool,
+            type_info_tool,
+            profile_tool,
+            list_names_tool,
+            code_lowered_tool,
+            code_typed_tool,
+        ],
+        port;
+        verbose = verbose,
+    )
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
         # Refresh the prompt to show the new prefix and clear any leftover output
@@ -742,9 +804,13 @@ function unset_prefix!(repl)
     mode.prompt = REPL.contextual_prompt(repl, REPL.JULIA_PROMPT)
 end
 function get_mainmode(repl)
-    only(filter(repl.interface.modes) do mode
-        mode isa REPL.Prompt && mode.prompt isa Function && contains(mode.prompt(), "julia>")
-    end)
+    only(
+        filter(repl.interface.modes) do mode
+            mode isa REPL.Prompt &&
+                mode.prompt isa Function &&
+                contains(mode.prompt(), "julia>")
+        end,
+    )
 end
 
 function stop!()
@@ -782,23 +848,28 @@ else
 end
 ```
 """
-function test_server(port::Int=3000; host="127.0.0.1", max_attempts::Int=3, delay::Float64=0.5)
-    for attempt in 1:max_attempts
+function test_server(
+    port::Int = 3000;
+    host = "127.0.0.1",
+    max_attempts::Int = 3,
+    delay::Float64 = 0.5,
+)
+    for attempt = 1:max_attempts
         try
             # Use HTTP.jl for a clean, proper request
             body = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exec_repl","arguments":{"expression":"println(\\\"🎉 MCP Server ready!\\\")","silent":true}}}"""
-            
+
             response = HTTP.post(
                 "http://$host:$port/",
                 ["Content-Type" => "application/json"],
                 body;
-                readtimeout=5,
-                connect_timeout=2
+                readtimeout = 5,
+                connect_timeout = 2,
             )
-            
+
             # Check if we got a successful response
             if response.status == 200
-                 REPL.prepare_next(Base.active_repl)
+                REPL.prepare_next(Base.active_repl)
                 return true
             end
         catch e
@@ -807,7 +878,7 @@ function test_server(port::Int=3000; host="127.0.0.1", max_attempts::Int=3, dela
             end
         end
     end
-    
+
     println("✗ MCP Server on port $port is not responding after $max_attempts attempts")
     return false
 end
