@@ -1429,6 +1429,220 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         end,
     )
 
+    # Enhanced debugging tools using bidirectional communication
+    debug_step_over_tool = MCPTool(
+        "debug_step_over",
+        """Step over the current line in the debugger.
+        
+        Executes the current line and moves to the next line without entering function calls.
+        Must be in an active debug session (paused at a breakpoint).
+        
+        # Examples
+        - `debug_step_over()`
+        - `debug_step_over(wait_for_response=true)` - Wait for confirmation
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "wait_for_response" => Dict(
+                    "type" => "boolean",
+                    "description" => "Wait for command completion (default: false)",
+                    "default" => false
+                ),
+            ),
+            "required" => [],
+        ),
+        function (args)
+            try
+                wait_response = get(args, "wait_for_response", false)
+                
+                if wait_response
+                    result = execute_repllike(
+                        """execute_vscode_command("workbench.action.debug.stepOver", 
+                                                  wait_for_response=true, timeout=10.0)""";
+                        silent = false
+                    )
+                    return result
+                else
+                    trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stepOver"))
+                    return "Stepped over current line"
+                end
+            catch e
+                return "Error stepping over: $e"
+            end
+        end,
+    )
+
+    debug_step_into_tool = MCPTool(
+        "debug_step_into",
+        """Step into a function call in the debugger.
+        
+        Enters the function on the current line to debug its internals.
+        Must be in an active debug session (paused at a breakpoint).
+        
+        # Examples
+        - `debug_step_into()`
+        """,
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stepInto"))
+                return "Stepped into function"
+            catch e
+                return "Error stepping into: $e"
+            end
+        end,
+    )
+
+    debug_step_out_tool = MCPTool(
+        "debug_step_out",
+        """Step out of the current function in the debugger.
+        
+        Continues execution until the current function returns to its caller.
+        Must be in an active debug session (paused at a breakpoint).
+        
+        # Examples
+        - `debug_step_out()`
+        """,
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stepOut"))
+                return "Stepped out of current function"
+            catch e
+                return "Error stepping out: $e"
+            end
+        end,
+    )
+
+    debug_continue_tool = MCPTool(
+        "debug_continue",
+        """Continue execution in the debugger.
+        
+        Resumes execution until the next breakpoint or program completion.
+        Must be in an active debug session (paused at a breakpoint).
+        
+        # Examples
+        - `debug_continue()`
+        """,
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.continue"))
+                return "Continued execution"
+            catch e
+                return "Error continuing: $e"
+            end
+        end,
+    )
+
+    debug_stop_tool = MCPTool(
+        "debug_stop",
+        """Stop the current debug session.
+        
+        Terminates the active debug session and returns to normal execution.
+        
+        # Examples
+        - `debug_stop()`
+        """,
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stop"))
+                return "Debug session stopped"
+            catch e
+                return "Error stopping debug session: $e"
+            end
+        end,
+    )
+
+    # Package management tools
+    pkg_add_tool = MCPTool(
+        "pkg_add",
+        """Add one or more Julia packages to the current environment.
+        
+        This is a convenience wrapper around Pkg.add() that provides better
+        feedback and error handling for AI agents.
+        
+        **Note**: This modifies Project.toml. For more control, agents can
+        directly edit Project.toml and run Pkg.instantiate().
+        
+        # Arguments
+        - `packages`: Array of package names to add (e.g., ["DataFrames", "Plots"])
+        
+        # Examples
+        - `pkg_add(packages=["DataFrames"])`
+        - `pkg_add(packages=["Plots", "StatsPlots"])`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "packages" => Dict(
+                    "type" => "array",
+                    "description" => "Array of package names to add",
+                    "items" => Dict("type" => "string"),
+                ),
+            ),
+            "required" => ["packages"],
+        ),
+        function (args)
+            try
+                packages = get(args, "packages", String[])
+                if isempty(packages)
+                    return "Error: packages array is required and cannot be empty"
+                end
+                
+                pkg_names = join(["\"$p\"" for p in packages], ", ")
+                code = "using Pkg; Pkg.add([$pkg_names])"
+                
+                result = execute_repllike(code; silent = false)
+                return "Added packages: $(join(packages, ", "))\n\n$result"
+            catch e
+                return "Error adding packages: $e"
+            end
+        end,
+    )
+
+    pkg_rm_tool = MCPTool(
+        "pkg_rm",
+        """Remove one or more Julia packages from the current environment.
+        
+        # Arguments
+        - `packages`: Array of package names to remove
+        
+        # Examples
+        - `pkg_rm(packages=["OldPackage"])`
+        - `pkg_rm(packages=["Package1", "Package2"])`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "packages" => Dict(
+                    "type" => "array",
+                    "description" => "Array of package names to remove",
+                    "items" => Dict("type" => "string"),
+                ),
+            ),
+            "required" => ["packages"],
+        ),
+        function (args)
+            try
+                packages = get(args, "packages", String[])
+                if isempty(packages)
+                    return "Error: packages array is required and cannot be empty"
+                end
+                
+                pkg_names = join(["\"$p\"" for p in packages], ", ")
+                code = "using Pkg; Pkg.rm([$pkg_names])"
+                
+                result = execute_repllike(code; silent = false)
+                return "Removed packages: $(join(packages, ", "))\n\n$result"
+            catch e
+                return "Error removing packages: $e"
+            end
+        end,
+    )
+
     # Create and start server
     println("Starting MCP server on port $port...")
     SERVER[] = start_mcp_server(
@@ -1452,6 +1666,13 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             add_watch_expression_tool,
             quick_file_open_tool,
             copy_debug_value_tool,
+            debug_step_over_tool,
+            debug_step_into_tool,
+            debug_step_out_tool,
+            debug_continue_tool,
+            debug_stop_tool,
+            pkg_add_tool,
+            pkg_rm_tool,
         ],
         port;
         verbose = verbose,
