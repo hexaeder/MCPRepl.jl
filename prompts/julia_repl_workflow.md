@@ -172,3 +172,269 @@ end
 2. **Test** changes with specific function calls
 3. **Verify** with `@doc` and `@which`
 4. **Run targeted tests** with specific @testset blocks
+
+## VS Code Command Execution
+
+When the VS Code Remote Control extension is installed (via `MCPRepl.setup()`), you can execute VS Code commands using the `execute_vscode_command` tool. This enables powerful workflow automation.
+
+### Available Commands
+
+#### 🔄 REPL & Window Control
+- **`language-julia.restartREPL`** - Restart the Julia REPL
+  - Use when: Revise isn't tracking changes, REPL state is corrupted, or after struct/constant changes
+  - Example: `execute_vscode_command("language-julia.restartREPL")`
+  
+- **`language-julia.startREPL`** - Start the Julia REPL if not running
+  
+- **`workbench.action.reloadWindow`** - Reload the entire VS Code window
+  - Use when: Extension changes, settings updates, or major configuration changes
+
+#### 💾 File Operations
+- **`workbench.action.files.saveAll`** - Save all open files
+  - Use when: Before running tests, before REPL restart, after making multiple edits
+  - Example: `execute_vscode_command("workbench.action.files.saveAll")`
+  
+- **`workbench.action.closeAllEditors`** - Close all open editor tabs
+  
+- **`workbench.action.files.openFile`** - Open a specific file
+  - Requires args: `execute_vscode_command("workbench.action.files.openFile", ["/path/to/file"])`
+
+#### 🧭 Navigation & Focus
+- **`workbench.action.terminal.focus`** - Focus the terminal panel
+  - Use when: Need to run commands or check terminal output
+  
+- **`workbench.action.focusActiveEditorGroup`** - Focus the active editor
+  - Use when: Returning focus to code after terminal/panel operations
+  
+- **`workbench.files.action.focusFilesExplorer`** - Focus the file explorer
+  
+- **`workbench.action.quickOpen`** - Open the quick file picker (Cmd+P / Ctrl+P)
+
+#### 💻 Terminal Operations
+- **`workbench.action.terminal.new`** - Create a new terminal instance
+  - Use when: Need a fresh terminal for isolated command execution
+  - Example: `execute_vscode_command("workbench.action.terminal.new")`
+
+- **`workbench.action.terminal.sendSequence`** - Send text to the active terminal
+  - **CRITICAL**: This command lets you execute shell commands without approval dialogs
+  - Requires args with `text` property containing the command to send
+  - **Must** include `\r` (carriage return) at the end to execute the command
+  - Example: `execute_vscode_command("workbench.action.terminal.sendSequence", ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])`
+  - Use when: Running shell commands, git operations, or Julia commands from the shell
+  - **Best Practice**: This is the preferred way to run `julia --project -e "..."` commands instead of the exec_repl tool when you need a fresh Julia process
+  
+  **Common patterns:**
+  ```
+  # Run Julia command in new process
+  execute_vscode_command("workbench.action.terminal.sendSequence", 
+    ["{\"text\": \"julia --project -e 'using Pkg; Pkg.status()'\\r\"}"])
+  
+  # Run shell script
+  execute_vscode_command("workbench.action.terminal.sendSequence",
+    ["{\"text\": \"./scripts/test.sh\\r\"}"])
+  
+  # Git operations
+  execute_vscode_command("workbench.action.terminal.sendSequence",
+    ["{\"text\": \"git status\\r\"}"])
+  ```
+
+- **`workbench.action.terminal.kill`** - Close the active terminal
+  - Use when: Cleaning up after terminal-based operations
+
+#### 🧪 Testing & Debugging - Basic Controls
+- **`workbench.action.tasks.runTask`** - Run a specific task
+  - Requires task name: `execute_vscode_command("workbench.action.tasks.runTask", ["test"])`
+  - Use when: Running tests, build tasks, or custom workflows defined in tasks.json
+  
+- **`workbench.action.debug.start`** - Start debugging with the current configuration
+- **`workbench.action.debug.run`** - Run without debugging
+- **`workbench.action.debug.stop`** - Stop the active debug session
+- **`workbench.action.debug.restart`** - Restart the debug session
+- **`workbench.action.debug.pause`** - Pause execution at the next statement
+- **`workbench.action.debug.continue`** - Continue execution (F5)
+
+#### 🐛 Debugger - Stepping Commands
+- **`workbench.action.debug.stepOver`** - Step over (F10)
+  - Execute the current line and move to the next line
+  - Does not enter function calls
+  
+- **`workbench.action.debug.stepInto`** - Step into (F11)
+  - Step into the function call on the current line
+  - Use when: Want to debug inside a function
+  
+- **`workbench.action.debug.stepOut`** - Step out (Shift+F11)
+  - Complete execution of current function and return to caller
+  - Use when: Done debugging a function and want to return to caller
+  
+- **`workbench.action.debug.stepBack`** - Step back (reverse debugging if supported)
+
+#### 🔴 Debugger - Breakpoint Management
+- **`editor.debug.action.toggleBreakpoint`** - Toggle breakpoint on current line
+  - Use when: Setting/removing a breakpoint at cursor position
+  - Example: `execute_vscode_command("editor.debug.action.toggleBreakpoint")`
+  
+- **`editor.debug.action.conditionalBreakpoint`** - Add a conditional breakpoint
+  - Breaks only when condition is true
+  - Example: Break only when `x > 100`
+  
+- **`editor.debug.action.toggleInlineBreakpoint`** - Toggle inline breakpoint
+  - For multiple expressions on one line
+  
+- **`workbench.debug.viewlet.action.removeAllBreakpoints`** - Remove all breakpoints
+- **`workbench.debug.viewlet.action.enableAllBreakpoints`** - Enable all breakpoints
+- **`workbench.debug.viewlet.action.disableAllBreakpoints`** - Disable all breakpoints (without removing)
+
+#### 👁️ Debugger - Views & Panels
+- **`workbench.view.debug`** - Open the debug view
+  - Use when: Need to see variables, call stack, breakpoints
+  
+- **`workbench.debug.action.focusVariablesView`** - Focus variables panel
+  - Shows current variable values in scope
+  
+- **`workbench.debug.action.focusWatchView`** - Focus watch expressions panel
+  - Shows values of watch expressions
+  
+- **`workbench.debug.action.focusCallStackView`** - Focus call stack panel
+  - Shows the call stack and allows navigation
+  
+- **`workbench.debug.action.focusBreakpointsView`** - Focus breakpoints panel
+  - List and manage all breakpoints
+
+#### 🔬 Debugger - Watch & Variables
+- **`workbench.debug.viewlet.action.addFunctionBreakpoint`** - Add function breakpoint
+  - Break when a specific function is called
+  
+- **`workbench.action.debug.addWatch`** - Add a watch expression
+  - Monitor an expression's value during debugging
+  
+- **`workbench.action.debug.removeWatch`** - Remove a watch expression
+  
+- **`workbench.debug.action.copyValue`** - Copy variable value
+  - Use when: Need to inspect or save a variable's value
+
+### Debugging Workflows
+
+**Setting up a debugging session:**
+```
+# 1. Open the file to debug
+execute_vscode_command("vscode.open", ["file:///path/to/file.jl"])
+
+# 2. Navigate to specific line
+execute_vscode_command("workbench.action.gotoLine")  # User will enter line number
+
+# 3. Set a breakpoint
+execute_vscode_command("editor.debug.action.toggleBreakpoint")
+
+# 4. Open debug view
+execute_vscode_command("workbench.view.debug")
+
+# 5. Start debugging
+execute_vscode_command("workbench.action.debug.start")
+```
+
+**Debugging workflow - step through code:**
+```
+# When stopped at a breakpoint:
+1. execute_vscode_command("workbench.debug.action.focusVariablesView")  # See current variables
+2. execute_vscode_command("workbench.action.debug.stepOver")  # Execute current line
+3. execute_vscode_command("workbench.action.debug.stepInto")  # Enter function
+4. execute_vscode_command("workbench.action.debug.stepOut")   # Exit function
+5. execute_vscode_command("workbench.action.debug.continue")  # Continue to next breakpoint
+```
+
+**Add watch expressions programmatically:**
+```
+# Monitor a variable or expression during debugging
+execute_vscode_command("workbench.action.debug.addWatch")
+# User will be prompted to enter the expression
+```
+
+**Quick file navigation and breakpoint setup:**
+```
+# Open a file and set a breakpoint
+execute_vscode_command("vscode.open", ["file:///absolute/path/to/src/myfile.jl"])
+execute_vscode_command("editor.debug.action.toggleBreakpoint")
+```
+
+**Conditional breakpoint example:**
+```
+# Set a breakpoint that only triggers when a condition is met
+# 1. Navigate to the line
+# 2. Add conditional breakpoint
+execute_vscode_command("editor.debug.action.conditionalBreakpoint")
+# User will enter condition like: x > 100 || name == "test"
+```
+
+**Clean up after debugging:**
+```
+execute_vscode_command("workbench.action.debug.stop")
+execute_vscode_command("workbench.debug.viewlet.action.removeAllBreakpoints")
+```
+
+#### 🧪 Testing & Debugging (Legacy - Keep for compatibility)
+
+#### 🌿 Git Operations
+- **`git.commit`** - Commit staged changes
+  
+- **`git.refresh`** - Refresh Git status
+  
+- **`git.sync`** - Sync with remote (pull + push)
+
+#### 🔍 Search & Replace
+- **`workbench.action.findInFiles`** - Open find in files
+  
+- **`workbench.action.replaceInFiles`** - Open replace in files
+
+#### 🪟 Window Management
+- **`workbench.action.splitEditor`** - Split the editor
+  
+- **`workbench.action.togglePanel`** - Toggle the bottom panel (terminal, problems, etc.)
+  
+- **`workbench.action.toggleSidebarVisibility`** - Toggle the sidebar
+
+#### 🧩 Extension Management
+- **`workbench.extensions.installExtension`** - Install a VS Code extension
+  - Requires extension ID: `execute_vscode_command("workbench.extensions.installExtension", ["julialang.language-julia"])`
+
+### Common Workflows
+
+**Running shell commands (recommended over exec_repl for fresh Julia processes):**
+```
+# Use terminal.sendSequence for julia --project commands
+execute_vscode_command("workbench.action.terminal.sendSequence",
+  ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
+
+# This avoids approval dialogs and gives you a fresh Julia process
+```
+
+**Before running tests:**
+```
+1. execute_vscode_command("workbench.action.files.saveAll")
+2. Run tests via exec_repl or terminal.sendSequence
+```
+
+**After struct changes:**
+```
+1. execute_vscode_command("workbench.action.files.saveAll")
+2. execute_vscode_command("language-julia.restartREPL")
+3. Wait for REPL to restart, then reload package
+```
+
+**Running package tests in a fresh process:**
+```
+execute_vscode_command("workbench.action.terminal.sendSequence",
+  ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
+```
+3. Wait for REPL to restart, then reload package
+```
+
+**Running automated test task:**
+```
+execute_vscode_command("workbench.action.tasks.runTask", ["test"])
+```
+
+**Focus workflow:**
+```
+# After working in terminal, return to editor:
+execute_vscode_command("workbench.action.focusActiveEditorGroup")
+```

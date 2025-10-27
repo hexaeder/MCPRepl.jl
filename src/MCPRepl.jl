@@ -7,6 +7,29 @@ using Profile
 
 include("MCPServer.jl")
 include("setup.jl")
+include("vscode.jl")
+
+# Helper function to trigger VS Code commands via URI
+function trigger_vscode_uri(uri::String)
+    if Sys.isapple()
+        run(`open $uri`)
+    elseif Sys.islinux()
+        run(`xdg-open $uri`)
+    elseif Sys.iswindows()
+        run(`cmd /c start $uri`)
+    else
+        error("Unsupported operating system")
+    end
+end
+
+# Helper function to build VS Code command URI
+function build_vscode_uri(command::String; args::Union{Nothing,String}=nothing, publisher::String="MCPRepl", name::String="vscode-remote-control")
+    uri = "vscode://$(publisher).$(name)?cmd=$(command)"
+    if args !== nothing
+        uri *= "&args=$(args)"
+    end
+    return uri
+end
 
 struct IOBufferDisplay <: AbstractDisplay
     io::IOBuffer
@@ -399,6 +422,80 @@ function start!(; port = 3000, verbose::Bool = true)
         end,
     )
 
+    vscode_command_tool = MCPTool(
+        "execute_vscode_command",
+        """Execute any VS Code command via the Remote Control extension.
+
+        This tool can trigger any VS Code command that has been allowlisted in the extension configuration.
+        Useful for automating editor operations like saving files, running tasks, managing windows, etc.
+
+        **Prerequisites:**
+        - VS Code Remote Control extension must be installed (via MCPRepl.setup())
+        - The command must be in the allowed commands list (see usage_instructions tool for complete list)
+
+        **Common Command Categories:**
+        - REPL & Window Control: restartREPL, startREPL, reloadWindow
+        - File Operations: saveAll, closeAllEditors, openFile
+        - Navigation: terminal.focus, focusActiveEditorGroup, focusFilesExplorer, quickOpen
+        - Terminal Operations: sendSequence (execute shell commands without approval dialogs)
+        - Testing & Debugging: tasks.runTask, debug.start, debug.stop
+        - Git: git.commit, git.refresh, git.sync
+        - Search: findInFiles, replaceInFiles
+        - Window Management: splitEditor, togglePanel, toggleSidebarVisibility
+        - Extensions: installExtension
+
+        **Examples:**
+        ```
+        execute_vscode_command("language-julia.restartREPL")
+        execute_vscode_command("workbench.action.files.saveAll")
+        execute_vscode_command("workbench.action.terminal.focus")
+        execute_vscode_command("workbench.action.tasks.runTask", ["test"])
+        
+        # Execute shell commands (RECOMMENDED for julia --project commands):
+        execute_vscode_command("workbench.action.terminal.sendSequence",
+          ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
+        ```
+
+        For the complete list of available commands and their descriptions, call the usage_instructions tool.""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "command" => Dict(
+                    "type" => "string",
+                    "description" => "The VS Code command ID to execute (e.g., 'workbench.action.files.saveAll')",
+                ),
+                "args" => Dict(
+                    "type" => "array",
+                    "description" => "Optional array of arguments to pass to the command (JSON-encoded)",
+                    "items" => Dict("type" => "string"),
+                ),
+            ),
+            "required" => ["command"],
+        ),
+        args -> begin
+            try
+                cmd = get(args, "command", "")
+                if isempty(cmd)
+                    return "Error: command parameter is required"
+                end
+                
+                # Build URI with command and optional args
+                args_param = nothing
+                if haskey(args, "args") && !isempty(args["args"])
+                    args_json = JSON3.write(args["args"])
+                    args_param = HTTP.URIs.escapeuri(args_json)
+                end
+                
+                uri = build_vscode_uri(cmd; args=args_param)
+                trigger_vscode_uri(uri)
+                
+                return "VS Code command '$(cmd)' executed successfully."
+            catch e
+                return "Error executing VS Code command: $e. Make sure the VS Code Remote Control extension is installed via MCPRepl.setup()"
+            end
+        end,
+    )
+
     investigate_tool = MCPTool(
         "investigate_environment",
         """Investigate the current Julia environment including pwd, active project, packages, and development packages with their paths.
@@ -411,7 +508,10 @@ function start!(; port = 3000, verbose::Bool = true)
         - Current environment package status
         - Revise.jl status for hot reloading
 
-        This is useful for understanding the development setup and debugging environment issues.""",
+        This is useful for understanding the development setup and debugging environment issues.
+
+        **Tip:** If you need to restart the Julia REPL (e.g., when Revise isn't tracking changes properly),
+        use the execute_vscode_command tool with "language-julia.restartREPL".""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             try
@@ -770,6 +870,431 @@ function start!(; port = 3000, verbose::Bool = true)
         end,
     )
 
+    # Optional formatting tool (requires JuliaFormatter.jl)
+    format_tool = MCPTool(
+        "format_code",
+        """Format Julia code using JuliaFormatter.jl (optional).
+        
+        Formats Julia source files or directories according to standard style guidelines.
+        This tool requires JuliaFormatter.jl to be installed in your environment.
+        
+        # Arguments
+        - `path`: Path to a Julia file or directory to format
+        - `overwrite`: Whether to overwrite files in place (default: true)
+        - `verbose`: Show which files are being formatted (default: true)
+        
+        # Installation
+        If JuliaFormatter is not installed, add it with:
+        ```julia
+        using Pkg; Pkg.add("JuliaFormatter")
+        ```
+        
+        # Examples
+        - Format a single file: `{"path": "src/MyModule.jl"}`
+        - Format entire src directory: `{"path": "src"}`
+        - Preview without overwriting: `{"path": "src/file.jl", "overwrite": false}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "path" => Dict("type" => "string", "description" => "File or directory path to format"),
+                "overwrite" => Dict("type" => "boolean", "description" => "Overwrite files in place", "default" => true),
+                "verbose" => Dict("type" => "boolean", "description" => "Show formatting progress", "default" => true),
+            ),
+            "required" => ["path"],
+        ),
+        function (args)
+            try
+                # Check if JuliaFormatter is available
+                if !isdefined(Main, :JuliaFormatter)
+                    try
+                        @eval Main using JuliaFormatter
+                    catch
+                        return "Error: JuliaFormatter.jl is not installed. Install it with: using Pkg; Pkg.add(\"JuliaFormatter\")"
+                    end
+                end
+                
+                path = get(args, "path", "")
+                overwrite = get(args, "overwrite", true)
+                verbose = get(args, "verbose", true)
+                
+                if isempty(path)
+                    return "Error: path parameter is required"
+                end
+                
+                # Make path absolute
+                abs_path = isabspath(path) ? path : joinpath(pwd(), path)
+                
+                if !ispath(abs_path)
+                    return "Error: Path does not exist: $abs_path"
+                end
+                
+                code = """
+                using JuliaFormatter
+                result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
+                if result
+                    println("✅ Successfully formatted: $abs_path")
+                else
+                    println("ℹ️  No changes needed or formatting failed")
+                end
+                result
+                """
+                
+                execute_repllike(code; description = "[Formatting code at: $abs_path]")
+            catch e
+                "Error formatting code: $e"
+            end
+        end,
+    )
+
+    # Optional linting tool (requires Aqua.jl)
+    lint_tool = MCPTool(
+        "lint_package",
+        """Run Aqua.jl quality assurance tests on a Julia package (optional).
+        
+        Performs comprehensive package quality checks including:
+        - Ambiguity detection in method signatures
+        - Undefined exports
+        - Unbound type parameters
+        - Dependency analysis
+        - Project.toml validation
+        - And more
+        
+        This tool requires Aqua.jl to be installed in your environment.
+        
+        # Arguments
+        - `package_name`: Name of the package to test (default: current project)
+        
+        # Installation
+        If Aqua is not installed, add it with:
+        ```julia
+        using Pkg; Pkg.add("Aqua")
+        ```
+        
+        # Examples
+        - Test current package: `{}`
+        - Test specific package: `{"package_name": "MyPackage"}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "package_name" => Dict("type" => "string", "description" => "Package name to test (defaults to current project)"),
+            ),
+            "required" => [],
+        ),
+        function (args)
+            try
+                # Check if Aqua is available
+                if !isdefined(Main, :Aqua)
+                    try
+                        @eval Main using Aqua
+                    catch
+                        return "Error: Aqua.jl is not installed. Install it with: using Pkg; Pkg.add(\"Aqua\")"
+                    end
+                end
+                
+                pkg_name = get(args, "package_name", nothing)
+                
+                if pkg_name === nothing
+                    # Use current project
+                    code = """
+                    using Aqua
+                    # Get current project name
+                    project_file = Base.active_project()
+                    if project_file === nothing
+                        println("❌ No active project found")
+                    else
+                        using Pkg
+                        proj = Pkg.TOML.parsefile(project_file)
+                        pkg_name = get(proj, "name", nothing)
+                        if pkg_name === nothing
+                            println("❌ No package name found in Project.toml")
+                        else
+                            println("Running Aqua tests for package: \$pkg_name")
+                            # Load the package
+                            @eval using \$(Symbol(pkg_name))
+                            # Run Aqua tests
+                            Aqua.test_all(\$(Symbol(pkg_name)))
+                            println("✅ All Aqua tests passed for \$pkg_name")
+                        end
+                    end
+                    """
+                else
+                    code = """
+                    using Aqua
+                    using $pkg_name
+                    println("Running Aqua tests for package: $pkg_name")
+                    Aqua.test_all($pkg_name)
+                    println("✅ All Aqua tests passed for $pkg_name")
+                    """
+                end
+                
+                execute_repllike(code; description = "[Running Aqua quality tests]")
+            catch e
+                "Error running Aqua tests: $e"
+            end
+        end,
+    )
+
+    # High-level debugging workflow tools
+    open_and_breakpoint_tool = MCPTool(
+        "open_file_and_set_breakpoint",
+        """Open a file in VS Code and set a breakpoint at a specific line.
+        
+        This is a convenience tool that combines file opening and breakpoint setting
+        into a single operation, making it easier to set up debugging.
+        
+        # Arguments
+        - `file_path`: Absolute path to the file to open
+        - `line`: Line number to set the breakpoint (optional, defaults to current cursor position)
+        
+        # Examples
+        - Open file and set breakpoint at line 42: `{"file_path": "/path/to/file.jl", "line": 42}`
+        - Open file (breakpoint at cursor): `{"file_path": "/path/to/file.jl"}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict("type" => "string", "description" => "Absolute path to the file"),
+                "line" => Dict("type" => "integer", "description" => "Line number for breakpoint (optional)"),
+            ),
+            "required" => ["file_path"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                line = get(args, "line", nothing)
+                
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+                
+                # Make sure it's an absolute path
+                abs_path = isabspath(file_path) ? file_path : joinpath(pwd(), file_path)
+                
+                if !isfile(abs_path)
+                    return "Error: File does not exist: $abs_path"
+                end
+                
+                # Open the file using vscode.open command
+                uri = "file://$abs_path"
+                args_json = JSON3.write([uri])
+                args_encoded = HTTP.URIs.escapeuri(args_json)
+                open_uri = build_vscode_uri("vscode.open"; args=args_encoded)
+                trigger_vscode_uri(open_uri)
+                
+                sleep(0.5)  # Give VS Code time to open the file
+                
+                # Navigate to line if specified
+                if line !== nothing
+                    goto_uri = build_vscode_uri("workbench.action.gotoLine")
+                    trigger_vscode_uri(goto_uri)
+                    sleep(0.3)
+                end
+                
+                # Set breakpoint
+                bp_uri = build_vscode_uri("editor.debug.action.toggleBreakpoint")
+                trigger_vscode_uri(bp_uri)
+                
+                result = "Opened $abs_path"
+                if line !== nothing
+                    result *= " and navigated to line $line"
+                end
+                result *= ", breakpoint set"
+                
+                return result
+            catch e
+                return "Error: $e"
+            end
+        end,
+    )
+
+    start_debug_session_tool = MCPTool(
+        "start_debug_session",
+        """Start a debugging session in VS Code.
+        
+        Opens the debug view and starts debugging with the current configuration.
+        Useful after setting breakpoints to begin stepping through code.
+        
+        # Examples
+        - Start debugging: `{}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(),
+            "required" => [],
+        ),
+        function (args)
+            try
+                # Open debug view
+                view_uri = build_vscode_uri("workbench.view.debug")
+                trigger_vscode_uri(view_uri)
+                
+                sleep(0.3)
+                
+                # Start debugging
+                start_uri = build_vscode_uri("workbench.action.debug.start")
+                trigger_vscode_uri(start_uri)
+                
+                return "Debug session started. Use stepping commands to navigate through code."
+            catch e
+                return "Error starting debug session: $e"
+            end
+        end,
+    )
+
+    add_watch_expression_tool = MCPTool(
+        "add_watch_expression",
+        """Add a watch expression to monitor during debugging.
+        
+        Watch expressions let you monitor the value of variables or expressions
+        as you step through code during debugging.
+        
+        # Arguments
+        - `expression`: The Julia expression to watch (e.g., "x", "length(arr)", "myvar > 10")
+        
+        # Examples
+        - Watch a variable: `{"expression": "x"}`
+        - Watch an expression: `{"expression": "length(my_array)"}`
+        - Watch a condition: `{"expression": "counter > 100"}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "expression" => Dict("type" => "string", "description" => "Expression to watch"),
+            ),
+            "required" => ["expression"],
+        ),
+        function (args)
+            try
+                expression = get(args, "expression", "")
+                
+                if isempty(expression)
+                    return "Error: expression is required"
+                end
+                
+                # Focus watch view first
+                watch_uri = build_vscode_uri("workbench.debug.action.focusWatchView")
+                trigger_vscode_uri(watch_uri)
+                
+                sleep(0.2)
+                
+                # Add watch expression
+                add_uri = build_vscode_uri("workbench.action.debug.addWatch")
+                trigger_vscode_uri(add_uri)
+                
+                return "Watch expression dialog opened for: $expression (user will need to enter it)"
+            catch e
+                return "Error adding watch expression: $e"
+            end
+        end,
+    )
+
+    quick_file_open_tool = MCPTool(
+        "quick_open_file",
+        """Quickly open a file using VS Code's quick open (Cmd+P/Ctrl+P).
+        
+        Opens the quick file picker, allowing navigation to files by name.
+        This is faster than navigating through the file explorer for known files.
+        
+        # Examples
+        - Open quick picker: `{}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(),
+            "required" => [],
+        ),
+        function (args)
+            try
+                quick_uri = build_vscode_uri("workbench.action.quickOpen")
+                trigger_vscode_uri(quick_uri)
+                
+                return "Quick open dialog opened (user will type filename)"
+            catch e
+                return "Error opening quick open: $e"
+            end
+        end,
+    )
+
+    copy_debug_value_tool = MCPTool(
+        "copy_debug_value",
+        """Copy the value of a variable or expression during debugging to the clipboard.
+        
+        This tool allows AI agents to inspect variable values during a debug session.
+        The value is copied to the clipboard and can then be read using shell commands.
+        
+        **Prerequisites:**
+        - Must be in an active debug session (paused at a breakpoint)
+        - The variable/expression must be selected or focused in the debug view
+        
+        **Workflow:**
+        1. Focus the appropriate debug view (Variables or Watch)
+        2. The user or AI should have the variable selected/focused
+        3. Copy the value to clipboard
+        4. Read clipboard contents to get the value
+        
+        # Arguments
+        - `view`: Which debug view to focus - "variables" or "watch" (default: "variables")
+        
+        # Examples
+        - Copy from variables view: `{"view": "variables"}`
+        - Copy from watch view: `{"view": "watch"}`
+        
+        **Note:** After copying, use a shell command to read the clipboard:
+        - macOS: `pbpaste`
+        - Linux: `xclip -selection clipboard -o` or `xsel --clipboard --output`
+        - Windows: `powershell Get-Clipboard`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "view" => Dict(
+                    "type" => "string",
+                    "description" => "Debug view to focus: 'variables' or 'watch'",
+                    "enum" => ["variables", "watch"],
+                    "default" => "variables"
+                ),
+            ),
+            "required" => [],
+        ),
+        function (args)
+            try
+                view = get(args, "view", "variables")
+                
+                # Focus the appropriate debug view
+                if view == "watch"
+                    focus_uri = build_vscode_uri("workbench.debug.action.focusWatchView")
+                else
+                    focus_uri = build_vscode_uri("workbench.debug.action.focusVariablesView")
+                end
+                trigger_vscode_uri(focus_uri)
+                
+                sleep(0.2)
+                
+                # Copy the selected value
+                copy_uri = build_vscode_uri("workbench.action.debug.copyValue")
+                trigger_vscode_uri(copy_uri)
+                
+                clipboard_cmd = if Sys.isapple()
+                    "pbpaste"
+                elseif Sys.islinux()
+                    "xclip -selection clipboard -o (or xsel --clipboard --output)"
+                elseif Sys.iswindows()
+                    "powershell Get-Clipboard"
+                else
+                    "appropriate clipboard command for your OS"
+                end
+                
+                return """Value copied to clipboard from $(view) view. 
+To read the value, run in terminal: $clipboard_cmd
+Note: Make sure a variable is selected/focused in the debug view before copying."""
+            catch e
+                return "Error copying debug value: $e"
+            end
+        end,
+    )
+
     # Create and start server
     println("Starting MCP server on port $port...")
     SERVER[] = start_mcp_server(
@@ -777,6 +1302,7 @@ function start!(; port = 3000, verbose::Bool = true)
             usage_instructions_tool,
             repl_tool,
             whitespace_tool,
+            vscode_command_tool,
             investigate_tool,
             search_methods_tool,
             macro_expand_tool,
@@ -785,6 +1311,13 @@ function start!(; port = 3000, verbose::Bool = true)
             list_names_tool,
             code_lowered_tool,
             code_typed_tool,
+            format_tool,
+            lint_tool,
+            open_and_breakpoint_tool,
+            start_debug_session_tool,
+            add_watch_expression_tool,
+            quick_file_open_tool,
+            copy_debug_value_tool,
         ],
         port;
         verbose = verbose,

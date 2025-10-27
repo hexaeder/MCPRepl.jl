@@ -269,6 +269,18 @@ function check_vscode_startup_configured()
     return any(arg -> contains(arg, "--load") && contains(arg, ".julia-startup.jl"), args)
 end
 
+function check_vscode_extension_installed()
+    """Check if the VS Code Remote Control extension is installed"""
+    ext_dir = vscode_extensions_dir()
+    # Check for any version of the extension
+    try
+        entries = readdir(ext_dir)
+        return any(entry -> startswith(entry, "MCPRepl.vscode-remote-control"), entries)
+    catch
+        return false
+    end
+end
+
 function prompt_and_setup_vscode_startup(port::Int)
     """Prompt user to install startup script and configure VS Code settings"""
 
@@ -337,6 +349,140 @@ function prompt_and_setup_vscode_startup(port::Int)
         return success
     else
         println("   ⏭️  Skipped startup script configuration")
+        return true
+    end
+end
+
+function prompt_and_setup_vscode_extension()
+    """Prompt user to install VS Code Remote Control extension"""
+
+    has_extension = check_vscode_extension_installed()
+
+    println()
+    println("📝 VS Code Remote Control Extension")
+    println()
+    
+    if has_extension
+        println("   ✓ Extension already installed")
+        print("   Reinstall VS Code Remote Control extension? [Y/n]: ")
+    else
+        println("   For REPL restart functionality via MCP tools, we can install")
+        println("   a VS Code extension that allows the MCP server to trigger")
+        println("   VS Code commands like restarting the Julia REPL.")
+        println()
+        print("   Install VS Code Remote Control extension? [Y/n]: ")
+    end
+    
+    response = strip(lowercase(readline()))
+
+    # Default to yes
+    if isempty(response) || response == "y" || response == "yes"
+        try
+            # Install the extension with Julia REPL commands allowed
+            # This will remove old versions first
+            install_vscode_remote_control(
+                pwd();
+                allowed_commands = [
+                    # REPL & Window Control
+                    "language-julia.restartREPL",
+                    "language-julia.startREPL",
+                    "workbench.action.reloadWindow",
+                    
+                    # File Operations
+                    "workbench.action.files.saveAll",
+                    "workbench.action.closeAllEditors",
+                    "workbench.action.files.openFile",
+                    "vscode.open",
+                    "vscode.openWith",
+                    
+                    # Navigation & Focus
+                    "workbench.action.terminal.focus",
+                    "workbench.action.focusActiveEditorGroup",
+                    "workbench.files.action.focusFilesExplorer",
+                    "workbench.action.quickOpen",
+                    "workbench.action.gotoLine",
+                    "workbench.action.navigateToLastEditLocation",
+                    "editor.action.goToLocations",
+                    "workbench.action.showAllSymbols",
+                    
+                    # Terminal Operations
+                    "workbench.action.terminal.new",
+                    "workbench.action.terminal.sendSequence",
+                    "workbench.action.terminal.kill",
+                    
+                    # Testing & Debugging - Basic Controls
+                    "workbench.action.tasks.runTask",
+                    "workbench.action.debug.start",
+                    "workbench.action.debug.run",
+                    "workbench.action.debug.stop",
+                    "workbench.action.debug.restart",
+                    "workbench.action.debug.pause",
+                    "workbench.action.debug.continue",
+                    
+                    # Debugger - Stepping
+                    "workbench.action.debug.stepOver",
+                    "workbench.action.debug.stepInto",
+                    "workbench.action.debug.stepOut",
+                    "workbench.action.debug.stepBack",
+                    
+                    # Debugger - Breakpoints
+                    "editor.debug.action.toggleBreakpoint",
+                    "editor.debug.action.conditionalBreakpoint",
+                    "editor.debug.action.toggleInlineBreakpoint",
+                    "workbench.debug.viewlet.action.removeAllBreakpoints",
+                    "workbench.debug.viewlet.action.enableAllBreakpoints",
+                    "workbench.debug.viewlet.action.disableAllBreakpoints",
+                    
+                    # Debugger - Views & Panels
+                    "workbench.view.debug",
+                    "workbench.debug.action.focusVariablesView",
+                    "workbench.debug.action.focusWatchView",
+                    "workbench.debug.action.focusCallStackView",
+                    "workbench.debug.action.focusBreakpointsView",
+                    
+                    # Debugger - Watch & Variables
+                    "workbench.debug.viewlet.action.addFunctionBreakpoint",
+                    "workbench.action.debug.addWatch",
+                    "workbench.action.debug.removeWatch",
+                    "workbench.debug.action.copyValue",
+                    
+                    # Git Operations
+                    "git.commit",
+                    "git.refresh",
+                    "git.sync",
+                    
+                    # Search & Replace
+                    "workbench.action.findInFiles",
+                    "workbench.action.replaceInFiles",
+                    
+                    # Window Management
+                    "workbench.action.splitEditor",
+                    "workbench.action.togglePanel",
+                    "workbench.action.toggleSidebarVisibility",
+                    
+                    # Extension Management
+                    "workbench.extensions.installExtension",
+                ],
+                require_confirmation = false,
+            )
+            if has_extension
+                println("   ✅ Reinstalled VS Code Remote Control extension")
+            else
+                println("   ✅ Installed VS Code Remote Control extension")
+            end
+            println("   ✅ Configured allowed commands")
+            println()
+            println("   💡 Reload VS Code window to activate the extension")
+            return true
+        catch e
+            println("   ❌ Failed to install extension: $e")
+            return false
+        end
+    else
+        println("   ⏭️  Skipped extension installation")
+        if !has_extension
+            println("   💡 Note: restart_repl tool will not work without this extension")
+        end
         return true
     end
 end
@@ -640,13 +786,16 @@ function setup(; port::Union{Int,Nothing} = nothing)
             println("\n   Adding VS Code HTTP transport...")
             if add_vscode_mcp_server("http", port)
                 println("   ✅ Successfully configured VS Code HTTP transport")
-                println("   � Server URL: http://localhost:$port")
+                println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
                 prompt_and_setup_vscode_startup(port)
 
+                # Prompt for VS Code extension installation
+                prompt_and_setup_vscode_extension()
+
                 println()
-                println("   � Reload VS Code window to apply changes")
+                println("   🔄 Reload VS Code window to apply changes")
             else
                 println("   ❌ Failed to configure VS Code HTTP transport")
             end
@@ -656,13 +805,16 @@ function setup(; port::Union{Int,Nothing} = nothing)
             println("\n   Adding/Replacing VS Code with HTTP transport...")
             if add_vscode_mcp_server("http", port)
                 println("   ✅ Successfully configured VS Code HTTP transport")
-                println("   � Server URL: http://localhost:$port")
+                println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
                 prompt_and_setup_vscode_startup(port)
 
+                # Prompt for VS Code extension installation
+                prompt_and_setup_vscode_extension()
+
                 println()
-                println("   � Reload VS Code window to apply changes")
+                println("   🔄 Reload VS Code window to apply changes")
             else
                 println("   ❌ Failed to configure VS Code HTTP transport")
             end
@@ -673,6 +825,9 @@ function setup(; port::Union{Int,Nothing} = nothing)
 
                 # Prompt for startup script installation
                 prompt_and_setup_vscode_startup(port)
+
+                # Prompt for VS Code extension installation
+                prompt_and_setup_vscode_extension()
 
                 println()
                 println("   💡 Reload VS Code window to apply changes")
@@ -688,6 +843,9 @@ function setup(; port::Union{Int,Nothing} = nothing)
 
                 # Prompt for startup script installation
                 prompt_and_setup_vscode_startup(port)
+
+                # Prompt for VS Code extension installation
+                prompt_and_setup_vscode_extension()
 
                 println()
                 println("   💡 Reload VS Code window to apply changes")
