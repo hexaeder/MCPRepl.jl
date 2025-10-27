@@ -1,3 +1,4 @@
+using HTTP
 # Tool definition structure
 struct MCPTool
     name::String

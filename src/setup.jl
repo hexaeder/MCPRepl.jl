@@ -200,29 +200,27 @@ try
             try
                 sleep(1)
                 port = parse(Int, get(ENV, "JULIA_MCP_PORT", "$port"))
-                MCPRepl.start!(;port=port)
-                @info "✓ MCP REPL server started on port \$port"
+                MCPRepl.start!(;port=port, verbose=false)
                 
-                # Test server connectivity with a simple request
-                sleep(0.5)  # Brief delay to ensure server is fully initialized
-                try
-                    using Sockets
-                    sock = connect("localhost", port)
-                    
-                    # Simple JSON-RPC request to test connectivity
-                    request = ""\"
-                    POST / HTTP/1.1\\r
-                    Host: localhost:\$port\\r
-                    Content-Type: application/json\\r
-                    Content-Length: 139\\r
-                    \\r
-                    {\\"jsonrpc\\":\\"2.0\\",\\"id\\":1,\\"method\\":\\"tools/call\\",\\"params\\":{\\"name\\":\\"exec_repl\\",\\"arguments\\":{\\"expression\\":\\"println(\\\\\\"🎉 MCP Server ready!\\\\\\")\\"}}}
-                    ""\"
-                    
-                    write(sock, request)
-                    close(sock)
-                catch e
-                    # Silently ignore connection test errors
+                # Wait a moment for server to fully initialize
+                sleep(0.5)
+                
+                # Test server connectivity
+                test_result = MCPRepl.test_server(port)
+                
+                if test_result
+                    @info "✓ MCP REPL server started and responding on port $port"
+                else
+                    @info "✓ MCP REPL server started on port $port"
+                end
+                # Refresh the prompt to ensure clean display after test completes
+                if isdefined(Base, :active_repl)
+                    try
+                        println()  # Add clean newline
+                        REPL.LineEdit.refresh_line(Base.active_repl.mistate)
+                    catch
+                        # Ignore if REPL isn't ready yet
+                    end
                 end
             catch e
                 @warn "Could not start MCP REPL server" exception=e
