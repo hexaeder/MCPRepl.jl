@@ -12,8 +12,13 @@ struct IOBufferDisplay <: AbstractDisplay
     io::IOBuffer
     IOBufferDisplay() = new(IOBuffer())
 end
+# Resolve ambiguities with Base.Multimedia
+Base.displayable(::IOBufferDisplay, ::AbstractString) = true
+Base.displayable(::IOBufferDisplay, ::MIME) = true
 Base.displayable(::IOBufferDisplay, _) = true
 Base.display(d::IOBufferDisplay, x) = show(d.io, MIME("text/plain"), x)
+Base.display(d::IOBufferDisplay, mime::AbstractString, x) = show(d.io, MIME(mime), x)
+Base.display(d::IOBufferDisplay, mime::MIME, x) = show(d.io, mime, x)
 Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 
 function execute_repllike(
