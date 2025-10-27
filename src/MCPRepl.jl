@@ -4,10 +4,84 @@ using REPL
 using JSON3
 using InteractiveUtils
 using Profile
+using HTTP
 
 include("MCPServer.jl")
 include("setup.jl")
 include("vscode.jl")
+
+# ============================================================================
+# VS Code Response Storage for Bidirectional Communication
+# ============================================================================
+
+# Global dictionary to store VS Code command responses
+# Key: request_id (String), Value: (result, error, timestamp)
+const VSCODE_RESPONSES = Dict{String,Tuple{Any,Union{Nothing,String},Float64}}()
+
+# Lock for thread-safe access to response dictionary
+const VSCODE_RESPONSE_LOCK = ReentrantLock()
+
+"""
+    store_vscode_response(request_id::String, result, error::Union{Nothing,String})
+
+Store a response from VS Code for later retrieval.
+Thread-safe storage using VSCODE_RESPONSE_LOCK.
+"""
+function store_vscode_response(request_id::String, result, error::Union{Nothing,String})
+    lock(VSCODE_RESPONSE_LOCK) do
+        VSCODE_RESPONSES[request_id] = (result, error, time())
+    end
+end
+
+"""
+    retrieve_vscode_response(request_id::String; timeout::Float64=5.0, poll_interval::Float64=0.1)
+
+Retrieve a stored VS Code response, waiting up to `timeout` seconds.
+Returns (result, error) tuple or throws TimeoutError.
+Automatically cleans up the stored response after retrieval.
+"""
+function retrieve_vscode_response(request_id::String; timeout::Float64=5.0, poll_interval::Float64=0.1)
+    start_time = time()
+    
+    while (time() - start_time) < timeout
+        response = lock(VSCODE_RESPONSE_LOCK) do
+            get(VSCODE_RESPONSES, request_id, nothing)
+        end
+        
+        if response !== nothing
+            # Clean up the stored response
+            lock(VSCODE_RESPONSE_LOCK) do
+                delete!(VSCODE_RESPONSES, request_id)
+            end
+            return (response[1], response[2])  # (result, error)
+        end
+        
+        sleep(poll_interval)
+    end
+    
+    error("Timeout waiting for VS Code response (request_id: $request_id)")
+end
+
+"""
+    cleanup_old_vscode_responses(max_age::Float64=60.0)
+
+Remove responses older than `max_age` seconds to prevent memory leaks.
+Should be called periodically.
+"""
+function cleanup_old_vscode_responses(max_age::Float64=60.0)
+    current_time = time()
+    lock(VSCODE_RESPONSE_LOCK) do
+        for (request_id, (_, _, timestamp)) in collect(VSCODE_RESPONSES)
+            if (current_time - timestamp) > max_age
+                delete!(VSCODE_RESPONSES, request_id)
+            end
+        end
+    end
+end
+
+# ============================================================================
+# VS Code URI Helpers
+# ============================================================================
 
 # Helper function to trigger VS Code commands via URI
 function trigger_vscode_uri(uri::String)
@@ -23,10 +97,20 @@ function trigger_vscode_uri(uri::String)
 end
 
 # Helper function to build VS Code command URI
-function build_vscode_uri(command::String; args::Union{Nothing,String}=nothing, publisher::String="MCPRepl", name::String="vscode-remote-control")
+function build_vscode_uri(command::String; args::Union{Nothing,String}=nothing, 
+                         request_id::Union{Nothing,String}=nothing,
+                         mcp_port::Int=3000,
+                         publisher::String="MCPRepl", 
+                         name::String="vscode-remote-control")
     uri = "vscode://$(publisher).$(name)?cmd=$(command)"
     if args !== nothing
         uri *= "&args=$(args)"
+    end
+    if request_id !== nothing
+        uri *= "&request_id=$(request_id)"
+    end
+    if mcp_port != 3000
+        uri *= "&mcp_port=$(mcp_port)"
     end
     return uri
 end
@@ -433,6 +517,11 @@ function start!(; port = 3000, verbose::Bool = true)
         - VS Code Remote Control extension must be installed (via MCPRepl.setup())
         - The command must be in the allowed commands list (see usage_instructions tool for complete list)
 
+        **Bidirectional Communication:**
+        - Set `wait_for_response=true` to wait for and return the command's result
+        - Useful for commands that return values (e.g., getting debug variable values)
+        - Default timeout is 5 seconds (configurable via `timeout` parameter)
+
         **Common Command Categories:**
         - REPL & Window Control: restartREPL, startREPL, reloadWindow
         - File Operations: saveAll, closeAllEditors, openFile
@@ -454,6 +543,9 @@ function start!(; port = 3000, verbose::Bool = true)
         # Execute shell commands (RECOMMENDED for julia --project commands):
         execute_vscode_command("workbench.action.terminal.sendSequence",
           ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
+        
+        # Get a value back from VS Code:
+        execute_vscode_command("someCommand", wait_for_response=true, timeout=10.0)
         ```
 
         For the complete list of available commands and their descriptions, call the usage_instructions tool.""",
@@ -469,6 +561,16 @@ function start!(; port = 3000, verbose::Bool = true)
                     "description" => "Optional array of arguments to pass to the command (JSON-encoded)",
                     "items" => Dict("type" => "string"),
                 ),
+                "wait_for_response" => Dict(
+                    "type" => "boolean",
+                    "description" => "Wait for command result (default: false). Enable for commands that return values.",
+                    "default" => false,
+                ),
+                "timeout" => Dict(
+                    "type" => "number",
+                    "description" => "Timeout in seconds when wait_for_response=true (default: 5.0)",
+                    "default" => 5.0,
+                ),
             ),
             "required" => ["command"],
         ),
@@ -479,6 +581,12 @@ function start!(; port = 3000, verbose::Bool = true)
                     return "Error: command parameter is required"
                 end
                 
+                wait_for_response = get(args, "wait_for_response", false)
+                timeout = get(args, "timeout", 5.0)
+                
+                # Generate unique request ID if waiting for response
+                request_id = wait_for_response ? string(rand(UInt128), base=16) : nothing
+                
                 # Build URI with command and optional args
                 args_param = nothing
                 if haskey(args, "args") && !isempty(args["args"])
@@ -486,10 +594,36 @@ function start!(; port = 3000, verbose::Bool = true)
                     args_param = HTTP.URIs.escapeuri(args_json)
                 end
                 
-                uri = build_vscode_uri(cmd; args=args_param)
+                uri = build_vscode_uri(cmd; args=args_param, request_id=request_id)
                 trigger_vscode_uri(uri)
                 
-                return "VS Code command '$(cmd)' executed successfully."
+                # If waiting for response, poll for it
+                if wait_for_response
+                    try
+                        result, error = retrieve_vscode_response(request_id; timeout=timeout)
+                        
+                        if error !== nothing
+                            return "VS Code command '$(cmd)' failed: $error"
+                        end
+                        
+                        # Format result for display
+                        if result === nothing
+                            return "VS Code command '$(cmd)' executed successfully (no return value)"
+                        else
+                            # Pretty-print the result
+                            result_str = try
+                                JSON3.pretty(result)
+                            catch
+                                string(result)
+                            end
+                            return "VS Code command '$(cmd)' result:\n$result_str"
+                        end
+                    catch e
+                        return "Error waiting for VS Code response: $e"
+                    end
+                else
+                    return "VS Code command '$(cmd)' executed successfully."
+                end
             catch e
                 return "Error executing VS Code command: $e. Make sure the VS Code Remote Control extension is installed via MCPRepl.setup()"
             end

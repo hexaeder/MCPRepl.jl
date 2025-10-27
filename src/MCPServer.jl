@@ -21,6 +21,40 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
         body = String(req.body)
 
         try
+            # Handle VS Code response endpoint (for bidirectional communication)
+            if req.target == "/vscode-response" && req.method == "POST"
+                try
+                    response_data = JSON3.read(body)
+                    request_id = get(response_data, :request_id, nothing)
+                    
+                    if request_id === nothing
+                        return HTTP.Response(
+                            400,
+                            ["Content-Type" => "application/json"],
+                            JSON3.write(Dict("error" => "Missing request_id")),
+                        )
+                    end
+                    
+                    result = get(response_data, :result, nothing)
+                    error = get(response_data, :error, nothing)
+                    
+                    # Store the response using MCPRepl function
+                    MCPRepl.store_vscode_response(string(request_id), result, error)
+                    
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON3.write(Dict("status" => "ok")),
+                    )
+                catch e
+                    return HTTP.Response(
+                        500,
+                        ["Content-Type" => "application/json"],
+                        JSON3.write(Dict("error" => "Failed to process response: $e")),
+                    )
+                end
+            end
+            
             # Handle OAuth well-known metadata requests first (before JSON parsing)
             if req.target == "/.well-known/oauth-authorization-server"
                 oauth_metadata = Dict(

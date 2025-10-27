@@ -97,10 +97,19 @@ function install_vscode_remote_control(workspace_dir::AbstractString;
     function activate(context) {
       const handler = {
         async handleUri(uri) {
+          let requestId = null;
+          let mcpPort = 3000;  // Default MCP server port
+          
           try {
             const query = new URLSearchParams(uri.query || "");
             const cmd = query.get('cmd') || '';
             const argsRaw = query.get('args');
+            requestId = query.get('request_id');
+            const portRaw = query.get('mcp_port');
+            
+            if (portRaw) {
+              mcpPort = parseInt(portRaw, 10);
+            }
 
             if (!cmd) {
               vscode.window.showErrorMessage('Remote Control: missing "cmd".');
@@ -115,6 +124,7 @@ function install_vscode_remote_control(workspace_dir::AbstractString;
                 args = Array.isArray(parsed) ? parsed : [parsed];
               } catch (e) {
                 vscode.window.showErrorMessage('Remote Control: invalid args JSON: ' + e);
+                await sendResponse(mcpPort, requestId, null, 'Failed to parse args: ' + e);
                 return;
               }
             }
@@ -124,7 +134,9 @@ function install_vscode_remote_control(workspace_dir::AbstractString;
             const requireConfirmation = cfg.get('requireConfirmation', true);
 
             if (!allowed.includes(cmd)) {
-              vscode.window.showErrorMessage('Remote Control: command not allowed: ' + cmd);
+              const msg = 'Remote Control: command not allowed: ' + cmd;
+              vscode.window.showErrorMessage(msg);
+              await sendResponse(mcpPort, requestId, null, msg);
               return;
             }
 
@@ -133,16 +145,67 @@ function install_vscode_remote_control(workspace_dir::AbstractString;
                 `Run command: ${cmd}${args.length ? ' with args' : ''}?`,
                 { modal: true }, 'Run'
               );
-              if (ok !== 'Run') return;
+              if (ok !== 'Run') {
+                await sendResponse(mcpPort, requestId, null, 'User cancelled command');
+                return;
+              }
             }
 
-            await vscode.commands.executeCommand(cmd, ...args);
+            // Execute command and capture result
+            const result = await vscode.commands.executeCommand(cmd, ...args);
+            
+            // Send result back to MCP server if request_id was provided
+            await sendResponse(mcpPort, requestId, result, null);
+            
           } catch (err) {
             vscode.window.showErrorMessage('Remote Control error: ' + err);
+            await sendResponse(mcpPort, requestId, null, String(err));
           }
         }
       };
       context.subscriptions.push(vscode.window.registerUriHandler(handler));
+    }
+
+    // Helper function to send response back to MCP server
+    async function sendResponse(port, requestId, result, error) {
+      // Only send if requestId was provided (indicates caller wants response)
+      if (!requestId) return;
+      
+      try {
+        const http = require('http');
+        
+        const payload = JSON.stringify({
+          request_id: requestId,
+          result: result,
+          error: error,
+          timestamp: Date.now()
+        });
+        
+        const options = {
+          hostname: 'localhost',
+          port: port,
+          path: '/vscode-response',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+          }
+        };
+        
+        const req = http.request(options, (res) => {
+          // Consume response data to free up memory
+          res.on('data', () => {});
+        });
+        
+        req.on('error', (err) => {
+          console.error('Failed to send response to MCP server:', err);
+        });
+        
+        req.write(payload);
+        req.end();
+      } catch (e) {
+        console.error('Error in sendResponse:', e);
+      }
     }
 
     function deactivate() {}
