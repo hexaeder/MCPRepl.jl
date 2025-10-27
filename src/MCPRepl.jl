@@ -162,6 +162,8 @@ function execute_repllike(
     end
 
     # Capture stdout/stderr during execution
+    # Note: This buffers output until completion - real-time streaming is complex
+    # due to Julia's IO system and REPL architecture
     captured_output = Pipe()
     response = redirect_stdout(captured_output) do
         redirect_stderr(captured_output) do
