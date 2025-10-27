@@ -39,7 +39,7 @@ function execute_repllike(str)
     captured_output = Pipe()
     response = redirect_stdout(captured_output) do
         redirect_stderr(captured_output) do
-            r = REPL.eval_with_backend(expr, backend)
+            r = REPL.eval_on_backend(expr, backend)
             close(Base.pipe_writer(captured_output))
             r
         end
@@ -247,7 +247,7 @@ function repl_status_report()
     end
 end
 
-function start!(; verbose::Bool = true)
+function start!(;port=3000, verbose::Bool = true)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     usage_instructions_tool = MCPTool(
@@ -367,8 +367,8 @@ function start!(; verbose::Bool = true)
     )
 
     # Create and start server
-    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool, whitespace_tool, investigate_tool], 3000; verbose=verbose)
-
+    println("Starting MCP server on port $port...")
+    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool, whitespace_tool, investigate_tool], port; verbose=verbose)
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
     else

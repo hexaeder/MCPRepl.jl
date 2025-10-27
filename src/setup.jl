@@ -1,5 +1,355 @@
 using JSON3
 
+function get_vscode_workspace_mcp_path()
+    # Look for .vscode/mcp.json in current directory
+    vscode_dir = joinpath(pwd(), ".vscode")
+    return joinpath(vscode_dir, "mcp.json")
+end
+
+function read_vscode_mcp_config()
+    mcp_path = get_vscode_workspace_mcp_path()
+    
+    if !isfile(mcp_path)
+        return nothing
+    end
+    
+    try
+        content = read(mcp_path, String)
+        return JSON3.read(content, Dict)
+    catch
+        return nothing
+    end
+end
+
+function write_vscode_mcp_config(config::Dict)
+    mcp_path = get_vscode_workspace_mcp_path()
+    vscode_dir = dirname(mcp_path)
+    
+    # Create .vscode directory if it doesn't exist
+    if !isdir(vscode_dir)
+        mkdir(vscode_dir)
+    end
+    
+    try
+        io = IOBuffer()
+        JSON3.pretty(io, config)
+        content = String(take!(io))
+        write(mcp_path, content)
+        return true
+    catch e
+        @warn "Failed to write VS Code config" exception=e
+        return false
+    end
+end
+
+function check_vscode_status()
+    config = read_vscode_mcp_config()
+    
+    if config === nothing
+        return :not_configured
+    end
+    
+    servers = get(config, "servers", Dict())
+    
+    # Look for julia-repl or similar server
+    for (name, server_config) in servers
+        if contains(lowercase(string(name)), "julia")
+            server_type = get(server_config, "type", "")
+            if server_type == "http"
+                return :configured_http
+            elseif server_type == "stdio"
+                return :configured_stdio
+            else
+                return :configured_unknown
+            end
+        end
+    end
+    
+    return :not_configured
+end
+
+function add_vscode_mcp_server(transport_type::String, port::Int=3000)
+    config = read_vscode_mcp_config()
+    
+    if config === nothing
+        config = Dict(
+            "servers" => Dict(),
+            "inputs" => []
+        )
+    end
+    
+    if !haskey(config, "servers")
+        config["servers"] = Dict()
+    end
+    
+    if transport_type == "http"
+        config["servers"]["julia-repl"] = Dict(
+            "type" => "http",
+            "url" => "http://localhost:$port"
+        )
+    elseif transport_type == "stdio"
+        adapter_path = joinpath(pkgdir(@__MODULE__), "mcp-julia-adapter")
+        config["servers"]["julia-repl"] = Dict(
+            "type" => "stdio",
+            "command" => adapter_path,
+            "args" => [string(port)]
+        )
+    else
+        return false
+    end
+    
+    return write_vscode_mcp_config(config)
+end
+
+function remove_vscode_mcp_server()
+    config = read_vscode_mcp_config()
+    
+    if config === nothing
+        return true  # Nothing to remove
+    end
+    
+    servers = get(config, "servers", Dict())
+    
+    # Remove any Julia-related server
+    for name in collect(keys(servers))
+        if contains(lowercase(string(name)), "julia")
+            delete!(servers, name)
+        end
+    end
+    
+    config["servers"] = servers
+    return write_vscode_mcp_config(config)
+end
+
+function get_vscode_settings_path()
+    vscode_dir = joinpath(pwd(), ".vscode")
+    return joinpath(vscode_dir, "settings.json")
+end
+
+function read_vscode_settings()
+    settings_path = get_vscode_settings_path()
+    
+    if !isfile(settings_path)
+        return Dict()
+    end
+    
+    try
+        content = read(settings_path, String)
+        # Handle JSON with comments (JSONC)
+        lines = split(content, '\n')
+        cleaned_lines = filter(line -> !startswith(strip(line), "//"), lines)
+        cleaned_content = join(cleaned_lines, '\n')
+        return JSON3.read(cleaned_content, Dict)
+    catch e
+        @warn "Failed to read VS Code settings.json" exception=e
+        return Dict()
+    end
+end
+
+function write_vscode_settings(settings::Dict)
+    settings_path = get_vscode_settings_path()
+    vscode_dir = dirname(settings_path)
+    
+    # Create .vscode directory if it doesn't exist
+    if !isdir(vscode_dir)
+        mkdir(vscode_dir)
+    end
+    
+    try
+        # Pretty print JSON with indentation
+        io = IOBuffer()
+        JSON3.pretty(io, settings)
+        content = String(take!(io))
+        write(settings_path, content)
+        return true
+    catch e
+        @warn "Failed to write VS Code settings.json" exception=e
+        return false
+    end
+end
+
+function get_startup_script_path()
+    return joinpath(pwd(), ".julia-startup.jl")
+end
+
+function has_startup_script()
+    return isfile(get_startup_script_path())
+end
+
+function install_startup_script(port::Int=3000)
+    startup_path = get_startup_script_path()
+    
+    startup_content = """
+using Pkg
+Pkg.activate(".")
+import Base.Threads
+using MCPRepl
+
+# Load Revise for hot reloading (optional but recommended)
+try
+    using Revise
+    @info "✓ Revise loaded - code changes will be tracked and auto-reloaded"
+catch e
+    @info "ℹ Revise not loaded (optional - install with: Pkg.add(\\"Revise\\"))"
+end
+
+# Start MCP REPL server for VS Code Copilot integration
+try
+    if Threads.threadid() == 1
+        Threads.@spawn begin
+            try
+                sleep(1)
+                port = parse(Int, get(ENV, "JULIA_MCP_PORT", "$port"))
+                MCPRepl.start!(;port=port)
+                @info "✓ MCP REPL server started on port \$port"
+                
+                # Test server connectivity with a simple request
+                sleep(0.5)  # Brief delay to ensure server is fully initialized
+                try
+                    using Sockets
+                    sock = connect("localhost", port)
+                    
+                    # Simple JSON-RPC request to test connectivity
+                    request = ""\"
+                    POST / HTTP/1.1\\r
+                    Host: localhost:\$port\\r
+                    Content-Type: application/json\\r
+                    Content-Length: 139\\r
+                    \\r
+                    {\\"jsonrpc\\":\\"2.0\\",\\"id\\":1,\\"method\\":\\"tools/call\\",\\"params\\":{\\"name\\":\\"exec_repl\\",\\"arguments\\":{\\"expression\\":\\"println(\\\\\\"🎉 MCP Server ready!\\\\\\")\\"}}}
+                    ""\"
+                    
+                    write(sock, request)
+                    close(sock)
+                catch e
+                    # Silently ignore connection test errors
+                end
+            catch e
+                @warn "Could not start MCP REPL server" exception=e
+            end
+        end
+    end
+catch e
+    @warn "Could not start MCP REPL server" exception=e
+end
+"""
+    
+    try
+        write(startup_path, startup_content)
+        return true
+    catch e
+        @warn "Failed to write startup script" exception=e
+        return false
+    end
+end
+
+function configure_vscode_julia_args()
+    settings = read_vscode_settings()
+    startup_path = get_startup_script_path()
+    load_arg = "--load=\${workspaceFolder}/.julia-startup.jl"
+    
+    # Get or create julia.additionalArgs array
+    if !haskey(settings, "julia.additionalArgs")
+        settings["julia.additionalArgs"] = []
+    end
+    
+    args = settings["julia.additionalArgs"]
+    
+    # Check if the load argument is already present
+    has_load_arg = any(arg -> contains(arg, "--load") && contains(arg, ".julia-startup.jl"), args)
+    
+    if !has_load_arg
+        push!(args, load_arg)
+        settings["julia.additionalArgs"] = args
+        return write_vscode_settings(settings)
+    end
+    
+    return true  # Already configured
+end
+
+function check_vscode_startup_configured()
+    settings = read_vscode_settings()
+    
+    if !haskey(settings, "julia.additionalArgs")
+        return false
+    end
+    
+    args = settings["julia.additionalArgs"]
+    return any(arg -> contains(arg, "--load") && contains(arg, ".julia-startup.jl"), args)
+end
+
+function prompt_and_setup_vscode_startup(port::Int)
+    """Prompt user to install startup script and configure VS Code settings"""
+    
+    has_script = has_startup_script()
+    has_args = check_vscode_startup_configured()
+    
+    # If everything is already configured, skip
+    if has_script && has_args
+        return true
+    end
+    
+    println()
+    println("📝 Julia Startup Script Configuration")
+    println()
+    println("   For automatic MCP server startup when Julia REPL starts,")
+    println("   we can install a .julia-startup.jl script and configure")
+    println("   VS Code to load it automatically.")
+    println()
+    
+    if has_script
+        println("   ✓ Startup script already exists: .julia-startup.jl")
+    else
+        println("   • Will create: .julia-startup.jl")
+    end
+    
+    if has_args
+        println("   ✓ VS Code already configured to load startup script")
+    else
+        println("   • Will update: .vscode/settings.json")
+        println("     (adds --load flag to julia.additionalArgs)")
+    end
+    
+    println()
+    print("   Install and configure startup script? [Y/n]: ")
+    response = strip(lowercase(readline()))
+    
+    # Default to yes
+    if isempty(response) || response == "y" || response == "yes"
+        success = true
+        
+        # Install startup script if needed
+        if !has_script
+            if install_startup_script(port)
+                println("   ✅ Created .julia-startup.jl")
+            else
+                println("   ❌ Failed to create .julia-startup.jl")
+                success = false
+            end
+        end
+        
+        # Configure VS Code settings if needed
+        if !has_args
+            if configure_vscode_julia_args()
+                println("   ✅ Updated .vscode/settings.json")
+            else
+                println("   ❌ Failed to update .vscode/settings.json")
+                success = false
+            end
+        end
+        
+        if success
+            println()
+            println("   💡 Restart Julia REPL to use the startup script")
+        end
+        
+        return success
+    else
+        println("   ⏭️  Skipped startup script configuration")
+        return true
+    end
+end
+
 function check_claude_status()
     # Check if claude command exists
     try
@@ -128,13 +478,93 @@ function remove_gemini_mcp_server()
     return true  # Already removed
 end
 
-function setup()
+"""
+    setup(; port::Union{Int,Nothing}=nothing)
+
+Interactive setup wizard for configuring MCP servers across different clients.
+
+# Arguments
+- `port`: Port number for the MCP server. If `nothing` (default), will use 
+  `JULIA_MCP_PORT` environment variable or prompt the user to specify a port.
+  Default is 3000 if no environment variable is set.
+
+# Supported Clients
+- **VS Code Copilot**: Configures `.vscode/mcp.json` in the current workspace
+  - Optionally installs `.julia-startup.jl` for automatic MCP server startup
+  - Configures `.vscode/settings.json` to load the startup script
+- **Claude Code CLI**: Configures via `claude mcp` commands (if available)
+- **Gemini CLI**: Configures `~/.gemini/settings.json` (if available)
+
+# Transport Types
+- **HTTP**: Direct connection to Julia HTTP server (recommended, simpler)
+- **stdio**: Via Python adapter script (for compatibility with some clients)
+
+# VS Code Startup Script
+When configuring VS Code, the setup wizard will offer to:
+1. Create `.julia-startup.jl` that automatically starts the MCP server
+2. Update `.vscode/settings.json` to load the startup script via `--load` flag
+
+This enables seamless MCP server startup whenever you start a Julia REPL in VS Code.
+
+# Examples
+```julia
+# Interactive setup with default port
+MCPRepl.setup()
+
+# Setup with specific port
+MCPRepl.setup(port=3000)
+
+# Setup using environment variable
+ENV["JULIA_MCP_PORT"] = "3000"
+MCPRepl.setup()
+```
+
+# Notes
+After configuring VS Code, reload the window (Cmd+Shift+P → "Reload Window") 
+to apply changes. If you installed the startup script, restart your Julia REPL
+to see it in action.
+"""
+function setup(;port::Union{Int,Nothing}=nothing)
+    # Determine port to use
+    if port === nothing
+        # Try to get from environment variable
+        port = parse(Int, get(ENV, "JULIA_MCP_PORT", "3000"))
+        
+        # Ask user if they want to change it
+        println("🔧 MCPRepl Setup")
+        println()
+        println("Current MCP server port: $port")
+        print("Enter new port (or press Enter to keep $port): ")
+        port_input = readline()
+        if !isempty(port_input)
+            try
+                port = parse(Int, port_input)
+            catch
+                println("⚠️  Invalid port number, using default: $port")
+            end
+        end
+        println()
+    end
+    
     claude_status = check_claude_status()
     gemini_status = check_gemini_status()
+    vscode_status = check_vscode_status()
 
     # Show current status
-    println("🔧 MCPRepl Setup")
+    println("� Server Configuration")
+    println("   Port: $port")
     println()
+    
+    # VS Code status
+    if vscode_status == :configured_http
+        println("📊 VS Code status: ✅ MCP server configured (HTTP transport)")
+    elseif vscode_status == :configured_stdio
+        println("📊 VS Code status: ✅ MCP server configured (stdio transport)")
+    elseif vscode_status == :configured_unknown
+        println("📊 VS Code status: ✅ MCP server configured (unknown transport)")
+    else
+        println("📊 VS Code status: ❌ MCP server not configured")
+    end
     
     # Claude status
     if claude_status == :claude_not_found
@@ -166,16 +596,27 @@ function setup()
     # Show options
     println("Available actions:")
     
+    # VS Code options
+    println("   VS Code Copilot:")
+    if vscode_status in [:configured_http, :configured_stdio, :configured_unknown]
+        println("     [1] Remove VS Code MCP configuration")
+        println("     [2] Add/Replace with HTTP transport (recommended)")
+        println("     [3] Add/Replace with stdio transport (adapter)")
+    else
+        println("     [1] Add HTTP transport (recommended)")
+        println("     [2] Add stdio transport (adapter)")
+    end
+    
     # Claude options
     if claude_status != :claude_not_found
         println("   Claude Code:")
         if claude_status in [:configured_http, :configured_script, :configured_unknown]
-            println("     [1] Remove Claude MCP configuration")
-            println("     [2] Add/Replace Claude with HTTP transport")
-            println("     [3] Add/Replace Claude with script transport")
+            println("     [4] Remove Claude MCP configuration")
+            println("     [5] Add/Replace Claude with HTTP transport")
+            println("     [6] Add/Replace Claude with script transport")
         else
-            println("     [1] Add Claude HTTP transport")
-            println("     [2] Add Claude script transport")
+            println("     [4] Add Claude HTTP transport")
+            println("     [5] Add Claude script transport")
         end
     end
     
@@ -183,12 +624,12 @@ function setup()
     if gemini_status != :gemini_not_found
         println("   Gemini CLI:")
         if gemini_status in [:configured_http, :configured_script, :configured_unknown]
-            println("     [4] Remove Gemini MCP configuration")
-            println("     [5] Add/Replace Gemini with HTTP transport")
-            println("     [6] Add/Replace Gemini with script transport")
+            println("     [7] Remove Gemini MCP configuration")
+            println("     [8] Add/Replace Gemini with HTTP transport")
+            println("     [9] Add/Replace Gemini with script transport")
         else
-            println("     [4] Add Gemini HTTP transport")
-            println("     [5] Add Gemini script transport")
+            println("     [7] Add Gemini HTTP transport")
+            println("     [8] Add Gemini script transport")
         end
     end
     
@@ -199,6 +640,74 @@ function setup()
 
     # Handle choice
     if choice == "1"
+        if vscode_status in [:configured_http, :configured_stdio, :configured_unknown]
+            println("\n   Removing VS Code MCP configuration...")
+            if remove_vscode_mcp_server()
+                println("   ✅ Successfully removed VS Code MCP configuration")
+                println("   💡 Reload VS Code window to apply changes")
+            else
+                println("   ❌ Failed to remove VS Code MCP configuration")
+            end
+        else
+            println("\n   Adding VS Code HTTP transport...")
+            if add_vscode_mcp_server("http", port)
+                println("   ✅ Successfully configured VS Code HTTP transport")
+                println("   � Server URL: http://localhost:$port")
+                
+                # Prompt for startup script installation
+                prompt_and_setup_vscode_startup(port)
+                
+                println()
+                println("   � Reload VS Code window to apply changes")
+            else
+                println("   ❌ Failed to configure VS Code HTTP transport")
+            end
+        end
+    elseif choice == "2"
+        if vscode_status in [:configured_http, :configured_stdio, :configured_unknown]
+            println("\n   Adding/Replacing VS Code with HTTP transport...")
+            if add_vscode_mcp_server("http", port)
+                println("   ✅ Successfully configured VS Code HTTP transport")
+                println("   � Server URL: http://localhost:$port")
+                
+                # Prompt for startup script installation
+                prompt_and_setup_vscode_startup(port)
+                
+                println()
+                println("   � Reload VS Code window to apply changes")
+            else
+                println("   ❌ Failed to configure VS Code HTTP transport")
+            end
+        else
+            println("\n   Adding VS Code stdio transport...")
+            if add_vscode_mcp_server("stdio", port)
+                println("   ✅ Successfully configured VS Code stdio transport")
+                
+                # Prompt for startup script installation
+                prompt_and_setup_vscode_startup(port)
+                
+                println()
+                println("   💡 Reload VS Code window to apply changes")
+            else
+                println("   ❌ Failed to configure VS Code stdio transport")
+            end
+        end
+    elseif choice == "3"
+        if vscode_status in [:configured_http, :configured_stdio, :configured_unknown]
+            println("\n   Adding/Replacing VS Code with stdio transport...")
+            if add_vscode_mcp_server("stdio", port)
+                println("   ✅ Successfully configured VS Code stdio transport")
+                
+                # Prompt for startup script installation
+                prompt_and_setup_vscode_startup(port)
+                
+                println()
+                println("   💡 Reload VS Code window to apply changes")
+            else
+                println("   ❌ Failed to configure VS Code stdio transport")
+            end
+        end
+    elseif choice == "4"
         if claude_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Removing Claude MCP configuration...")
             try
@@ -210,41 +719,43 @@ function setup()
         elseif claude_status != :claude_not_found
             println("\n   Adding Claude HTTP transport...")
             try
-                run(`claude mcp add julia-repl http://localhost:3000 --transport http`)
+                run(`claude mcp add julia-repl http://localhost:$port --transport http`)
                 println("   ✅ Successfully configured Claude HTTP transport")
             catch e
                 println("   ❌ Failed to configure Claude HTTP transport: $e")
             end
         end
-    elseif choice == "2"
+    elseif choice == "5"
         if claude_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Adding/Replacing Claude with HTTP transport...")
             try
-                run(`claude mcp add julia-repl http://localhost:3000 --transport http`)
+                run(`claude mcp add julia-repl http://localhost:$port --transport http`)
                 println("   ✅ Successfully configured Claude HTTP transport")
             catch e
                 println("   ❌ Failed to configure Claude HTTP transport: $e")
             end
         elseif claude_status != :claude_not_found
+            adapter_path = joinpath(pkgdir(MCPRepl), "mcp-julia-adapter")
             println("\n   Adding Claude script transport...")
             try
-                run(`claude mcp add julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`)
+                run(`claude mcp add julia-repl $adapter_path`)
                 println("   ✅ Successfully configured Claude script transport")
             catch e
                 println("   ❌ Failed to configure Claude script transport: $e")
             end
         end
-    elseif choice == "3"
+    elseif choice == "6"
         if claude_status in [:configured_http, :configured_script, :configured_unknown]
+            adapter_path = joinpath(pkgdir(MCPRepl), "mcp-julia-adapter")
             println("\n   Adding/Replacing Claude with script transport...")
             try
-                run(`claude mcp add julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`)
+                run(`claude mcp add julia-repl $adapter_path`)
                 println("   ✅ Successfully configured Claude script transport")
             catch e
                 println("   ❌ Failed to configure Claude script transport: $e")
             end
         end
-    elseif choice == "4"
+    elseif choice == "7"
         if gemini_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Removing Gemini MCP configuration...")
             if remove_gemini_mcp_server()
@@ -260,7 +771,7 @@ function setup()
                 println("   ❌ Failed to configure Gemini HTTP transport")
             end
         end
-    elseif choice == "5"
+    elseif choice == "8"
         if gemini_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Adding/Replacing Gemini with HTTP transport...")
             if add_gemini_mcp_server("http")
@@ -276,7 +787,7 @@ function setup()
                 println("   ❌ Failed to configure Gemini script transport")
             end
         end
-    elseif choice == "6"
+    elseif choice == "9"
         if gemini_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Adding/Replacing Gemini with script transport...")
             if add_gemini_mcp_server("script")

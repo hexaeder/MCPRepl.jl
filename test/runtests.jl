@@ -6,6 +6,8 @@ using JSON3
 using Dates
 
 @testset "MCPRepl Tests" begin
+    include("setup_tests.jl")
+    
     @testset "MCP Server Tests" begin
         # Create test tools
         time_tool = MCPTool(
@@ -40,8 +42,8 @@ using Dates
         tools = [time_tool, reverse_tool, calc_tool]
 
         @testset "Server Startup and Shutdown" begin
-            # Start server on test port
-            test_port = 3001
+            # Start server on test port (use port that shouldn't conflict)
+            test_port = 13001
             server = MCPRepl.start_mcp_server(tools, test_port)
 
             @test server.port == test_port
@@ -62,7 +64,7 @@ using Dates
 
         @testset "Empty Body Handling" begin
             # Start server for empty body tests
-            test_port = 3002
+            test_port = 13002
             server = MCPRepl.start_mcp_server(tools, test_port)
 
             # Give server time to start
@@ -102,7 +104,7 @@ using Dates
 
         @testset "Tool Listing" begin
             # Start server for tool listing tests
-            test_port = 3003
+            test_port = 13003
             server = MCPRepl.start_mcp_server(tools, test_port)
 
             # Give server time to start
@@ -148,7 +150,7 @@ using Dates
 
         @testset "Tool Execution" begin
             # Start server for tool execution tests
-            test_port = 3004
+            test_port = 13004
             server = MCPRepl.start_mcp_server(tools, test_port)
 
             # Give server time to start

@@ -14,6 +14,7 @@ The Julia MCP server must be running first:
 """
 
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
@@ -27,13 +28,16 @@ def main():
         if not line:
             continue
 
+        port = sys.argv[1] if len(sys.argv) > 1 else None
+        if not port:
+            port = os.getenv("JULIA_MCP_PORT", "3000")
         try:
             # Parse JSON-RPC request from stdin
             request = json.loads(line)
 
             # Forward to HTTP server with timeout
             data = json.dumps(request).encode('utf-8')
-            req = urllib.request.Request('http://localhost:3000',
+            req = urllib.request.Request(f'http://localhost:{port}',
                                        data=data,
                                        headers={'Content-Type': 'application/json'})
 
