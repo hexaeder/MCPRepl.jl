@@ -410,6 +410,21 @@ function prompt_and_setup_vscode_extension()
                     "workbench.action.terminal.sendSequence",
                     "workbench.action.terminal.kill",
                     
+                    # Testing - VS Code Test Explorer
+                    "testing.runAll",
+                    "testing.runCurrentFile",
+                    "testing.runAtCursor",
+                    "testing.reRunFailedTests",
+                    "testing.reRunLastRun",
+                    "testing.cancelRun",
+                    "testing.debugAll",
+                    "testing.debugCurrentFile",
+                    "testing.debugAtCursor",
+                    "testing.showMostRecentOutput",
+                    "testing.openOutputPeek",
+                    "testing.toggleTestingView",
+                    "workbench.view.testing.focus",
+                    
                     # Testing & Debugging - Basic Controls
                     "workbench.action.tasks.runTask",
                     "workbench.action.debug.start",
@@ -450,6 +465,10 @@ function prompt_and_setup_vscode_extension()
                     "git.commit",
                     "git.refresh",
                     "git.sync",
+                    "git.branchFrom",
+                    "git.pull",
+                    "git.push",
+                    "git.fetch",
                     
                     # Search & Replace
                     "workbench.action.findInFiles",

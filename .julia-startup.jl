@@ -17,7 +17,7 @@ try
         Threads.@spawn begin
             try
                 sleep(1)
-                port = parse(Int, get(ENV, "JULIA_MCP_PORT", "3003"))
+                port = parse(Int, get(ENV, "JULIA_MCP_PORT", "3000"))
                 MCPRepl.start!(; port = port, verbose = false)
 
                 # Wait a moment for server to fully initialize

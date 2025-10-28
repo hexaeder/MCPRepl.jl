@@ -643,8 +643,11 @@ function start!(; port = 3000, verbose::Bool = true)
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         (args, stream_channel=nothing) -> begin
             try
+                # Get the current server port (before restart)
+                server_port = SERVER[] !== nothing ? SERVER[].port : 3000
+                
                 # Execute the restart command using the vscode URI trigger
-                restart_uri = build_vscode_uri("language-julia.restartREPL")
+                restart_uri = build_vscode_uri("language-julia.restartREPL"; mcp_port=server_port)
                 trigger_vscode_uri(restart_uri)
                 
                 # Wait for initial restart (3 seconds)
@@ -655,9 +658,9 @@ function start!(; port = 3000, verbose::Bool = true)
                 for attempt in 1:max_attempts
                     try
                         # Try to connect to the MCP server
-                        response = HTTP.get("http://localhost:3003"; status_exception=false)
+                        response = HTTP.get("http://localhost:$server_port"; status_exception=false)
                         if response.status < 500
-                            return "✓ Julia REPL restarted and MCP server is responding on port 3003"
+                            return "✓ Julia REPL restarted and MCP server is responding on port $server_port"
                         end
                     catch e
                         # Server not ready yet, continue waiting
@@ -1945,7 +1948,7 @@ exec_repl command. Returns `true` if successful, `false` otherwise.
 
 # Example
 ```julia
-if MCPRepl.test_server(3003)
+if MCPRepl.test_server(3000)
     println("✓ MCP Server is responding")
 else
     println("✗ MCP Server is not responding")
