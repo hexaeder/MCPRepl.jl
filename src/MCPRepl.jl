@@ -164,8 +164,7 @@ function execute_repllike(
 
     # If streaming is enabled, send progress updates through the channel
     if stream_channel !== nothing
-        # Don't redirect stdout - let it flow to terminal for real-time visibility
-        # Send progress notifications through the channel
+        # Streaming mode - use separate REPL backend with line-by-line output forwarding
         
         # Send initial "started" event
         start_event = Dict(
@@ -178,10 +177,100 @@ function execute_repllike(
         )
         put!(stream_channel, JSON3.write(start_event))
         
+        # Save original streams
+        orig_stdout = stdout
+        orig_stderr = stderr
+        
+        # Create pipes for redirection
+        stdout_reader, stdout_writer = redirect_stdout()
+        stderr_reader, stderr_writer = redirect_stderr()
+        
+        # Buffers for final capture
+        stdout_buf = IOBuffer()
+        stderr_buf = IOBuffer()
+        
+        # Helper to process and forward output line by line
+        function forward_output(reader, original_stream, buffer, stream_name)
+            line_buffer = IOBuffer()
+            
+            try
+                while isopen(reader)
+                    # Read available data
+                    data = readavailable(reader)
+                    if !isempty(data)
+                        # Write to original stream (real-time display)
+                        write(original_stream, data)
+                        flush(original_stream)
+                        
+                        # Write to capture buffer
+                        write(buffer, data)
+                        
+                        # Process line by line for SSE streaming
+                        write(line_buffer, data)
+                        
+                        # Extract complete lines
+                        seekstart(line_buffer)
+                        while !eof(line_buffer)
+                            line = readline(line_buffer; keep=true)
+                            if endswith(line, '\n')
+                                # Complete line - send via SSE
+                                try
+                                    output_event = Dict(
+                                        "jsonrpc" => "2.0",
+                                        "method" => "notifications/message",
+                                        "params" => Dict(
+                                            "level" => stream_name,
+                                            "message" => line
+                                        )
+                                    )
+                                    put!(stream_channel, JSON3.write(output_event))
+                                catch e
+                                    @warn "SSE streaming error" exception=e
+                                end
+                            else
+                                # Incomplete line - save back to buffer
+                                new_buffer = IOBuffer()
+                                write(new_buffer, line)
+                                line_buffer = new_buffer
+                                break
+                            end
+                        end
+                    end
+                    sleep(0.001) # Small yield
+                end
+                
+                # Flush any remaining partial line
+                remaining = String(take!(line_buffer))
+                if !isempty(remaining)
+                    try
+                        output_event = Dict(
+                            "jsonrpc" => "2.0",
+                            "method" => "notifications/message",
+                            "params" => Dict(
+                                "level" => stream_name,
+                                "message" => remaining
+                            )
+                        )
+                        put!(stream_channel, JSON3.write(output_event))
+                    catch e
+                        @warn "SSE streaming error on final flush" exception=e
+                    end
+                end
+            catch e
+                if !isa(e, EOFError)
+                    @warn "Output forwarding error for $stream_name" exception=e
+                end
+            end
+        end
+        
+        # Start async tasks to forward output
+        stdout_task = @async forward_output(stdout_reader, orig_stdout, stdout_buf, "info")
+        stderr_task = @async forward_output(stderr_reader, orig_stderr, stderr_buf, "error")
+        
+        # Evaluate using the backend
         response = try
             REPL.eval_on_backend(expr, backend)
         catch e
-            # Send error as a progress notification
             error_event = Dict(
                 "jsonrpc" => "2.0",
                 "method" => "notifications/progress",
@@ -192,6 +281,26 @@ function execute_repllike(
             )
             put!(stream_channel, JSON3.write(error_event))
             e
+        finally
+            # Restore stdout/stderr
+            redirect_stdout(orig_stdout)
+            redirect_stderr(orig_stderr)
+            
+            # Close readers to stop tasks
+            close(stdout_reader)
+            close(stderr_reader)
+            
+            # Wait for forwarding tasks to finish
+            sleep(0.1)
+            wait(stdout_task)
+            wait(stderr_task)
+        end
+        
+        # Get captured content
+        captured_content = String(take!(stdout_buf))
+        stderr_content = String(take!(stderr_buf))
+        if !isempty(stderr_content)
+            captured_content = captured_content * "\n" * stderr_content
         end
         
         # Send completion notification
@@ -200,12 +309,10 @@ function execute_repllike(
             "method" => "notifications/progress",
             "params" => Dict(
                 "progress" => 100,
-                "message" => "Execution complete (output in REPL)"
+                "message" => "Execution complete"
             )
         )
         put!(stream_channel, JSON3.write(complete_event))
-        
-        captured_content = "(output shown in REPL)"
     else
         # Non-streaming mode (original behavior)
         captured_output = Pipe()
@@ -518,6 +625,52 @@ function start!(; port = 3000, verbose::Bool = true)
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
+            end
+        end,
+    )
+
+    restart_repl_tool = MCPTool(
+        "restart_repl",
+        """Restart the Julia REPL and wait for the MCP server to come back online.
+        
+        This tool handles the complete restart process:
+        1. Executes the VS Code command to restart the Julia REPL
+        2. Waits for the REPL to restart and initialize
+        3. Polls the MCP server endpoint until it's responding
+        4. Returns when the server is ready to accept requests
+        
+        Use this tool after making changes to the MCP server code or when the REPL needs a fresh start.""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        (args, stream_channel=nothing) -> begin
+            try
+                # Execute the restart command using the vscode URI trigger
+                restart_uri = build_vscode_uri("language-julia.restartREPL")
+                trigger_vscode_uri(restart_uri)
+                
+                # Wait for initial restart (3 seconds)
+                sleep(3)
+                
+                # Poll the MCP server to check if it's up (max 10 attempts, 1 second apart)
+                max_attempts = 10
+                for attempt in 1:max_attempts
+                    try
+                        # Try to connect to the MCP server
+                        response = HTTP.get("http://localhost:3003"; status_exception=false)
+                        if response.status < 500
+                            return "✓ Julia REPL restarted and MCP server is responding on port 3003"
+                        end
+                    catch e
+                        # Server not ready yet, continue waiting
+                    end
+                    
+                    if attempt < max_attempts
+                        sleep(1)
+                    end
+                end
+                
+                return "⚠ Julia REPL restarted but MCP server may still be initializing. Try your command now."
+            catch e
+                return "Error restarting REPL: $e"
             end
         end,
     )
@@ -1706,6 +1859,7 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         [
             usage_instructions_tool,
             repl_tool,
+            restart_repl_tool,
             whitespace_tool,
             vscode_command_tool,
             investigate_tool,

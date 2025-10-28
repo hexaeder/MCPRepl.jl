@@ -421,23 +421,19 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                     tool = tools_dict[tool_name]
                     args = get(request.params, :arguments, Dict())
                     
-                    # Check if streaming is requested via stream parameter OR Accept header
-                    enable_streaming = get(args, :stream, false)
-                    
                     # Check Accept header for text/event-stream support
                     accept_header = ""
                     for (name, value) in req.headers
                         if lowercase(name) == "accept"
                             accept_header = lowercase(value)
-                            printstyled("Accept header: $value\n", color=:cyan)
                             break
                         end
                     end
                     client_supports_sse = contains(accept_header, "text/event-stream")
-                    printstyled("Client supports SSE: $client_supports_sse, Stream requested: $(get(args, :stream, false))\n", color=:yellow)
                     
-                    # Enable streaming if client supports it AND streaming is requested
-                    enable_streaming = enable_streaming && client_supports_sse
+                    # Enable streaming if client supports SSE (automatically) OR if explicitly requested
+                    stream_requested = get(args, :stream, false)
+                    enable_streaming = client_supports_sse || stream_requested
                     
                     if enable_streaming
                         # Set up SSE headers for streaming response

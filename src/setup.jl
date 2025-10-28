@@ -500,7 +500,7 @@ function check_claude_status()
         output = read(`claude mcp list`, String)
         if contains(output, "julia-repl")
             # Detect transport method
-            if contains(output, "http://localhost:3000")
+            if contains(output, "http://localhost")
                 return :configured_http
             elseif contains(output, "mcp-julia-adapter")
                 return :configured_script
