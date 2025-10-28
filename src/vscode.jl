@@ -24,7 +24,7 @@ function install_vscode_remote_control(
     publisher::AbstractString = "MCPRepl",
     name::AbstractString = "vscode-remote-control",
     version::AbstractString = "0.0.1",
-    allowed_commands::Vector{String} = [],
+    allowed_commands::Vector{String} = String[],
     require_confirmation::Bool = false,
 )
 
@@ -153,8 +153,16 @@ function install_vscode_remote_control(
               }
             }
 
+            // Convert file:// URI strings to vscode.Uri objects for LSP commands
+            const convertedArgs = args.map(arg => {
+              if (typeof arg === 'string' && arg.startsWith('file://')) {
+                return vscode.Uri.parse(arg);
+              }
+              return arg;
+            });
+
             // Execute command and capture result
-            const result = await vscode.commands.executeCommand(cmd, ...args);
+            const result = await vscode.commands.executeCommand(cmd, ...convertedArgs);
             
             // Send result back to MCP server if request_id was provided
             await sendResponse(mcpPort, requestId, result, null);
@@ -175,6 +183,8 @@ function install_vscode_remote_control(
       
       try {
         const http = require('http');
+        const fs = require('fs');
+        const path = require('path');
         
         const payload = JSON.stringify({
           request_id: requestId,
@@ -183,15 +193,42 @@ function install_vscode_remote_control(
           timestamp: Date.now()
         });
         
+        // Try to read Authorization header from .vscode/mcp.json
+        let authHeader = null;
+        try {
+          const workspaceFolders = vscode.workspace.workspaceFolders;
+          if (workspaceFolders && workspaceFolders.length > 0) {
+            const mcpConfigPath = path.join(workspaceFolders[0].uri.fsPath, '.vscode', 'mcp.json');
+            if (fs.existsSync(mcpConfigPath)) {
+              const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf8'));
+              if (mcpConfig.servers && mcpConfig.servers['julia-repl']) {
+                const juliaServer = mcpConfig.servers['julia-repl'];
+                if (juliaServer.headers && juliaServer.headers.Authorization) {
+                  authHeader = juliaServer.headers.Authorization;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Could not read Authorization header from mcp.json:', e);
+        }
+        
+        const headers = {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload)
+        };
+        
+        // Add Authorization header if found
+        if (authHeader) {
+          headers['Authorization'] = authHeader;
+        }
+        
         const options = {
           hostname: 'localhost',
           port: port,
           path: '/vscode-response',
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload)
-          }
+          headers: headers
         };
         
         const req = http.request(options, (res) => {

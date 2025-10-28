@@ -35,6 +35,23 @@ function write_vscode_mcp_config(config::Dict)
         JSON.json(io, config)
         content = String(take!(io))
         write(mcp_path, content)
+        
+        # Check if config contains API keys in Authorization headers
+        has_auth_header = false
+        if haskey(config, "servers")
+            for (name, server_config) in config["servers"]
+                if haskey(server_config, "headers") && haskey(server_config["headers"], "Authorization")
+                    has_auth_header = true
+                    break
+                end
+            end
+        end
+        
+        # Set restrictive permissions if file contains sensitive data (Unix-like systems)
+        if has_auth_header && !Sys.iswindows()
+            chmod(mcp_path, 0o600)  # Read/write for owner only
+        end
+        
         return true
     catch e
         @warn "Failed to write VS Code config" exception = e
@@ -79,9 +96,21 @@ function add_vscode_mcp_server(transport_type::String, port::Int = 3000)
         config["servers"] = Dict()
     end
 
+    # Load security config to check if API key is required
+    security_config = load_security_config()
+    
     if transport_type == "http"
-        config["servers"]["julia-repl"] =
-            Dict("type" => "http", "url" => "http://localhost:$port")
+        server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
+        
+        # Add Authorization header if security is configured and not in lax mode
+        if security_config !== nothing && security_config.mode != :lax
+            if !isempty(security_config.api_keys)
+                api_key = first(security_config.api_keys)
+                server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer $api_key")
+            end
+        end
+        
+        config["servers"]["julia-repl"] = server_config
     elseif transport_type == "stdio"
         adapter_path = joinpath(pkgdir(@__MODULE__), "mcp-julia-adapter")
         config["servers"]["julia-repl"] =
@@ -112,6 +141,126 @@ function remove_vscode_mcp_server()
     config["servers"] = servers
     return write_vscode_mcp_config(config)
 end
+
+# ============================================================================
+# Claude Code Configuration (~/.claude.json project-level config)
+# ============================================================================
+
+function get_claude_config_path()
+    return expanduser("~/.claude.json")
+end
+
+function read_claude_config()
+    config_path = get_claude_config_path()
+    
+    if !isfile(config_path)
+        return nothing
+    end
+    
+    try
+        content = read(config_path, String)
+        return JSON.parse(content; dicttype = Dict)
+    catch
+        return nothing
+    end
+end
+
+function write_claude_config(config::Dict)
+    config_path = get_claude_config_path()
+    
+    try
+        io = IOBuffer()
+        JSON.json(io, config)
+        content = String(take!(io))
+        write(config_path, content)
+        
+        # Set restrictive permissions (Unix-like systems)
+        if !Sys.iswindows()
+            chmod(config_path, 0o600)  # Read/write for owner only
+        end
+        
+        return true
+    catch e
+        @warn "Failed to write Claude config" exception = e
+        return false
+    end
+end
+
+function add_claude_mcp_server(;
+    port::Int = 3000,
+    url::String = "http://localhost:$port",
+    api_key::Union{String,Nothing} = nothing
+)
+    config = read_claude_config()
+    
+    if config === nothing
+        config = Dict()
+    end
+    
+    # Get current project directory
+    project_dir = pwd()
+    
+    # Initialize projects structure if it doesn't exist
+    if !haskey(config, "projects")
+        config["projects"] = Dict()
+    end
+    
+    # Initialize this project's config if it doesn't exist
+    if !haskey(config["projects"], project_dir)
+        config["projects"][project_dir] = Dict(
+            "mcpServers" => Dict(),
+            "hasTrustDialogAccepted" => false
+        )
+    end
+    
+    project_config = config["projects"][project_dir]
+    
+    # Ensure mcpServers exists
+    if !haskey(project_config, "mcpServers")
+        project_config["mcpServers"] = Dict()
+    end
+    
+    # Configure the julia-repl server with Bearer token auth
+    server_config = Dict{String,Any}(
+        "type" => "http",
+        "url" => url
+    )
+    
+    # Add Authorization header if API key provided
+    if api_key !== nothing
+        server_config["headers"] = Dict{String,Any}(
+            "Authorization" => "Bearer $api_key"
+        )
+    end
+    
+    project_config["mcpServers"]["julia-repl"] = server_config
+    config["projects"][project_dir] = project_config
+    
+    return write_claude_config(config)
+end
+
+function remove_claude_mcp_server()
+    config = read_claude_config()
+    
+    if config === nothing
+        return true  # Nothing to remove
+    end
+    
+    project_dir = pwd()
+    
+    if haskey(config, "projects") && haskey(config["projects"], project_dir)
+        project_config = config["projects"][project_dir]
+        if haskey(project_config, "mcpServers")
+            delete!(project_config["mcpServers"], "julia-repl")
+        end
+    end
+    
+    return write_claude_config(config)
+end
+
+# ============================================================================
+# VS Code Settings
+# ============================================================================
 
 function get_vscode_settings_path()
     vscode_dir = joinpath(pwd(), ".vscode")
@@ -685,7 +834,7 @@ function setup(; port::Union{Int,Nothing} = nothing)
     if security_config === nothing
         printstyled("\n╔═══════════════════════════════════════════════════════════╗\n", color = :cyan, bold = true)
         printstyled("║                                                           ║\n", color = :cyan, bold = true)
-        printstyled("║         🔒 MCPRepl Security Setup Required 🔒            ║\n", color = :yellow, bold = true)
+        printstyled("║         🔒 MCPRepl Security Setup Required 🔒             ║\n", color = :yellow, bold = true)
         printstyled("║                                                           ║\n", color = :cyan, bold = true)
         printstyled("╚═══════════════════════════════════════════════════════════╝\n", color = :cyan, bold = true)
         println()

@@ -2146,9 +2146,37 @@ function test_server(
             # Use HTTP.jl for a clean, proper request
             body = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"exec_repl","arguments":{"expression":"println(\\\"🎉 MCP Server ready!\\\")","silent":true}}}"""
 
+            # Build headers with security if configured
+            headers = Dict{String,String}("Content-Type" => "application/json")
+
+            # Prefer explicit env var when present
+            env_key = get(ENV, "MCPREPL_API_KEY", "")
+
+            # Load workspace security config (if available)
+            security_config = try
+                load_security_config()
+            catch
+                nothing
+            end
+
+            auth_key = nothing
+
+            if !isempty(env_key)
+                auth_key = env_key
+            elseif security_config !== nothing && security_config.mode != :lax
+                # Use the first configured key, if any
+                if !isempty(security_config.api_keys)
+                    auth_key = first(security_config.api_keys)
+                end
+            end
+
+            if auth_key !== nothing
+                headers["Authorization"] = "Bearer $(auth_key)"
+            end
+
             response = HTTP.post(
                 "http://$host:$port/",
-                ["Content-Type" => "application/json"],
+                collect(headers),
                 body;
                 readtimeout = 5,
                 connect_timeout = 2,

@@ -1,5 +1,8 @@
 using HTTP
 
+# Import types and functions from parent module
+import ..MCPRepl: SecurityConfig, extract_api_key, validate_api_key, get_client_ip, validate_ip
+
 # Global storage for active streaming responses (request_id => Stream)
 const ACTIVE_STREAMS = Dict{String,HTTP.Stream}()
 const STREAM_LOCK = ReentrantLock()
@@ -26,8 +29,8 @@ function create_handler(
     security_config::Union{SecurityConfig,Nothing} = nothing,
 )
     return function handle_request(req::HTTP.Request)
-        # Security check (skip for vscode-response endpoint)
-        if req.target != "/vscode-response" && security_config !== nothing
+        # Security check - apply to ALL endpoints including vscode-response
+        if security_config !== nothing
             # Extract and validate API key
             api_key = extract_api_key(req)
             if api_key === nothing && security_config.mode != :lax
@@ -40,7 +43,7 @@ function create_handler(
                 )
             end
 
-            if !validate_api_key(something(api_key, ""), security_config)
+            if !validate_api_key(String(something(api_key, "")), security_config)
                 return HTTP.Response(
                     403,
                     ["Content-Type" => "application/json"],
@@ -100,80 +103,99 @@ function create_handler(
             end
 
             # Handle OAuth well-known metadata requests first (before JSON parsing)
+            # Only advertise OAuth if security is configured (not in lax mode)
             if req.target == "/.well-known/oauth-authorization-server"
-                oauth_metadata = Dict(
-                    "issuer" => "http://localhost:$port",
-                    "authorization_endpoint" => "http://localhost:$port/oauth/authorize",
-                    "token_endpoint" => "http://localhost:$port/oauth/token",
-                    "registration_endpoint" => "http://localhost:$port/oauth/register",
-                    "grant_types_supported" =>
-                        ["authorization_code", "client_credentials"],
-                    "response_types_supported" => ["code"],
-                    "scopes_supported" => ["read", "write"],
-                    "client_registration_types_supported" => ["dynamic"],
-                    "code_challenge_methods_supported" => ["S256"],
-                )
-                return HTTP.Response(
-                    200,
-                    ["Content-Type" => "application/json"],
-                    JSON.json(oauth_metadata),
-                )
+                if security_config !== nothing && security_config.mode != :lax
+                    oauth_metadata = Dict(
+                        "issuer" => "http://localhost:$port",
+                        "authorization_endpoint" => "http://localhost:$port/oauth/authorize",
+                        "token_endpoint" => "http://localhost:$port/oauth/token",
+                        "registration_endpoint" => "http://localhost:$port/oauth/register",
+                        "grant_types_supported" =>
+                            ["authorization_code", "client_credentials"],
+                        "response_types_supported" => ["code"],
+                        "scopes_supported" => ["read", "write"],
+                        "client_registration_types_supported" => ["dynamic"],
+                        "code_challenge_methods_supported" => ["S256"],
+                    )
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(oauth_metadata),
+                    )
+                else
+                    # No OAuth in lax mode - return 404
+                    return HTTP.Response(404, ["Content-Type" => "text/plain"], "Not Found")
+                end
             end
 
             # Handle dynamic client registration
+            # Only support OAuth if security is configured (not in lax mode)
             if req.target == "/oauth/register" && req.method == "POST"
-                client_id = "claude-code-" * string(rand(UInt64), base = 16)
-                client_secret = string(rand(UInt128), base = 16)
+                if security_config !== nothing && security_config.mode != :lax
+                    client_id = "claude-code-" * string(rand(UInt64), base = 16)
+                    client_secret = string(rand(UInt128), base = 16)
 
-                registration_response = Dict(
-                    "client_id" => client_id,
-                    "client_secret" => client_secret,
-                    "client_id_issued_at" => Int(floor(time())),
-                    "grant_types" => ["authorization_code", "client_credentials"],
-                    "response_types" => ["code"],
-                    "redirect_uris" => [
-                        "http://localhost:8080/callback",
-                        "http://127.0.0.1:8080/callback",
-                    ],
-                    "token_endpoint_auth_method" => "client_secret_basic",
-                    "scope" => "read write",
-                )
-                return HTTP.Response(
-                    201,
-                    ["Content-Type" => "application/json"],
-                    JSON.json(registration_response),
-                )
+                    registration_response = Dict(
+                        "client_id" => client_id,
+                        "client_secret" => client_secret,
+                        "client_id_issued_at" => Int(floor(time())),
+                        "grant_types" => ["authorization_code", "client_credentials"],
+                        "response_types" => ["code"],
+                        "redirect_uris" => [
+                            "http://localhost:8080/callback",
+                            "http://127.0.0.1:8080/callback",
+                        ],
+                        "token_endpoint_auth_method" => "client_secret_basic",
+                        "scope" => "read write",
+                    )
+                    return HTTP.Response(
+                        201,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(registration_response),
+                    )
+                else
+                    return HTTP.Response(404, ["Content-Type" => "text/plain"], "Not Found")
+                end
             end
 
             # Handle authorization endpoint
             if startswith(req.target, "/oauth/authorize")
-                # For local development, auto-approve all requests
-                uri = HTTP.URI(req.target)
-                query_params = HTTP.queryparams(uri)
-                redirect_uri = get(query_params, "redirect_uri", "")
-                state = get(query_params, "state", "")
+                if security_config !== nothing && security_config.mode != :lax
+                    # For local development, auto-approve all requests
+                    uri = HTTP.URI(req.target)
+                    query_params = HTTP.queryparams(uri)
+                    redirect_uri = get(query_params, "redirect_uri", "")
+                    state = get(query_params, "state", "")
 
-                auth_code = "auth_" * string(rand(UInt64), base = 16)
-                redirect_url = "$redirect_uri?code=$auth_code&state=$state"
+                    auth_code = "auth_" * string(rand(UInt64), base = 16)
+                    redirect_url = "$redirect_uri?code=$auth_code&state=$state"
 
-                return HTTP.Response(302, ["Location" => redirect_url], "")
+                    return HTTP.Response(302, ["Location" => redirect_url], "")
+                else
+                    return HTTP.Response(404, ["Content-Type" => "text/plain"], "Not Found")
+                end
             end
 
             # Handle token endpoint
             if req.target == "/oauth/token" && req.method == "POST"
-                access_token = "access_" * string(rand(UInt128), base = 16)
+                if security_config !== nothing && security_config.mode != :lax
+                    access_token = "access_" * string(rand(UInt128), base = 16)
 
-                token_response = Dict(
-                    "access_token" => access_token,
-                    "token_type" => "Bearer",
-                    "expires_in" => 3600,
-                    "scope" => "read write",
-                )
-                return HTTP.Response(
-                    200,
-                    ["Content-Type" => "application/json"],
-                    JSON.json(token_response),
-                )
+                    token_response = Dict(
+                        "access_token" => access_token,
+                        "token_type" => "Bearer",
+                        "expires_in" => 3600,
+                        "scope" => "read write",
+                    )
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(token_response),
+                    )
+                else
+                    return HTTP.Response(404, ["Content-Type" => "text/plain"], "Not Found")
+                end
             end
 
             # Handle empty body (like GET requests)
@@ -438,8 +460,8 @@ function start_mcp_server(
     function hybrid_handler(http::HTTP.Stream)
         req = http.message
 
-        # Security check (skip for vscode-response endpoint)
-        if req.target != "/vscode-response" && security_config !== nothing
+        # Security check - apply to ALL endpoints including vscode-response
+        if security_config !== nothing
             # Extract and validate API key
             api_key = extract_api_key(req)
             if api_key === nothing && security_config.mode != :lax
@@ -455,7 +477,7 @@ function start_mcp_server(
                 return nothing
             end
 
-            if !validate_api_key(something(api_key, ""), security_config)
+            if !validate_api_key(String(something(api_key, "")), security_config)
                 HTTP.setstatus(http, 403)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
