@@ -160,19 +160,15 @@ function build_vscode_command_args(method::String, params::Dict)
     args = []
 
     if haskey(params, "textDocument")
-        # Extract URI and convert to VS Code Uri format
+        # Pass the URI string - VS Code commands should handle conversion
         uri = get(params["textDocument"], "uri", "")
         push!(args, uri)
     end
 
     if haskey(params, "position")
-        # LSP positions are 0-indexed
+        # LSP positions are 0-indexed, pass them as-is
         pos = params["position"]
-        line = get(pos, "line", 0)
-        character = get(pos, "character", 0)
-
-        # VS Code expects a Position object-like structure
-        push!(args, Dict("line" => line, "character" => character))
+        push!(args, pos)
     end
 
     # Special handling for workspace/symbol
@@ -217,7 +213,7 @@ function execute_vscode_command_with_result(command::String, args::Vector, timeo
 
         return Dict("result" => result)
     catch e
-        if e isa TimeoutError
+        if occursin("timed out", string(e))
             return Dict("error" => "LSP request timed out after $(timeout)s")
         else
             return Dict("error" => "Error retrieving LSP result: $e")

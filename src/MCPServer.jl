@@ -399,6 +399,40 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
         body = String(read(http))
 
         try
+            # Handle VS Code response endpoint FIRST (before any JSON parsing)
+            if req.target == "/vscode-response" && req.method == "POST"
+                try
+                    response_data = JSON3.read(body)
+                    request_id = get(response_data, :request_id, nothing)
+
+                    if request_id === nothing
+                        HTTP.setstatus(http, 400)
+                        HTTP.setheader(http, "Content-Type" => "application/json")
+                        HTTP.startwrite(http)
+                        write(http, JSON3.write(Dict("error" => "Missing request_id")))
+                        return nothing
+                    end
+
+                    result = get(response_data, :result, nothing)
+                    error = get(response_data, :error, nothing)
+
+                    # Store the response
+                    MCPRepl.store_vscode_response(string(request_id), result, error)
+
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON3.write(Dict("status" => "ok")))
+                    return nothing
+                catch e
+                    HTTP.setstatus(http, 500)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON3.write(Dict("error" => "Failed to process response: $e")))
+                    return nothing
+                end
+            end
+
             if isempty(body)
                 HTTP.setstatus(http, 400)
                 HTTP.setheader(http, "Content-Type" => "application/json")
