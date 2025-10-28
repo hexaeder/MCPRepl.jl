@@ -669,10 +669,13 @@ end
 function check_claude_status()
     # Check if claude command exists (cross-platform)
     try
-        # Try running claude with --version flag
-        # This works on all platforms and doesn't depend on 'which'
-        run(pipeline(`claude --version`, devnull, devnull))
+        # Use success() to check if command exists and runs without error
+        # Redirect both stdout and stderr to devnull
+        if !success(pipeline(`claude --version`, stdout=devnull, stderr=devnull))
+            return :claude_not_found
+        end
     catch
+        # Command not found or failed to execute
         return :claude_not_found
     end
 
@@ -738,10 +741,14 @@ function write_gemini_settings(settings::Dict)
 end
 
 function check_gemini_status()
-    # Check if gemini command exists
+    # Check if gemini command exists (cross-platform)
     try
-        run(pipeline(`which gemini`, devnull))
+        # Use success() to check if command exists and runs without error
+        if !success(pipeline(`gemini --version`, stdout=devnull, stderr=devnull))
+            return :gemini_not_found
+        end
     catch
+        # Command not found or failed to execute
         return :gemini_not_found
     end
 
