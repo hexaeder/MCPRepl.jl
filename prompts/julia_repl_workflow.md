@@ -408,6 +408,44 @@ execute_vscode_command("workbench.debug.viewlet.action.removeAllBreakpoints")
 - **`workbench.extensions.installExtension`** - Install a VS Code extension
   - Requires extension ID: `execute_vscode_command("workbench.extensions.installExtension", ["julialang.language-julia"])`
 
+### LSP (Language Server) Tools
+
+The MCP server provides direct integration with Julia's Language Server Protocol for code navigation and intelligence:
+
+#### Navigation
+- **`lsp_goto_definition`** - Jump to where a symbol is defined
+  - Arguments: `file_path`, `line` (1-indexed), `column` (1-indexed)
+  - Returns: File path and position of definition(s)
+  - Example: `lsp_goto_definition(file_path="/path/to/file.jl", line=42, column=10)`
+
+- **`lsp_find_references`** - Find all usages of a symbol
+  - Arguments: `file_path`, `line`, `column`, `include_declaration` (optional, default: true)
+  - Returns: List of all locations where symbol is used
+  - Example: `lsp_find_references(file_path="/path/to/file.jl", line=42, column=10)`
+
+#### Information
+- **`lsp_hover_info`** - Get documentation and type info at a position
+  - Arguments: `file_path`, `line`, `column`
+  - Returns: Documentation strings, type information, signatures
+  - Example: `lsp_hover_info(file_path="/path/to/file.jl", line=42, column=10)`
+
+#### Symbols & Search
+- **`lsp_document_symbols`** - List all symbols in a file
+  - Arguments: `file_path`
+  - Returns: Structured list of functions, types, constants, etc.
+  - Example: `lsp_document_symbols(file_path="/path/to/file.jl")`
+
+- **`lsp_workspace_symbols`** - Search for symbols across workspace
+  - Arguments: `query` (search string)
+  - Returns: Matching symbols with locations
+  - Example: `lsp_workspace_symbols(query="MyFunction")`
+
+**LSP Usage Notes:**
+- LSP tools require the Julia Language Server to be running (automatic in VS Code)
+- All positions use 1-indexed Julia conventions (converted to 0-indexed LSP internally)
+- File paths must be absolute paths
+- Results include file:line:column format for easy navigation
+
 ### Common Workflows
 
 **Running shell commands (recommended over exec_repl for fresh Julia processes):**

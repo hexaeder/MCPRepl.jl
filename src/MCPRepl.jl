@@ -9,6 +9,7 @@ using HTTP
 include("MCPServer.jl")
 include("setup.jl")
 include("vscode.jl")
+include("lsp.jl")
 
 # ============================================================================
 # VS Code Response Storage for Bidirectional Communication
@@ -1943,6 +1944,9 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         end,
     )
 
+    # Create LSP tools
+    lsp_tools = create_lsp_tools()
+
     # Create and start server
     println("Starting MCP server on port $port...")
     SERVER[] = start_mcp_server(
@@ -1974,6 +1978,7 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             debug_stop_tool,
             pkg_add_tool,
             pkg_rm_tool,
+            lsp_tools...,  # Add all LSP tools
         ],
         port;
         verbose = verbose,
