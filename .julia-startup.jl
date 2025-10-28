@@ -18,6 +18,12 @@ try
             try
                 sleep(1)
                 port = parse(Int, get(ENV, "JULIA_MCP_PORT", "3000"))
+                
+                # Set up lax security mode if no config exists (for development)
+                if !isfile(joinpath(pwd(), ".mcprepl", "security.json"))
+                    MCPRepl.quick_setup(:lax)
+                end
+                
                 MCPRepl.start!(; port = port, verbose = false)
 
                 # Wait a moment for server to fully initialize

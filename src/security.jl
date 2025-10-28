@@ -11,7 +11,7 @@ struct SecurityConfig
     mode::Symbol  # :strict, :relaxed, or :lax
     api_keys::Vector{String}
     allowed_ips::Vector{String}
-    created_at::Float64
+    created_at::Int64
 end
 
 function SecurityConfig(
@@ -19,7 +19,7 @@ function SecurityConfig(
     api_keys::Vector{String},
     allowed_ips::Vector{String},
 )
-    return SecurityConfig(mode, api_keys, allowed_ips, time())
+    return SecurityConfig(mode, api_keys, allowed_ips, Int64(round(time())))
 end
 
 """
