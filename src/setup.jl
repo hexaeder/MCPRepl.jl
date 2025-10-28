@@ -667,9 +667,11 @@ function prompt_and_setup_vscode_extension()
 end
 
 function check_claude_status()
-    # Check if claude command exists
+    # Check if claude command exists (cross-platform)
     try
-        run(pipeline(`which claude`, devnull))
+        # Try running claude with --version flag
+        # This works on all platforms and doesn't depend on 'which'
+        run(pipeline(`claude --version`, devnull, devnull))
     catch
         return :claude_not_found
     end
