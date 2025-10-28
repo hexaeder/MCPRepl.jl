@@ -633,11 +633,11 @@ function start!(; port = 3000, verbose::Bool = true)
         "restart_repl",
         """Restart the Julia REPL and wait for the MCP server to come back online.
         
-        This tool handles the complete restart process:
-        1. Executes the VS Code command to restart the Julia REPL
-        2. Waits for the REPL to restart and initialize
-        3. Polls the MCP server endpoint until it's responding
-        4. Returns when the server is ready to accept requests
+        This tool triggers the Julia REPL restart via VS Code command.
+        The MCP server connection will be interrupted during restart.
+        
+        **Important**: After calling this tool, wait ~10-15 seconds before making new requests
+        to allow the Julia REPL to restart and the MCP server to reinitialize.
         
         Use this tool after making changes to the MCP server code or when the REPL needs a fresh start.""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
@@ -650,30 +650,10 @@ function start!(; port = 3000, verbose::Bool = true)
                 restart_uri = build_vscode_uri("language-julia.restartREPL"; mcp_port=server_port)
                 trigger_vscode_uri(restart_uri)
                 
-                # Wait for initial restart (3 seconds)
-                sleep(3)
-                
-                # Poll the MCP server to check if it's up (max 10 attempts, 1 second apart)
-                max_attempts = 10
-                for attempt in 1:max_attempts
-                    try
-                        # Try to connect to the MCP server
-                        response = HTTP.get("http://localhost:$server_port"; status_exception=false)
-                        if response.status < 500
-                            return "✓ Julia REPL restarted and MCP server is responding on port $server_port"
-                        end
-                    catch e
-                        # Server not ready yet, continue waiting
-                    end
-                    
-                    if attempt < max_attempts
-                        sleep(1)
-                    end
-                end
-                
-                return "⚠ Julia REPL restarted but MCP server may still be initializing. Try your command now."
+                # Return immediately - the server will be restarting
+                return "⏳ Julia REPL restart initiated on port $server_port. Wait ~10-15 seconds for server to reinitialize before making new requests."
             catch e
-                return "Error restarting REPL: $e"
+                return "Error initiating REPL restart: $e"
             end
         end,
     )
