@@ -20,8 +20,47 @@ struct MCPServer
 end
 
 # Create request handler with access to tools
-function create_handler(tools::Dict{String,MCPTool}, port::Int)
+function create_handler(
+    tools::Dict{String,MCPTool},
+    port::Int,
+    security_config::Union{SecurityConfig,Nothing} = nothing,
+)
     return function handle_request(req::HTTP.Request)
+        # Security check (skip for vscode-response endpoint)
+        if req.target != "/vscode-response" && security_config !== nothing
+            # Extract and validate API key
+            api_key = extract_api_key(req)
+            if api_key === nothing && security_config.mode != :lax
+                return HTTP.Response(
+                    401,
+                    ["Content-Type" => "application/json"],
+                    JSON.json(
+                        Dict("error" => "Unauthorized: Missing API key in Authorization header"),
+                    ),
+                )
+            end
+
+            if !validate_api_key(something(api_key, ""), security_config)
+                return HTTP.Response(
+                    403,
+                    ["Content-Type" => "application/json"],
+                    JSON.json(Dict("error" => "Forbidden: Invalid API key")),
+                )
+            end
+
+            # Validate IP address
+            client_ip = get_client_ip(req)
+            if !validate_ip(client_ip, security_config)
+                return HTTP.Response(
+                    403,
+                    ["Content-Type" => "application/json"],
+                    JSON.json(
+                        Dict("error" => "Forbidden: IP address $client_ip not allowed"),
+                    ),
+                )
+            end
+        end
+
         # Parse JSON-RPC request
         body = String(req.body)
 
@@ -387,12 +426,58 @@ function text_parameter(name::String, description::String, required::Bool = true
     return schema
 end
 
-function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Bool = true)
+function start_mcp_server(
+    tools::Vector{MCPTool},
+    port::Int = 3000;
+    verbose::Bool = true,
+    security_config::Union{SecurityConfig,Nothing} = nothing,
+)
     tools_dict = Dict(tool.name => tool for tool in tools)
 
     # Create a hybrid handler that supports both regular and streaming responses
     function hybrid_handler(http::HTTP.Stream)
         req = http.message
+
+        # Security check (skip for vscode-response endpoint)
+        if req.target != "/vscode-response" && security_config !== nothing
+            # Extract and validate API key
+            api_key = extract_api_key(req)
+            if api_key === nothing && security_config.mode != :lax
+                HTTP.setstatus(http, 401)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(
+                    http,
+                    JSON.json(
+                        Dict("error" => "Unauthorized: Missing API key in Authorization header"),
+                    ),
+                )
+                return nothing
+            end
+
+            if !validate_api_key(something(api_key, ""), security_config)
+                HTTP.setstatus(http, 403)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict("error" => "Forbidden: Invalid API key")))
+                return nothing
+            end
+
+            # Validate IP address
+            client_ip = get_client_ip(req)
+            if !validate_ip(client_ip, security_config)
+                HTTP.setstatus(http, 403)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(
+                    http,
+                    JSON.json(
+                        Dict("error" => "Forbidden: IP address $client_ip not allowed"),
+                    ),
+                )
+                return nothing
+            end
+        end
 
         # Read the request body
         body = String(read(http))
@@ -581,7 +666,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
 
             # Handle other requests using the regular handler
             req_with_body = HTTP.Request(req.method, req.target, req.headers, body)
-            handler = create_handler(tools_dict, port)
+            handler = create_handler(tools_dict, port, security_config)
             response = handler(req_with_body)
 
             HTTP.setstatus(http, response.status)

@@ -5,7 +5,12 @@ using JSON
 using InteractiveUtils
 using Profile
 using HTTP
+using Random
+using SHA
+using Dates
 
+include("security.jl")
+include("security_wizard.jl")
 include("MCPServer.jl")
 include("setup.jl")
 include("vscode.jl")
@@ -551,8 +556,47 @@ function repl_status_report()
     end
 end
 
-function start!(; port = 3000, verbose::Bool = true)
+function start!(; port = 3000, verbose::Bool = true, security_mode::Union{Symbol,Nothing} = nothing)
     SERVER[] !== nothing && stop!() # Stop existing server if running
+
+    # Load or prompt for security configuration
+    security_config = load_security_config()
+    
+    if security_config === nothing
+        printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color = :red, bold = true)
+        println()
+        println("MCPRepl requires security configuration before starting.")
+        println("Run MCPRepl.setup() to configure API keys and security settings.")
+        println()
+        error("Security configuration required. Run MCPRepl.setup() first.")
+    end
+
+    # Override security mode if specified
+    if security_mode !== nothing
+        if !(security_mode in [:strict, :relaxed, :lax])
+            error("Invalid security_mode. Must be :strict, :relaxed, or :lax")
+        end
+        security_config = SecurityConfig(
+            security_mode,
+            security_config.api_keys,
+            security_config.allowed_ips,
+            security_config.created_at,
+        )
+    end
+
+    # Show security status if verbose
+    if verbose
+        printstyled("\n🔒 Security Mode: ", color = :cyan, bold = true)
+        printstyled("$(security_config.mode)\n", color = :green, bold = true)
+        if security_config.mode == :strict
+            println("   • API key required + IP allowlist enforced")
+        elseif security_config.mode == :relaxed
+            println("   • API key required + any IP allowed")
+        elseif security_config.mode == :lax
+            println("   • Localhost only + no API key required")
+        end
+        println()
+    end
 
     usage_instructions_tool = MCPTool(
         "usage_instructions",
@@ -2025,6 +2069,7 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         ],
         port;
         verbose = verbose,
+        security_config = security_config,
     )
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
@@ -2124,5 +2169,84 @@ function test_server(
     println("✗ MCP Server on port $port is not responding after $max_attempts attempts")
     return false
 end
+
+# ============================================================================
+# Public Security Management Functions
+# ============================================================================
+
+"""
+    security_status()
+
+Display current security configuration.
+"""
+function security_status()
+    config = load_security_config()
+    if config === nothing
+        printstyled("\n⚠️  No security configuration found\n", color = :yellow, bold = true)
+        println("Run MCPRepl.setup_security() to configure")
+        println()
+        return
+    end
+    show_security_status(config)
+end
+
+"""
+    setup_security(; force::Bool=false)
+
+Launch the security setup wizard.
+"""
+function setup_security(; force::Bool = false)
+    return security_setup_wizard(pwd(); force = force)
+end
+
+"""
+    generate_key()
+
+Generate and add a new API key to the current configuration.
+"""
+function generate_key()
+    return add_api_key!(pwd())
+end
+
+"""
+    revoke_key(key::String)
+
+Revoke (remove) an API key from the configuration.
+"""
+function revoke_key(key::String)
+    return remove_api_key!(key, pwd())
+end
+
+"""
+    allow_ip(ip::String)
+
+Add an IP address to the allowlist.
+"""
+function allow_ip(ip::String)
+    return add_allowed_ip!(ip, pwd())
+end
+
+"""
+    deny_ip(ip::String)
+
+Remove an IP address from the allowlist.
+"""
+function deny_ip(ip::String)
+    return remove_allowed_ip!(ip, pwd())
+end
+
+"""
+    set_security_mode(mode::Symbol)
+
+Change the security mode (:strict, :relaxed, or :lax).
+"""
+function set_security_mode(mode::Symbol)
+    return change_security_mode!(mode, pwd())
+end
+
+# Export public API
+export start!, stop!, setup, test_server
+export setup_security, security_status, generate_key, revoke_key
+export allow_ip, deny_ip, set_security_mode, quick_setup
 
 end #module

@@ -679,6 +679,38 @@ to apply changes. If you installed the startup script, restart your Julia REPL
 to see it in action.
 """
 function setup(; port::Union{Int,Nothing} = nothing)
+    # FIRST: Check security configuration
+    security_config = load_security_config()
+    
+    if security_config === nothing
+        printstyled("\n╔═══════════════════════════════════════════════════════════╗\n", color = :cyan, bold = true)
+        printstyled("║                                                           ║\n", color = :cyan, bold = true)
+        printstyled("║         🔒 MCPRepl Security Setup Required 🔒            ║\n", color = :yellow, bold = true)
+        printstyled("║                                                           ║\n", color = :cyan, bold = true)
+        printstyled("╚═══════════════════════════════════════════════════════════╝\n", color = :cyan, bold = true)
+        println()
+        println("MCPRepl now requires security configuration before use.")
+        println("This includes API key authentication and IP allowlisting.")
+        println()
+        print("Run security setup wizard now? [Y/n]: ")
+        response = strip(lowercase(readline()))
+        
+        if isempty(response) || response == "y" || response == "yes"
+            security_config = security_setup_wizard()
+            println()
+            printstyled("✅ Security configuration complete!\n", color = :green, bold = true)
+            println()
+        else
+            println()
+            printstyled("⚠️  Setup incomplete. Run MCPRepl.setup_security() later.\n", color = :yellow)
+            println()
+            return
+        end
+    else
+        printstyled("\n✅ Security configured (mode: $(security_config.mode))\n", color = :green)
+        println()
+    end
+    
     # Determine port to use
     if port === nothing
         # Try to get from environment variable
@@ -705,7 +737,7 @@ function setup(; port::Union{Int,Nothing} = nothing)
     vscode_status = check_vscode_status()
 
     # Show current status
-    println("� Server Configuration")
+    println("🚀 Server Configuration")
     println("   Port: $port")
     println()
 
