@@ -1,4 +1,5 @@
 using HTTP
+using JSON
 
 # Import types and functions from parent module
 import ..MCPRepl: SecurityConfig, extract_api_key, validate_api_key, get_client_ip, validate_ip
@@ -6,6 +7,10 @@ import ..MCPRepl: SecurityConfig, extract_api_key, validate_api_key, get_client_
 # Global storage for active streaming responses (request_id => Stream)
 const ACTIVE_STREAMS = Dict{String,HTTP.Stream}()
 const STREAM_LOCK = ReentrantLock()
+
+# Global storage for SSE (Server-Sent Events) streaming channels
+const SSE_STREAMS = Dict{String,Channel{String}}()
+const SSE_LOCK = ReentrantLock()
 
 # Tool definition structure
 struct MCPTool
