@@ -29,19 +29,19 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
             # Handle VS Code response endpoint (for bidirectional communication)
             if req.target == "/vscode-response" && req.method == "POST"
                 try
-                    response_data = JSON3.read(body)
-                    request_id = get(response_data, :request_id, nothing)
+                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    request_id = get(response_data, "request_id", nothing)
 
                     if request_id === nothing
                         return HTTP.Response(
                             400,
                             ["Content-Type" => "application/json"],
-                            JSON3.write(Dict("error" => "Missing request_id")),
+                            JSON.json(Dict("error" => "Missing request_id")),
                         )
                     end
 
-                    result = get(response_data, :result, nothing)
-                    error = get(response_data, :error, nothing)
+                    result = get(response_data, "result", nothing)
+                    error = get(response_data, "error", nothing)
 
                     # Store the response using MCPRepl function
                     MCPRepl.store_vscode_response(string(request_id), result, error)
@@ -49,13 +49,13 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                     return HTTP.Response(
                         200,
                         ["Content-Type" => "application/json"],
-                        JSON3.write(Dict("status" => "ok")),
+                        JSON.json(Dict("status" => "ok")),
                     )
                 catch e
                     return HTTP.Response(
                         500,
                         ["Content-Type" => "application/json"],
-                        JSON3.write(Dict("error" => "Failed to process response: $e")),
+                        JSON.json(Dict("error" => "Failed to process response: $e")),
                     )
                 end
             end
@@ -77,7 +77,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 return HTTP.Response(
                     200,
                     ["Content-Type" => "application/json"],
-                    JSON3.write(oauth_metadata),
+                    JSON.json(oauth_metadata),
                 )
             end
 
@@ -102,7 +102,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 return HTTP.Response(
                     201,
                     ["Content-Type" => "application/json"],
-                    JSON3.write(registration_response),
+                    JSON.json(registration_response),
                 )
             end
 
@@ -133,7 +133,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 return HTTP.Response(
                     200,
                     ["Content-Type" => "application/json"],
-                    JSON3.write(token_response),
+                    JSON.json(token_response),
                 )
             end
 
@@ -150,17 +150,17 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 return HTTP.Response(
                     400,
                     ["Content-Type" => "application/json"],
-                    JSON3.write(error_response),
+                    JSON.json(error_response),
                 )
             end
 
-            request = JSON3.read(body)
+            request = JSON.parse(body; dicttype = Dict{String,Any})
 
             # Check if method field exists
-            if !haskey(request, :method)
+            if !haskey(request, "method")
                 error_response = Dict(
                     "jsonrpc" => "2.0",
-                    "id" => get(request, :id, 0),
+                    "id" => get(request, "id", 0),
                     "error" => Dict(
                         "code" => -32600,
                         "message" => "Invalid Request - missing method field",
@@ -169,15 +169,15 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 return HTTP.Response(
                     400,
                     ["Content-Type" => "application/json"],
-                    JSON3.write(error_response),
+                    JSON.json(error_response),
                 )
             end
 
             # Handle initialization
-            if request.method == "initialize"
+            if request["method"] == "initialize"
                 response = Dict(
                     "jsonrpc" => "2.0",
-                    "id" => request.id,
+                    "id" => request["id"],
                     "result" => Dict(
                         "protocolVersion" => "2024-11-05",
                         "capabilities" => Dict("tools" => Dict()),
@@ -190,19 +190,19 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 return HTTP.Response(
                     200,
                     ["Content-Type" => "application/json"],
-                    JSON3.write(response),
+                    JSON.json(response),
                 )
             end
 
             # Handle initialized notification
-            if request.method == "notifications/initialized"
+            if request["method"] == "notifications/initialized"
                 # This is a notification, no response needed
                 return HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
             end
 
 
             # Handle tool listing
-            if request.method == "tools/list"
+            if request["method"] == "tools/list"
                 tool_list = [
                     Dict(
                         "name" => tool.name,
@@ -213,29 +213,29 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
 
                 response = Dict(
                     "jsonrpc" => "2.0",
-                    "id" => request.id,
+                    "id" => request["id"],
                     "result" => Dict("tools" => tool_list),
                 )
                 return HTTP.Response(
                     200,
                     ["Content-Type" => "application/json"],
-                    JSON3.write(response),
+                    JSON.json(response),
                 )
             end
 
             # Handle tool calls
-            if request.method == "tools/call"
-                tool_name = request.params.name
+            if request["method"] == "tools/call"
+                tool_name = request["params"]["name"]
                 if haskey(tools, tool_name)
                     tool = tools[tool_name]
-                    args = get(request.params, :arguments, Dict())
+                    args = get(request["params"], "arguments", Dict())
 
                     # Check if streaming is requested
-                    enable_streaming = get(args, :stream, false)
+                    enable_streaming = get(args, "stream", false)
 
                     if enable_streaming
                         # Create a channel for streaming
-                        request_id = string(request.id)
+                        request_id = string(request["id"])
                         stream_channel = Channel{String}(32)  # Buffer up to 32 events
 
                         lock(SSE_LOCK) do
@@ -259,15 +259,14 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                                 end
 
                                 # Send final result
-                                final_event = JSON3.write(
+                                final_event = JSON.json(
                                     Dict("type" => "complete", "content" => result_text),
                                 )
                                 put!(stream_channel, final_event)
                             catch e
                                 # Send error event
-                                error_event = JSON3.write(
-                                    Dict("type" => "error", "error" => string(e)),
-                                )
+                                error_event =
+                                    JSON.json(Dict("type" => "error", "error" => string(e)))
                                 put!(stream_channel, error_event)
                             finally
                                 close(stream_channel)
@@ -277,7 +276,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                         # Return SSE endpoint info
                         response = Dict(
                             "jsonrpc" => "2.0",
-                            "id" => request.id,
+                            "id" => request["id"],
                             "result" => Dict(
                                 "streaming" => true,
                                 "sse_endpoint" => "/sse/$request_id",
@@ -292,7 +291,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                         return HTTP.Response(
                             200,
                             ["Content-Type" => "application/json"],
-                            JSON3.write(response),
+                            JSON.json(response),
                         )
                     else
                         # Non-streaming mode (original behavior)
@@ -300,7 +299,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
 
                         response = Dict(
                             "jsonrpc" => "2.0",
-                            "id" => request.id,
+                            "id" => request["id"],
                             "result" => Dict(
                                 "content" =>
                                     [Dict("type" => "text", "text" => result_text)],
@@ -309,13 +308,13 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                         return HTTP.Response(
                             200,
                             ["Content-Type" => "application/json"],
-                            JSON3.write(response),
+                            JSON.json(response),
                         )
                     end
                 else
                     error_response = Dict(
                         "jsonrpc" => "2.0",
-                        "id" => request.id,
+                        "id" => request["id"],
                         "error" => Dict(
                             "code" => -32602,
                             "message" => "Tool not found: $tool_name",
@@ -324,7 +323,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                     return HTTP.Response(
                         404,
                         ["Content-Type" => "application/json"],
-                        JSON3.write(error_response),
+                        JSON.json(error_response),
                     )
                 end
             end
@@ -332,13 +331,13 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
             # Method not found
             error_response = Dict(
                 "jsonrpc" => "2.0",
-                "id" => get(request, :id, 0),
+                "id" => get(request, "id", 0),
                 "error" => Dict("code" => -32601, "message" => "Method not found"),
             )
             return HTTP.Response(
                 404,
                 ["Content-Type" => "application/json"],
-                JSON3.write(error_response),
+                JSON.json(error_response),
             )
 
         catch e
@@ -349,7 +348,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
             request_id = 0  # Default to 0 instead of nothing to satisfy JSON-RPC schema
             try
                 if !isempty(body)
-                    parsed_request = JSON3.read(body)
+                    parsed_request = JSON.parse(body; dicttype = Dict{String,Any})
                     # Only use the request ID if it's a valid JSON-RPC ID (string or number)
                     raw_id = get(parsed_request, :id, 0)
                     if raw_id isa Union{String,Number}
@@ -369,7 +368,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
             return HTTP.Response(
                 500,
                 ["Content-Type" => "application/json"],
-                JSON3.write(error_response),
+                JSON.json(error_response),
             )
         end
     end
@@ -402,19 +401,19 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
             # Handle VS Code response endpoint FIRST (before any JSON parsing)
             if req.target == "/vscode-response" && req.method == "POST"
                 try
-                    response_data = JSON3.read(body)
-                    request_id = get(response_data, :request_id, nothing)
+                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    request_id = get(response_data, "request_id", nothing)
 
                     if request_id === nothing
                         HTTP.setstatus(http, 400)
                         HTTP.setheader(http, "Content-Type" => "application/json")
                         HTTP.startwrite(http)
-                        write(http, JSON3.write(Dict("error" => "Missing request_id")))
+                        write(http, JSON.json(Dict("error" => "Missing request_id")))
                         return nothing
                     end
 
-                    result = get(response_data, :result, nothing)
-                    error = get(response_data, :error, nothing)
+                    result = get(response_data, "result", nothing)
+                    error = get(response_data, "error", nothing)
 
                     # Store the response
                     MCPRepl.store_vscode_response(string(request_id), result, error)
@@ -422,13 +421,16 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON3.write(Dict("status" => "ok")))
+                    write(http, JSON.json(Dict("status" => "ok")))
                     return nothing
                 catch e
                     HTTP.setstatus(http, 500)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON3.write(Dict("error" => "Failed to process response: $e")))
+                    write(
+                        http,
+                        JSON.json(Dict("error" => "Failed to process response: $e")),
+                    )
                     return nothing
                 end
             end
@@ -445,18 +447,18 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                         "message" => "Invalid Request - empty body",
                     ),
                 )
-                write(http, JSON3.write(error_response))
+                write(http, JSON.json(error_response))
                 return nothing
             end
 
-            request = JSON3.read(body)
+            request = JSON.parse(body; dicttype = Dict{String,Any})
 
             # Handle tool calls with potential streaming
-            if request.method == "tools/call"
-                tool_name = request.params.name
+            if request["method"] == "tools/call"
+                tool_name = request["params"]["name"]
                 if haskey(tools_dict, tool_name)
                     tool = tools_dict[tool_name]
-                    args = get(request.params, :arguments, Dict())
+                    args = get(request["params"], "arguments", Dict())
 
                     # Check Accept header for text/event-stream support
                     accept_header = ""
@@ -469,7 +471,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                     client_supports_sse = contains(accept_header, "text/event-stream")
 
                     # Enable streaming if client supports SSE (automatically) OR if explicitly requested
-                    stream_requested = get(args, :stream, false)
+                    stream_requested = get(args, "stream", false)
                     enable_streaming = client_supports_sse || stream_requested
 
                     if enable_streaming
@@ -501,26 +503,26 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                                 # Send final result
                                 final_response = Dict(
                                     "jsonrpc" => "2.0",
-                                    "id" => request.id,
+                                    "id" => request["id"],
                                     "result" => Dict(
                                         "content" => [
                                             Dict("type" => "text", "text" => result_text),
                                         ],
                                     ),
                                 )
-                                final_event = JSON3.write(final_response)
+                                final_event = JSON.json(final_response)
                                 put!(stream_channel, final_event)
                             catch e
                                 # Send error response
                                 error_response = Dict(
                                     "jsonrpc" => "2.0",
-                                    "id" => request.id,
+                                    "id" => request["id"],
                                     "error" => Dict(
                                         "code" => -32603,
                                         "message" => string(e),
                                     ),
                                 )
-                                error_event = JSON3.write(error_response)
+                                error_event = JSON.json(error_response)
                                 put!(stream_channel, error_event)
                             finally
                                 close(stream_channel)
@@ -537,7 +539,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                                 flush(http)
                             end
                         catch e
-                            @warn "Streaming error" exception=e
+                            @warn "Streaming error" exception = e
                         end
 
                         return nothing
@@ -547,7 +549,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
 
                         response = Dict(
                             "jsonrpc" => "2.0",
-                            "id" => request.id,
+                            "id" => request["id"],
                             "result" => Dict(
                                 "content" =>
                                     [Dict("type" => "text", "text" => result_text)],
@@ -557,7 +559,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                         HTTP.setstatus(http, 200)
                         HTTP.setheader(http, "Content-Type" => "application/json")
                         HTTP.startwrite(http)
-                        write(http, JSON3.write(response))
+                        write(http, JSON.json(response))
                         return nothing
                     end
                 else
@@ -566,13 +568,13 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                     HTTP.startwrite(http)
                     error_response = Dict(
                         "jsonrpc" => "2.0",
-                        "id" => request.id,
+                        "id" => request["id"],
                         "error" => Dict(
                             "code" => -32602,
                             "message" => "Tool not found: $tool_name",
                         ),
                     )
-                    write(http, JSON3.write(error_response))
+                    write(http, JSON.json(error_response))
                     return nothing
                 end
             end
@@ -596,7 +598,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
             HTTP.startwrite(http)
 
             request_id = try
-                parsed = JSON3.read(body)
+                parsed = JSON.parse(body; dicttype = Dict{String,Any})
                 get(parsed, :id, 0)
             catch
                 0
@@ -607,7 +609,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                 "id" => request_id,
                 "error" => Dict("code" => -32603, "message" => "Internal error: $e"),
             )
-            write(http, JSON3.write(error_response))
+            write(http, JSON.json(error_response))
             return nothing
         end
     end

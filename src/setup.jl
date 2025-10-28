@@ -1,4 +1,4 @@
-using JSON3
+using JSON
 
 function get_vscode_workspace_mcp_path()
     # Look for .vscode/mcp.json in current directory
@@ -15,7 +15,7 @@ function read_vscode_mcp_config()
 
     try
         content = read(mcp_path, String)
-        return JSON3.read(content, Dict)
+        return JSON.parse(content; dicttype = Dict)
     catch
         return nothing
     end
@@ -32,7 +32,7 @@ function write_vscode_mcp_config(config::Dict)
 
     try
         io = IOBuffer()
-        JSON3.pretty(io, config)
+        JSON.json(io, config)
         content = String(take!(io))
         write(mcp_path, content)
         return true
@@ -131,7 +131,7 @@ function read_vscode_settings()
         lines = split(content, '\n')
         cleaned_lines = filter(line -> !startswith(strip(line), "//"), lines)
         cleaned_content = join(cleaned_lines, '\n')
-        return JSON3.read(cleaned_content, Dict)
+        return JSON.parse(cleaned_content; dicttype = Dict)
     catch e
         @warn "Failed to read VS Code settings.json" exception = e
         return Dict()
@@ -150,7 +150,7 @@ function write_vscode_settings(settings::Dict)
     try
         # Pretty print JSON with indentation
         io = IOBuffer()
-        JSON3.pretty(io, settings)
+        JSON.json(io, settings)
         content = String(take!(io))
         write(settings_path, content)
         return true
@@ -550,7 +550,7 @@ function read_gemini_settings()
 
     try
         content = read(settings_path, String)
-        return JSON3.read(content, Dict)
+        return JSON.parse(content; dicttype = Dict)
     catch
         return Dict()
     end
@@ -566,7 +566,7 @@ function write_gemini_settings(settings::Dict)
 
     try
         io = IOBuffer()
-        JSON3.pretty(io, settings)
+        JSON.json(io, settings)
         content = String(take!(io))
         write(settings_path, content)
         return true

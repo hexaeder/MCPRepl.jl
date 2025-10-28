@@ -1,7 +1,7 @@
 module MCPRepl
 
 using REPL
-using JSON3
+using JSON
 using InteractiveUtils
 using Profile
 using HTTP
@@ -180,7 +180,7 @@ function execute_repllike(
             "method" => "notifications/progress",
             "params" => Dict("progress" => 0, "message" => "Execution started..."),
         )
-        put!(stream_channel, JSON3.write(start_event))
+        put!(stream_channel, JSON.json(start_event))
 
         # Save original streams
         orig_stdout = stdout
@@ -228,9 +228,9 @@ function execute_repllike(
                                             "message" => line,
                                         ),
                                     )
-                                    put!(stream_channel, JSON3.write(output_event))
+                                    put!(stream_channel, JSON.json(output_event))
                                 catch e
-                                    @warn "SSE streaming error" exception=e
+                                    @warn "SSE streaming error" exception = e
                                 end
                             else
                                 # Incomplete line - save back to buffer
@@ -254,14 +254,14 @@ function execute_repllike(
                             "params" =>
                                 Dict("level" => stream_name, "message" => remaining),
                         )
-                        put!(stream_channel, JSON3.write(output_event))
+                        put!(stream_channel, JSON.json(output_event))
                     catch e
-                        @warn "SSE streaming error on final flush" exception=e
+                        @warn "SSE streaming error on final flush" exception = e
                     end
                 end
             catch e
                 if !isa(e, EOFError)
-                    @warn "Output forwarding error for $stream_name" exception=e
+                    @warn "Output forwarding error for $stream_name" exception = e
                 end
             end
         end
@@ -279,7 +279,7 @@ function execute_repllike(
                 "method" => "notifications/progress",
                 "params" => Dict("progress" => 100, "message" => "Error: $e"),
             )
-            put!(stream_channel, JSON3.write(error_event))
+            put!(stream_channel, JSON.json(error_event))
             e
         finally
             # Restore stdout/stderr
@@ -309,7 +309,7 @@ function execute_repllike(
             "method" => "notifications/progress",
             "params" => Dict("progress" => 100, "message" => "Execution complete"),
         )
-        put!(stream_channel, JSON3.write(complete_event))
+        put!(stream_channel, JSON.json(complete_event))
     else
         # Non-streaming mode (original behavior)
         captured_output = Pipe()
@@ -594,8 +594,13 @@ function start!(; port = 3000, verbose::Bool = true)
 
                         if isfile(commands_json_path)
                             try
-                                commands_data =
-                                    JSON3.read(read(commands_json_path, String))
+                                commands_data = JSON.parse(
+                                    read(
+                                        commands_json_path,
+                                        String;
+                                        dicttype = Dict{String,Any},
+                                    ),
+                                )
                                 categories = get(commands_data, :categories, Dict())
 
                                 # Build lookup table and category mapping
@@ -613,7 +618,7 @@ function start!(; port = 3000, verbose::Bool = true)
                                         (cat_name, cat_commands)
                                 end
                             catch e
-                                @debug "Could not load command documentation" exception=e
+                                @debug "Could not load command documentation" exception = e
                             end
                         end
 
@@ -688,7 +693,8 @@ function start!(; port = 3000, verbose::Bool = true)
                     end
                 catch e
                     # If reading settings fails, just return base content
-                    @debug "Could not read VS Code settings for allowed commands" exception=e
+                    @debug "Could not read VS Code settings for allowed commands" exception =
+                        e
                 end
                 return base_content
             catch e
@@ -910,7 +916,7 @@ function start!(; port = 3000, verbose::Bool = true)
                 # Build URI with command and optional args
                 args_param = nothing
                 if haskey(args, "args") && !isempty(args["args"])
-                    args_json = JSON3.write(args["args"])
+                    args_json = JSON.json(args["args"])
                     args_param = HTTP.URIs.escapeuri(args_json)
                 end
 
@@ -933,7 +939,7 @@ function start!(; port = 3000, verbose::Bool = true)
                         else
                             # Pretty-print the result
                             result_str = try
-                                JSON3.pretty(result)
+                                JSON.json(result)
                             catch
                                 string(result)
                             end
@@ -1554,7 +1560,7 @@ function start!(; port = 3000, verbose::Bool = true)
 
                 # Open the file using vscode.open command
                 uri = "file://$abs_path"
-                args_json = JSON3.write([uri])
+                args_json = JSON.json([uri])
                 args_encoded = HTTP.URIs.escapeuri(args_json)
                 open_uri = build_vscode_uri("vscode.open"; args = args_encoded)
                 trigger_vscode_uri(open_uri)

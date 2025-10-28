@@ -2,7 +2,7 @@ using Test
 using MCPRepl
 using MCPRepl: MCPTool
 using HTTP
-using JSON3
+using JSON
 using Dates
 
 # Create test tools
@@ -85,7 +85,7 @@ end
 
         # Parse error response
         body = String(response.body)
-        json_response = JSON3.read(body)
+        json_response = JSON.parse(body)
 
         @test haskey(json_response, :error)
         @test occursin("empty body", json_response.error.message)
@@ -108,7 +108,7 @@ end
     try
         # Test tools/list request
         request_body =
-            JSON3.write(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"))
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"))
 
         response = HTTP.post(
             "http://localhost:$test_port/",
@@ -120,7 +120,7 @@ end
 
         # Parse response
         body = String(response.body)
-        json_response = JSON3.read(body)
+        json_response = JSON.parse(body)
 
         @test json_response.jsonrpc == "2.0"
         @test json_response.id == 1
@@ -150,7 +150,7 @@ end
 
     try
         # Test reverse_text tool
-        request_body = JSON3.write(
+        request_body = JSON.json(
             Dict(
                 "jsonrpc" => "2.0",
                 "id" => 2,
@@ -172,12 +172,12 @@ end
 
         # Parse response
         body = String(response.body)
-        json_response = JSON3.read(body)
+        json_response = JSON.parse(body)
 
         @test json_response.result.content[1].text == "olleh"
 
         # Test calculate tool
-        request_body = JSON3.write(
+        request_body = JSON.json(
             Dict(
                 "jsonrpc" => "2.0",
                 "id" => 3,
@@ -199,7 +199,7 @@ end
 
         # Parse response
         body = String(response.body)
-        json_response = JSON3.read(body)
+        json_response = JSON.parse(body)
 
         @test json_response.result.content[1].text == "14"
 
@@ -221,7 +221,7 @@ end
                 # Send progress notification
                 put!(
                     stream_channel,
-                    JSON3.write(
+                    JSON.json(
                         Dict(
                             "jsonrpc" => "2.0",
                             "method" => "notifications/progress",
@@ -241,7 +241,7 @@ end
 
     try
         # Test with SSE Accept header
-        request_body = JSON3.write(
+        request_body = JSON.json(
             Dict(
                 "jsonrpc" => "2.0",
                 "id" => 1,

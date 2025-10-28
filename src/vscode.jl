@@ -47,7 +47,7 @@ function install_vscode_remote_control(
                     rm(old_path; recursive = true, force = true)
                     println("Removed old extension: $entry")
                 catch e
-                    @warn "Could not remove old extension at $old_path" exception=e
+                    @warn "Could not remove old extension at $old_path" exception = e
                 end
             end
         end
@@ -231,13 +231,15 @@ function install_vscode_remote_control(
     end
 
     # ----------------------------- settings.json ----------------------------
-    # Merge workspace settings using JSON3
+    # Merge workspace settings using JSON
     existing = Dict{String,Any}()
     if isfile(ws_settings_path)
         try
-            existing = JSON3.read(read(ws_settings_path, String), Dict{String,Any})
+            existing =
+                JSON.parse(read(ws_settings_path, String); dicttype = Dict{String,Any})
         catch e
-            @warn "Could not parse existing workspace settings.json; will preserve it unchanged." exception=e
+            @warn "Could not parse existing workspace settings.json; will preserve it unchanged." exception =
+                e
         end
     end
 
@@ -254,7 +256,7 @@ function install_vscode_remote_control(
 
     # Write back with JSON3
     io_buf = IOBuffer()
-    JSON3.pretty(io_buf, existing)
+    JSON.json(io_buf, existing)
     json_str = String(take!(io_buf))
     write(ws_settings_path, json_str)
 

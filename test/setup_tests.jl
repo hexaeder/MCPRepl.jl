@@ -1,6 +1,6 @@
 using Test
 using MCPRepl
-using JSON3
+using JSON
 
 @testset "Setup Tests" begin
     # Create a temporary directory for testing

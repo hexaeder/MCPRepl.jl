@@ -28,20 +28,31 @@ function file_uri(path::AbstractString)
 end
 
 """
-    uri_to_path(uri::AbstractString) -> String
+    uri_to_path(uri) -> String
 
-Convert a `file://` URI back to a file system path.
+Convert a `file://` URI or VS Code Uri object to a file system path.
+Handles both string URIs and Dict objects from VS Code.
 """
-function uri_to_path(uri::AbstractString)
-    if startswith(uri, "file://")
-        path = uri[8:end]  # Remove "file://"
-        # Handle Windows paths
-        if Sys.iswindows() && match(r"^/[A-Za-z]:", path) !== nothing
-            path = path[2:end]  # Remove leading slash before drive letter
-        end
-        return path
+function uri_to_path(uri)
+    # Handle Dict from VS Code (with "path" key)
+    if uri isa Dict
+        uri = get(uri, "path", get(uri, "uri", ""))
     end
-    return uri
+
+    # Handle string URI
+    if uri isa AbstractString
+        if startswith(uri, "file://")
+            path = uri[8:end]  # Remove "file://"
+            # Handle Windows paths
+            if Sys.iswindows() && match(r"^/[A-Za-z]:", path) !== nothing
+                path = path[2:end]  # Remove leading slash before drive letter
+            end
+            return path
+        end
+        return uri
+    end
+
+    return string(uri)
 end
 
 """
@@ -192,7 +203,7 @@ function execute_vscode_command_with_result(command::String, args::Vector, timeo
     server_port = SERVER[] !== nothing ? SERVER[].port : 3000
 
     # Build the VS Code URI with request_id for response tracking
-    args_json = isempty(args) ? nothing : JSON3.write(args)
+    args_json = isempty(args) ? nothing : JSON.json(args)
     uri = build_vscode_uri(
         command;
         args = args_json === nothing ? nothing : HTTP.URIs.escapeuri(args_json),
@@ -227,21 +238,21 @@ end
 Format a single location result for display.
 """
 function format_location(location)
-    if location isa Dict
-        uri = get(location, "uri", get(location, :uri, ""))
-        range = get(location, "range", get(location, :range, nothing))
+    # JSON.parse returns Dict with string keys
+    uri = get(location, "uri", "")
+    range = get(location, "range", nothing)
 
-        if range !== nothing
-            start_line = get(
-                get(range, "start", get(range, :start, Dict())),
-                "line",
-                get(get(range, "start", get(range, :start, Dict())), :line, 0),
-            )
-            start_char = get(
-                get(range, "start", get(range, :start, Dict())),
-                "character",
-                get(get(range, "start", get(range, :start, Dict())), :character, 0),
-            )
+    if range !== nothing
+        # Handle nested start object - check if it's iterable (array) first
+        if range isa AbstractVector && length(range) >= 1
+            start_obj = range[1]
+        else
+            start_obj = get(range, "start", nothing)
+        end
+
+        if start_obj !== nothing
+            start_line = get(start_obj, "line", 0)
+            start_char = get(start_obj, "character", 0)
 
             # Convert 0-indexed LSP to 1-indexed Julia
             file_path = uri_to_path(uri)
@@ -280,25 +291,20 @@ end
 Format hover information for display.
 """
 function format_hover_info(hover_result)
-    if hover_result isa Dict
-        contents = get(hover_result, "contents", get(hover_result, :contents, nothing))
+    # JSON.parse returns Dict with string keys
+    contents = get(hover_result, "contents", nothing)
 
-        if contents !== nothing
-            # Contents can be a string, MarkedString, or array
-            if contents isa String
-                return contents
-            elseif contents isa Dict
-                value = get(contents, "value", get(contents, :value, ""))
-                return value
-            elseif contents isa Vector
-                return join(
-                    [
-                        item isa String ? item : get(item, "value", get(item, :value, ""))
-                        for item in contents
-                    ],
-                    "\n\n",
-                )
-            end
+    if contents !== nothing
+        # Contents can be a string, MarkedString, or array
+        if contents isa String
+            return contents
+        elseif contents isa Dict && haskey(contents, "value")
+            return contents["value"]
+        elseif contents isa AbstractVector
+            return join(
+                [item isa String ? item : get(item, "value", "") for item in contents],
+                "\n\n",
+            )
         end
     end
 
@@ -321,19 +327,35 @@ function format_symbols(symbols)
 
     result = "Found $(length(symbols)) symbol(s):\n"
     for (i, sym) in enumerate(symbols)
-        if sym isa Dict
-            name = get(sym, "name", get(sym, :name, ""))
-            kind = get(sym, "kind", get(sym, :kind, 0))
-            location = get(sym, "location", get(sym, :location, nothing))
+        # JSON.parse returns Dict with string keys
+        name = get(sym, "name", "")
+        kind = get(sym, "kind", 0)
+        location = get(sym, "location", nothing)
 
-            kind_str = symbol_kind_to_string(kind)
+        # Convert kind string to number if needed
+        if kind isa String
+            # VS Code returns kind as string sometimes (e.g., "Function")
+            # Map common ones back to numbers for symbol_kind_to_string
+            kind_map = Dict(
+                "Function" => 12,
+                "Method" => 6,
+                "Class" => 5,
+                "Struct" => 23,
+                "Variable" => 13,
+                "Constant" => 14,
+                "Module" => 2,
+                "Package" => 4,
+            )
+            kind = get(kind_map, kind, 0)
+        end
 
-            if location !== nothing
-                loc_str = format_location(location)
-                result *= "  $i. [$kind_str] $name @ $loc_str\n"
-            else
-                result *= "  $i. [$kind_str] $name\n"
-            end
+        kind_str = kind isa Int ? symbol_kind_to_string(kind) : string(kind)
+
+        if location !== nothing
+            loc_str = format_location(location)
+            result *= "  $i. [$kind_str] $name @ $loc_str\n"
+        else
+            result *= "  $i. [$kind_str] $name\n"
         end
     end
 
