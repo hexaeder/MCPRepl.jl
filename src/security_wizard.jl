@@ -116,8 +116,8 @@ const DRAGON_MOUTH_OPEN = raw"""
                                     .  .   ~~//====......          __--~ ~~
                     -.            \_|//     |||\\  ~~~~~~::::... /~
                  ___-==_       _-~O~  \/    |||  \\            _/~~-
-         __---~~~.==~||\=_    -_--~/_-~|-   |\\   \\        _/~
-     _-~~     .=~    |  \\-_    '-O>>  /-   /  ||    \      /
+         __---~~~.==~||\=_    - --~/_-~|-   |\\   \\        _/~
+     _-~~     .=~    |  \\-_   <-/- > /-   /  ||    \      /
    .~       .~       |   \\ -_    /  /-   /   ||      \   /
   /  ____  /         |     \\ ~-_/  /|- _/   .||       \ /
   |~~    ~~|--~~~~--_ \     ~==-/   | \~--===~~        .\
@@ -228,16 +228,19 @@ function wizard_entrance_animation()
 
     flush(stdout)
 
-    # A few subtle twinkles around the wizard
+    # Twinkles around the wizard for ~2 seconds
     local twinkles = ["✧", "✨", "⋆"]
-    # Increase density by ~50%
-    for _ in 1:15
-        r = start_row + rand(-2:art_height+2)
-        c = start_col + rand(-2:art_width+2)
-        if r > 0 && r <= rows && c > 0 && c <= cols
-            move_cursor(r, c)
-            print("\e[38;5;$(rand([51,81,123,159,195]))m" * rand(twinkles) * "\e[0m")
-            sleep(0.03)
+    # Calculate iterations: ~2 seconds with 0.03s sleep = ~66 iterations
+    # Using 15 twinkles gives us coverage, so we'll do multiple passes
+    for pass in 1:4  # 4 passes * 15 twinkles * 0.03s ≈ 1.8 seconds
+        for _ in 1:15
+            r = start_row + rand(-2:art_height+2)
+            c = start_col + rand(-2:art_width+2)
+            if r > 0 && r <= rows && c > 0 && c <= cols
+                move_cursor(r, c)
+                print("\e[38;5;$(rand([51,81,123,159,195]))m" * rand(twinkles) * "\e[0m")
+                sleep(0.03)
+            end
         end
     end
 
@@ -767,6 +770,32 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
     printstyled("$mode_choice\n", color = :green, bold = true)
     println()
 
+    # Configure port
+    println("🌐 Configure Server Port")
+    println()
+    println("The MCP server will listen on this port (default: 3000).")
+    println("You can also override this with the JULIA_MCP_PORT environment variable.")
+    println()
+    print("Port number [3000]: ")
+    port_input = strip(readline())
+    
+    port = 3000  # default
+    if !isempty(port_input)
+        try
+            port = parse(Int, port_input)
+            if port < 1024 || port > 65535
+                printstyled("⚠️  Port must be between 1024 and 65535, using default 3000\n", color = :yellow)
+                port = 3000
+            end
+        catch
+            printstyled("⚠️  Invalid port number, using default 3000\n", color = :yellow)
+            port = 3000
+        end
+    end
+    
+    printstyled("✓ Using port: $port\n", color = :green)
+    println()
+
     # Generate API key (unless in lax mode)
     api_keys = String[]
     if mode_choice != :lax
@@ -792,7 +821,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
         printstyled("  {\n", color = :white)
         printstyled("    \"mcpServers\": {\n", color = :white)
         printstyled("      \"julia-repl\": {\n", color = :white)
-        printstyled("        \"url\": \"http://localhost:3000\",\n", color = :white)
+        printstyled("        \"url\": \"http://localhost:$port\",\n", color = :white)
         printstyled("        \"headers\": {\n", color = :white)
         printstyled("          \"Authorization\": \"Bearer $api_key\"\n", color = :yellow)
         printstyled("        }\n", color = :white)
@@ -855,7 +884,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
     should_save = isempty(auto_create) || auto_create == "y" || auto_create == "yes"
 
     # Create and save configuration
-    config = SecurityConfig(mode_choice, api_keys, allowed_ips)
+    config = SecurityConfig(mode_choice, api_keys, allowed_ips, port)
 
     if should_save
         println()
@@ -893,6 +922,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
             end
         end
         printstyled("],\n", color = :cyan)
+        printstyled("  \"port\": $port,\n", color = :cyan)
         printstyled("  \"created_at\": $(Int64(round(time())))\n", color = :cyan)
         printstyled("}\n", color = :cyan)
         println("\n")
@@ -938,12 +968,12 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
 end
 
 """
-    quick_setup(mode::Symbol=:strict, workspace_dir::String=pwd()) -> SecurityConfig
+    quick_setup(mode::Symbol=:strict, port::Int=3000, workspace_dir::String=pwd()) -> SecurityConfig
 
 Quick non-interactive setup for automated environments.
 Generates API key and uses default settings.
 """
-function quick_setup(mode::Symbol = :strict, workspace_dir::String = pwd())
+function quick_setup(mode::Symbol = :strict, port::Int = 3000, workspace_dir::String = pwd())
     if !(mode in [:strict, :relaxed, :lax])
         error("Invalid mode. Must be :strict, :relaxed, or :lax")
     end
@@ -954,7 +984,7 @@ function quick_setup(mode::Symbol = :strict, workspace_dir::String = pwd())
     api_keys = mode == :lax ? String[] : [generate_api_key()]
     allowed_ips = ["127.0.0.1", "::1"]
 
-    config = SecurityConfig(mode, api_keys, allowed_ips)
+    config = SecurityConfig(mode, api_keys, allowed_ips, port)
 
     if save_security_config(config, workspace_dir)
         println("✅ Security configuration created")

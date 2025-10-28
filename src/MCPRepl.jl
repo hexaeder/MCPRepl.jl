@@ -556,7 +556,7 @@ function repl_status_report()
     end
 end
 
-function start!(; port = 3000, verbose::Bool = true, security_mode::Union{Symbol,Nothing} = nothing)
+function start!(; port::Union{Int,Nothing} = nothing, verbose::Bool = true, security_mode::Union{Symbol,Nothing} = nothing)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     # Load or prompt for security configuration
@@ -571,6 +571,15 @@ function start!(; port = 3000, verbose::Bool = true, security_mode::Union{Symbol
         error("Security configuration required. Run MCPRepl.setup() first.")
     end
 
+    # Determine port: priority is ENV var > function arg > config file
+    actual_port = if haskey(ENV, "JULIA_MCP_PORT")
+        parse(Int, ENV["JULIA_MCP_PORT"])
+    elseif port !== nothing
+        port
+    else
+        security_config.port
+    end
+
     # Override security mode if specified
     if security_mode !== nothing
         if !(security_mode in [:strict, :relaxed, :lax])
@@ -580,6 +589,7 @@ function start!(; port = 3000, verbose::Bool = true, security_mode::Union{Symbol
             security_mode,
             security_config.api_keys,
             security_config.allowed_ips,
+            security_config.port,
             security_config.created_at,
         )
     end
@@ -595,6 +605,8 @@ function start!(; port = 3000, verbose::Bool = true, security_mode::Union{Symbol
         elseif security_config.mode == :lax
             println("   • Localhost only + no API key required")
         end
+        printstyled("📡 Server Port: ", color = :cyan, bold = true)
+        printstyled("$actual_port\n", color = :green, bold = true)
         println()
     end
 
@@ -2035,7 +2047,7 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     lsp_tools = create_lsp_tools()
 
     # Create and start server
-    println("Starting MCP server on port $port...")
+    println("Starting MCP server on port $actual_port...")
     SERVER[] = start_mcp_server(
         [
             usage_instructions_tool,
@@ -2067,7 +2079,7 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             pkg_rm_tool,
             lsp_tools...,  # Add all LSP tools
         ],
-        port;
+        actual_port;
         verbose = verbose,
         security_config = security_config,
     )

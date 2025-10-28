@@ -11,6 +11,7 @@ struct SecurityConfig
     mode::Symbol  # :strict, :relaxed, or :lax
     api_keys::Vector{String}
     allowed_ips::Vector{String}
+    port::Int
     created_at::Int64
 end
 
@@ -18,8 +19,9 @@ function SecurityConfig(
     mode::Symbol,
     api_keys::Vector{String},
     allowed_ips::Vector{String},
+    port::Int = 3000,
 )
-    return SecurityConfig(mode, api_keys, allowed_ips, Int64(round(time())))
+    return SecurityConfig(mode, api_keys, allowed_ips, port, Int64(round(time())))
 end
 
 """
@@ -66,9 +68,10 @@ function load_security_config(workspace_dir::String = pwd())
         mode = Symbol(get(data, "mode", "strict"))
         api_keys = get(data, "api_keys", String[])
         allowed_ips = get(data, "allowed_ips", ["127.0.0.1", "::1"])
+        port = get(data, "port", 3000)
         created_at = get(data, "created_at", time())
 
-        return SecurityConfig(mode, api_keys, allowed_ips, created_at)
+        return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
     catch e
         @warn "Failed to load security config" exception = e
         return nothing
@@ -112,12 +115,12 @@ function save_security_config(config::SecurityConfig, workspace_dir::String = pw
             "mode" => string(config.mode),
             "api_keys" => config.api_keys,
             "allowed_ips" => config.allowed_ips,
+            "port" => config.port,
             "created_at" => config.created_at,
         )
 
-        io_buf = IOBuffer()
-        JSON.json(io_buf, data)
-        json_str = String(take!(io_buf))
+        # Pretty print JSON with indentation
+        json_str = JSON.json(data, 2)  # 2 spaces indentation
         write(config_path, json_str)
 
         # Set restrictive permissions on config file (Unix-like systems)
@@ -253,6 +256,7 @@ function add_api_key!(workspace_dir::String = pwd())
         config.mode,
         vcat(config.api_keys, [new_key]),
         config.allowed_ips,
+        config.port,
         config.created_at,
     )
 
@@ -283,7 +287,7 @@ function remove_api_key!(key::String, workspace_dir::String = pwd())
 
     new_keys = filter(k -> k != key, config.api_keys)
     new_config =
-        SecurityConfig(config.mode, new_keys, config.allowed_ips, config.created_at)
+        SecurityConfig(config.mode, new_keys, config.allowed_ips, config.port, config.created_at)
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Removed API key")
@@ -311,7 +315,7 @@ function add_allowed_ip!(ip::String, workspace_dir::String = pwd())
 
     new_ips = vcat(config.allowed_ips, [ip])
     new_config =
-        SecurityConfig(config.mode, config.api_keys, new_ips, config.created_at)
+        SecurityConfig(config.mode, config.api_keys, new_ips, config.port, config.created_at)
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Added IP address to allowlist: $ip")
@@ -339,7 +343,7 @@ function remove_allowed_ip!(ip::String, workspace_dir::String = pwd())
 
     new_ips = filter(i -> i != ip, config.allowed_ips)
     new_config =
-        SecurityConfig(config.mode, config.api_keys, new_ips, config.created_at)
+        SecurityConfig(config.mode, config.api_keys, new_ips, config.port, config.created_at)
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Removed IP address from allowlist: $ip")
@@ -365,7 +369,7 @@ function change_security_mode!(mode::Symbol, workspace_dir::String = pwd())
     end
 
     new_config =
-        SecurityConfig(mode, config.api_keys, config.allowed_ips, config.created_at)
+        SecurityConfig(mode, config.api_keys, config.allowed_ips, config.port, config.created_at)
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Changed security mode to: $mode")
