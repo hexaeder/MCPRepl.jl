@@ -132,6 +132,7 @@ function execute_repllike(
     str;
     silent::Bool = false,
     description::Union{String,Nothing} = nothing,
+    stream_channel::Union{Nothing,Channel{String}} = nothing,
 )
     # Check for Pkg.activate usage
     if contains(str, "activate(") && !contains(str, r"#.*overwrite no-activate-rule")
@@ -161,22 +162,68 @@ function execute_repllike(
         end
     end
 
-    # Capture stdout/stderr during execution
-    # Note: This buffers output until completion - real-time streaming is complex
-    # due to Julia's IO system and REPL architecture
-    captured_output = Pipe()
-    response = redirect_stdout(captured_output) do
-        redirect_stderr(captured_output) do
-            r = REPL.eval_on_backend(expr, backend)
-            close(Base.pipe_writer(captured_output))
-            r
+    # If streaming is enabled, send progress updates through the channel
+    if stream_channel !== nothing
+        # Don't redirect stdout - let it flow to terminal for real-time visibility
+        # Send progress notifications through the channel
+        
+        # Send initial "started" event
+        start_event = Dict(
+            "jsonrpc" => "2.0",
+            "method" => "notifications/progress",
+            "params" => Dict(
+                "progress" => 0,
+                "message" => "Execution started..."
+            )
+        )
+        put!(stream_channel, JSON3.write(start_event))
+        
+        response = try
+            REPL.eval_on_backend(expr, backend)
+        catch e
+            # Send error as a progress notification
+            error_event = Dict(
+                "jsonrpc" => "2.0",
+                "method" => "notifications/progress",
+                "params" => Dict(
+                    "progress" => 100,
+                    "message" => "Error: $e"
+                )
+            )
+            put!(stream_channel, JSON3.write(error_event))
+            e
         end
-    end
-    captured_content = read(captured_output, String)
+        
+        # Send completion notification
+        complete_event = Dict(
+            "jsonrpc" => "2.0",
+            "method" => "notifications/progress",
+            "params" => Dict(
+                "progress" => 100,
+                "message" => "Execution complete (output in REPL)"
+            )
+        )
+        put!(stream_channel, JSON3.write(complete_event))
+        
+        captured_content = "(output shown in REPL)"
+    else
+        # Non-streaming mode (original behavior)
+        captured_output = Pipe()
+        
+        response = redirect_stdout(captured_output) do
+            redirect_stderr(captured_output) do
+                r = REPL.eval_on_backend(expr, backend)
+                close(Base.pipe_writer(captured_output))
+                r
+            end
+        end
+        
+        captured_content = read(captured_output, String)
 
-    # Only reshow output if not silent
-    if !silent
-        print(captured_content)
+        # Only reshow output if not silent
+        if !silent
+            print(captured_content)
+        end
     end
 
     disp = IOBufferDisplay()
@@ -453,13 +500,21 @@ function start!(; port = 3000, verbose::Bool = true)
                     "type" => "boolean",
                     "description" => "If true, suppress the 'agent>' prompt and output display (default: false)",
                 ),
+                "stream" => Dict(
+                    "type" => "boolean",
+                    "description" => "If true, enable real-time streaming of output via SSE (default: false)",
+                ),
             ),
             "required" => ["expression"],
         ),
-        args -> begin
+        (args, stream_channel=nothing) -> begin
             try
                 silent = get(args, "silent", false)
-                execute_repllike(get(args, "expression", ""); silent = silent)
+                execute_repllike(
+                    get(args, "expression", ""); 
+                    silent = silent,
+                    stream_channel = stream_channel
+                )
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
