@@ -555,7 +555,28 @@ function repl_status_report()
 end
 
 function start!(; port = 3000, verbose::Bool = true)
-    SERVER[] !== nothing && stop!() # Stop existing server if runni
+    SERVER[] !== nothing && stop!() # Stop existing server if running
+
+    usage_instructions_tool = MCPTool(
+        "usage_instructions",
+        "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents.",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        args -> begin
+            try
+                workflow_path = joinpath(
+                    dirname(dirname(@__FILE__)),
+                    "prompts",
+                    "julia_repl_workflow.md",
+                )
+                commands_json_path = joinpath(
+                    dirname(dirname(@__FILE__)),
+                    "prompts",
+                    "vscode_commands.json",
+                )
+                
+                if !isfile(workflow_path)
+                    return "Error: julia_repl_workflow.md not found at $workflow_path"
+                end
                 
                 base_content = read(workflow_path, String)
                 
@@ -653,7 +674,6 @@ function start!(; port = 3000, verbose::Bool = true)
                     # If reading settings fails, just return base content
                     @debug "Could not read VS Code settings for allowed commands" exception=e
                 end
-                
                 return base_content
             catch e
                 return "Error reading usage instructions: $e"
