@@ -4,6 +4,18 @@ This prompt teaches AI agents the proper workflow for Julia development using th
 
 ## Core Principles
 
+### 🎯 Always Prefer MCP Tools
+- **CRITICAL**: Always use MCP tools when available instead of alternative methods
+- MCP tools provide better integration, error handling, and user feedback
+- Examples:
+  - ✅ Use `execute_vscode_command` instead of trying to run commands manually
+  - ✅ Use `exec_repl` instead of `run_in_terminal` for Julia code
+  - ✅ Use `restart_repl` instead of terminal commands to restart
+  - ✅ Use git MCP tools (`git.commit`, `git.push`) via `execute_vscode_command` instead of terminal git commands when possible
+- Only fall back to alternatives (like `run_in_terminal`) when:
+  - No suitable MCP tool exists for the operation
+  - The MCP tool explicitly fails or is unavailable
+
 ### 🚨 MCP Server Requirement
 - **CRITICAL**: Once you read this document, expect the MCP REPL server to exist
 - If the `exec_repl` tool is not available, DO NOT silently continue

@@ -555,24 +555,106 @@ function repl_status_report()
 end
 
 function start!(; port = 3000, verbose::Bool = true)
-    SERVER[] !== nothing && stop!() # Stop existing server if running
-
-    usage_instructions_tool = MCPTool(
-        "usage_instructions",
-        "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents.",
-        Dict("type" => "object", "properties" => Dict(), "required" => []),
-        args -> begin
-            try
-                workflow_path = joinpath(
-                    dirname(dirname(@__FILE__)),
-                    "prompts",
-                    "julia_repl_workflow.md",
-                )
-                if isfile(workflow_path)
-                    return read(workflow_path, String)
-                else
-                    return "Error: julia_repl_workflow.md not found at $workflow_path"
+    SERVER[] !== nothing && stop!() # Stop existing server if runni
+                
+                base_content = read(workflow_path, String)
+                
+                # Try to read actual allowed commands from workspace settings and format with descriptions
+                try
+                    settings = read_vscode_settings()
+                    allowed_commands = get(settings, "vscode-remote-control.allowedCommands", nothing)
+                    
+                    if allowed_commands !== nothing && !isempty(allowed_commands)
+                        # Load command documentation
+                        command_docs = Dict{String,String}()
+                        command_categories = Dict{String,Tuple{String,Vector{String}}}()  # category_id => (name, commands)
+                        
+                        if isfile(commands_json_path)
+                            try
+                                commands_data = JSON3.read(read(commands_json_path, String))
+                                categories = get(commands_data, :categories, Dict())
+                                
+                                # Build lookup table and category mapping
+                                for (cat_id, cat_data) in pairs(categories)
+                                    cat_name = get(cat_data, :name, string(cat_id))
+                                    cat_commands = String[]
+                                    
+                                    cmds = get(cat_data, :commands, Dict())
+                                    for (cmd, desc) in pairs(cmds)
+                                        command_docs[string(cmd)] = string(desc)
+                                        push!(cat_commands, string(cmd))
+                                    end
+                                    
+                                    command_categories[string(cat_id)] = (cat_name, cat_commands)
+                                end
+                            catch e
+                                @debug "Could not load command documentation" exception=e
+                            end
+                        end
+                        
+                        # Append formatted commands section
+                        commands_section = "\n\n---\n\n## Currently Configured VS Code Commands\n\n"
+                        commands_section *= "Your workspace has **$(length(allowed_commands)) commands** configured in `.vscode/settings.json`.\n\n"
+                        
+                        # Group commands by category
+                        categorized_commands = Dict{String,Vector{String}}()
+                        uncategorized_commands = String[]
+                        
+                        for cmd in allowed_commands
+                            cmd_str = string(cmd)
+                            found_category = false
+                            
+                            for (cat_id, (cat_name, cat_cmds)) in command_categories
+                                if cmd_str in cat_cmds
+                                    if !haskey(categorized_commands, cat_id)
+                                        categorized_commands[cat_id] = String[]
+                                    end
+                                    push!(categorized_commands[cat_id], cmd_str)
+                                    found_category = true
+                                    break
+                                end
+                            end
+                            
+                            if !found_category
+                                push!(uncategorized_commands, cmd_str)
+                            end
+                        end
+                        
+                        # Output categorized commands
+                        category_order = ["julia", "file", "navigation", "window", "terminal", "search", "git", "debug", "tasks", "extensions", "vscode_api"]
+                        
+                        for cat_id in category_order
+                            if haskey(categorized_commands, cat_id)
+                                cat_name, _ = command_categories[cat_id]
+                                commands_section *= "### $(cat_name)\n\n"
+                                
+                                for cmd in sort(categorized_commands[cat_id])
+                                    desc = get(command_docs, cmd, "No description available")
+                                    commands_section *= "- **`$(cmd)`** - $(desc)\n"
+                                end
+                                
+                                commands_section *= "\n"
+                            end
+                        end
+                        
+                        # Output uncategorized commands
+                        if !isempty(uncategorized_commands)
+                            commands_section *= "### 📋 Other Commands\n\n"
+                            for cmd in sort(uncategorized_commands)
+                                desc = get(command_docs, cmd, "No description available")
+                                commands_section *= "- **`$(cmd)`** - $(desc)\n"
+                            end
+                            commands_section *= "\n"
+                        end
+                        
+                        return base_content * commands_section
+                    end
+                catch e
+                    # If reading settings fails, just return base content
+                    @debug "Could not read VS Code settings for allowed commands" exception=e
                 end
+                
+                return base_content
             catch e
                 return "Error reading usage instructions: $e"
             end
@@ -631,13 +713,18 @@ function start!(; port = 3000, verbose::Bool = true)
 
     restart_repl_tool = MCPTool(
         "restart_repl",
-        """Restart the Julia REPL and wait for the MCP server to come back online.
+        """Restart the Julia REPL and return immediately.
         
-        This tool triggers the Julia REPL restart via VS Code command.
-        The MCP server connection will be interrupted during restart.
+        **Workflow for AI Agents:**
+        1. Call this tool to trigger the restart
+        2. Wait 5-10 seconds (don't make any MCP requests during this time)
+        3. Try your next request - if it fails, wait a bit longer and retry
         
-        **Important**: After calling this tool, wait ~10-15 seconds before making new requests
-        to allow the Julia REPL to restart and the MCP server to reinitialize.
+        The MCP server connection will be interrupted during restart. This is expected.
+        The tool returns immediately, and you (the AI agent) must wait before making
+        new requests to allow the Julia REPL to restart and the MCP server to reinitialize.
+        
+        Typical restart time is 5-10 seconds depending on system load and package precompilation.
         
         Use this tool after making changes to the MCP server code or when the REPL needs a fresh start.""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
@@ -651,7 +738,7 @@ function start!(; port = 3000, verbose::Bool = true)
                 trigger_vscode_uri(restart_uri)
                 
                 # Return immediately - the server will be restarting
-                return "⏳ Julia REPL restart initiated on port $server_port. Wait ~10-15 seconds for server to reinitialize before making new requests."
+                return "✓ Julia REPL restart initiated on port $server_port.\n\n⏳ Typical restart time: 5-10 seconds. Waiting for restart to complete...\n\n(The AI agent should not make any MCP requests during this waiting period.)"
             catch e
                 return "Error initiating REPL restart: $e"
             end
