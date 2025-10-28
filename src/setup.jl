@@ -85,7 +85,7 @@ function check_vscode_status()
     return :not_configured
 end
 
-function add_vscode_mcp_server(transport_type::String, port::Int = 3000)
+function add_vscode_mcp_server(transport_type::String)
     config = read_vscode_mcp_config()
 
     if config === nothing
@@ -96,14 +96,21 @@ function add_vscode_mcp_server(transport_type::String, port::Int = 3000)
         config["servers"] = Dict()
     end
 
-    # Load security config to check if API key is required
+    # Load security config to get port and check if API key is required
     security_config = load_security_config()
+    
+    if security_config === nothing
+        @warn "No security configuration found. Run MCPRepl.setup() first."
+        return false
+    end
+    
+    port = security_config.port
     
     if transport_type == "http"
         server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
         
         # Add Authorization header if security is configured and not in lax mode
-        if security_config !== nothing && security_config.mode != :lax
+        if security_config.mode != :lax
             if !isempty(security_config.api_keys)
                 api_key = first(security_config.api_keys)
                 server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer $api_key")
@@ -187,10 +194,19 @@ function write_claude_config(config::Dict)
 end
 
 function add_claude_mcp_server(;
-    port::Int = 3000,
-    url::String = "http://localhost:$port",
     api_key::Union{String,Nothing} = nothing
 )
+    # Load security config to get port and API key
+    security_config = load_security_config()
+    
+    if security_config === nothing
+        @warn "No security configuration found. Run MCPRepl.setup() first."
+        return false
+    end
+    
+    port = security_config.port
+    url = "http://localhost:$port"
+    
     config = read_claude_config()
     
     if config === nothing
@@ -317,7 +333,7 @@ function has_startup_script()
     return isfile(get_startup_script_path())
 end
 
-function install_startup_script(port::Int = 3000)
+function install_startup_script()
     startup_path = get_startup_script_path()
 
     startup_content = """
@@ -340,20 +356,15 @@ try
         Threads.@spawn begin
             try
                 sleep(1)
-                port = parse(Int, get(ENV, "JULIA_MCP_PORT", "$port"))
-                MCPRepl.start!(;port=port, verbose=false)
+                # Port is determined by:
+                # 1. JULIA_MCP_PORT environment variable (highest priority)
+                # 2. .mcprepl/security.json port field (default)
+                MCPRepl.start!(verbose=false)
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
 
-                # Test server connectivity
-                test_result = MCPRepl.test_server(port)
-
-                if test_result
-                    @info "✓ MCP REPL server started and responding on port $port"
-                else
-                    @info "✓ MCP REPL server started on port $port"
-                end
+                @info "✓ MCP REPL server started"
                 # Refresh the prompt to ensure clean display after test completes
                 if isdefined(Base, :active_repl)
                     try
@@ -430,7 +441,7 @@ function check_vscode_extension_installed()
     end
 end
 
-function prompt_and_setup_vscode_startup(port::Int)
+function prompt_and_setup_vscode_startup()
     """Prompt user to install startup script and configure VS Code settings"""
 
     has_script = has_startup_script()
@@ -472,7 +483,7 @@ function prompt_and_setup_vscode_startup(port::Int)
 
         # Install startup script if needed
         if !has_script
-            if install_startup_script(port)
+            if install_startup_script()
                 println("   ✅ Created .julia-startup.jl")
             else
                 println("   ❌ Failed to create .julia-startup.jl")
@@ -751,7 +762,17 @@ function check_gemini_status()
     end
 end
 
-function add_gemini_mcp_server(transport_type::String, port::Int = 3000)
+function add_gemini_mcp_server(transport_type::String)
+    # Load security config to get port
+    security_config = load_security_config()
+    
+    if security_config === nothing
+        @warn "No security configuration found. Run MCPRepl.setup() first."
+        return false
+    end
+    
+    port = security_config.port
+    
     settings = read_gemini_settings()
 
     if !haskey(settings, "mcpServers")
@@ -782,14 +803,13 @@ function remove_gemini_mcp_server()
 end
 
 """
-    setup(; port::Union{Int,Nothing}=nothing)
+    setup()
 
 Interactive setup wizard for configuring MCP servers across different clients.
 
-# Arguments
-- `port`: Port number for the MCP server. If `nothing` (default), will use
-  `JULIA_MCP_PORT` environment variable or prompt the user to specify a port.
-  Default is 3000 if no environment variable is set.
+Port configuration is handled during the security setup wizard and stored in
+`.mcprepl/security.json`. The port can be overridden at runtime using the
+`JULIA_MCP_PORT` environment variable.
 
 # Supported Clients
 - **VS Code Copilot**: Configures `.vscode/mcp.json` in the current workspace
@@ -811,15 +831,12 @@ This enables seamless MCP server startup whenever you start a Julia REPL in VS C
 
 # Examples
 ```julia
-# Interactive setup with default port
+# Interactive setup (port configured during security setup)
 MCPRepl.setup()
 
-# Setup with specific port
-MCPRepl.setup(port=3000)
-
-# Setup using environment variable
-ENV["JULIA_MCP_PORT"] = "3000"
-MCPRepl.setup()
+# Override port at runtime with environment variable
+ENV["JULIA_MCP_PORT"] = "3001"
+MCPRepl.start!()
 ```
 
 # Notes
@@ -827,7 +844,7 @@ After configuring VS Code, reload the window (Cmd+Shift+P → "Reload Window")
 to apply changes. If you installed the startup script, restart your Julia REPL
 to see it in action.
 """
-function setup(; port::Union{Int,Nothing} = nothing)
+function setup()
     # FIRST: Check security configuration
     security_config = load_security_config()
     
@@ -860,26 +877,8 @@ function setup(; port::Union{Int,Nothing} = nothing)
         println()
     end
     
-    # Determine port to use
-    if port === nothing
-        # Try to get from environment variable
-        port = parse(Int, get(ENV, "JULIA_MCP_PORT", "3000"))
-
-        # Ask user if they want to change it
-        println("🔧 MCPRepl Setup")
-        println()
-        println("Current MCP server port: $port")
-        print("Enter new port (or press Enter to keep $port): ")
-        port_input = readline()
-        if !isempty(port_input)
-            try
-                port = parse(Int, port_input)
-            catch
-                println("⚠️  Invalid port number, using default: $port")
-            end
-        end
-        println()
-    end
+    # Get port from security config (can be overridden by ENV var when server starts)
+    port = security_config.port
 
     claude_status = check_claude_status()
     gemini_status = check_gemini_status()
@@ -985,12 +984,12 @@ function setup(; port::Union{Int,Nothing} = nothing)
             end
         else
             println("\n   Adding VS Code HTTP transport...")
-            if add_vscode_mcp_server("http", port)
+            if add_vscode_mcp_server("http")
                 println("   ✅ Successfully configured VS Code HTTP transport")
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(port)
+                prompt_and_setup_vscode_startup()
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1004,12 +1003,12 @@ function setup(; port::Union{Int,Nothing} = nothing)
     elseif choice == "2"
         if vscode_status in [:configured_http, :configured_stdio, :configured_unknown]
             println("\n   Adding/Replacing VS Code with HTTP transport...")
-            if add_vscode_mcp_server("http", port)
+            if add_vscode_mcp_server("http")
                 println("   ✅ Successfully configured VS Code HTTP transport")
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(port)
+                prompt_and_setup_vscode_startup()
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1021,11 +1020,11 @@ function setup(; port::Union{Int,Nothing} = nothing)
             end
         else
             println("\n   Adding VS Code stdio transport...")
-            if add_vscode_mcp_server("stdio", port)
+            if add_vscode_mcp_server("stdio")
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(port)
+                prompt_and_setup_vscode_startup()
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1039,11 +1038,11 @@ function setup(; port::Union{Int,Nothing} = nothing)
     elseif choice == "3"
         if vscode_status in [:configured_http, :configured_stdio, :configured_unknown]
             println("\n   Adding/Replacing VS Code with stdio transport...")
-            if add_vscode_mcp_server("stdio", port)
+            if add_vscode_mcp_server("stdio")
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(port)
+                prompt_and_setup_vscode_startup()
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1112,7 +1111,7 @@ function setup(; port::Union{Int,Nothing} = nothing)
             end
         elseif gemini_status != :gemini_not_found
             println("\n   Adding Gemini HTTP transport...")
-            if add_gemini_mcp_server("http", port)
+            if add_gemini_mcp_server("http")
                 println("   ✅ Successfully configured Gemini HTTP transport")
             else
                 println("   ❌ Failed to configure Gemini HTTP transport")
@@ -1121,7 +1120,7 @@ function setup(; port::Union{Int,Nothing} = nothing)
     elseif choice == "8"
         if gemini_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Adding/Replacing Gemini with HTTP transport...")
-            if add_gemini_mcp_server("http", port)
+            if add_gemini_mcp_server("http")
                 println("   ✅ Successfully configured Gemini HTTP transport")
             else
                 println("   ❌ Failed to configure Gemini HTTP transport")
