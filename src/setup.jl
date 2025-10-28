@@ -570,7 +570,7 @@ function check_gemini_status()
 
     if haskey(mcp_servers, "julia-repl")
         server_config = mcp_servers["julia-repl"]
-        if haskey(server_config, "url") && server_config["url"] == "http://localhost:3000"
+        if haskey(server_config, "url") && contains(server_config["url"], "http://localhost")
             return :configured_http
         elseif haskey(server_config, "command")
             return :configured_script
@@ -582,7 +582,7 @@ function check_gemini_status()
     end
 end
 
-function add_gemini_mcp_server(transport_type::String)
+function add_gemini_mcp_server(transport_type::String, port::Int = 3000)
     settings = read_gemini_settings()
 
     if !haskey(settings, "mcpServers")
@@ -590,7 +590,7 @@ function add_gemini_mcp_server(transport_type::String)
     end
 
     if transport_type == "http"
-        settings["mcpServers"]["julia-repl"] = Dict("url" => "http://localhost:3000")
+        settings["mcpServers"]["julia-repl"] = Dict("url" => "http://localhost:$port")
     elseif transport_type == "script"
         settings["mcpServers"]["julia-repl"] =
             Dict("command" => "$(pkgdir(MCPRepl))/mcp-julia-adapter")
@@ -911,7 +911,7 @@ function setup(; port::Union{Int,Nothing} = nothing)
             end
         elseif gemini_status != :gemini_not_found
             println("\n   Adding Gemini HTTP transport...")
-            if add_gemini_mcp_server("http")
+            if add_gemini_mcp_server("http", port)
                 println("   ✅ Successfully configured Gemini HTTP transport")
             else
                 println("   ❌ Failed to configure Gemini HTTP transport")
@@ -920,7 +920,7 @@ function setup(; port::Union{Int,Nothing} = nothing)
     elseif choice == "8"
         if gemini_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Adding/Replacing Gemini with HTTP transport...")
-            if add_gemini_mcp_server("http")
+            if add_gemini_mcp_server("http", port)
                 println("   ✅ Successfully configured Gemini HTTP transport")
             else
                 println("   ❌ Failed to configure Gemini HTTP transport")
