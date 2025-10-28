@@ -78,7 +78,7 @@ end
             "http://localhost:$test_port/",
             ["Content-Type" => "application/json"],
             "";
-            status_exception=false
+            status_exception = false,
         )
 
         @test response.status == 400
@@ -107,9 +107,8 @@ end
 
     try
         # Test tools/list request
-        request_body = JSON3.write(
-            Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"),
-        )
+        request_body =
+            JSON3.write(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"))
 
         response = HTTP.post(
             "http://localhost:$test_port/",
@@ -217,23 +216,29 @@ end
         "stream_test",
         "Test tool that supports streaming",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
-        (args, stream_channel=nothing) -> begin
+        (args, stream_channel = nothing) -> begin
             if stream_channel !== nothing
                 # Send progress notification
-                put!(stream_channel, JSON3.write(Dict(
-                    "jsonrpc" => "2.0",
-                    "method" => "notifications/progress",
-                    "params" => Dict("progress" => 50, "message" => "Half done")
-                )))
+                put!(
+                    stream_channel,
+                    JSON3.write(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "method" => "notifications/progress",
+                            "params" =>
+                                Dict("progress" => 50, "message" => "Half done"),
+                        ),
+                    ),
+                )
             end
             return "Streaming test completed"
-        end
+        end,
     )
-    
+
     test_port = 13005
     server = MCPRepl.start_mcp_server([stream_tool], test_port)
     sleep(0.1)
-    
+
     try
         # Test with SSE Accept header
         request_body = JSON3.write(
@@ -244,27 +249,24 @@ end
                 "params" => Dict("name" => "stream_test", "arguments" => Dict()),
             ),
         )
-        
+
         # Make request with SSE Accept header
         response = HTTP.post(
             "http://localhost:$test_port/",
-            [
-                "Content-Type" => "application/json",
-                "Accept" => "text/event-stream"
-            ],
+            ["Content-Type" => "application/json", "Accept" => "text/event-stream"],
             request_body,
         )
-        
+
         @test response.status == 200
         @test HTTP.header(response, "Content-Type") == "text/event-stream"
-        
+
         # Response should contain SSE formatted events
         body = String(response.body)
         @test contains(body, "event: message")
         @test contains(body, "data:")
         @test contains(body, "Half done")
         @test contains(body, "Streaming test completed")
-        
+
     finally
         MCPRepl.stop_mcp_server(server)
         sleep(0.1)

@@ -31,7 +31,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 try
                     response_data = JSON3.read(body)
                     request_id = get(response_data, :request_id, nothing)
-                    
+
                     if request_id === nothing
                         return HTTP.Response(
                             400,
@@ -39,13 +39,13 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                             JSON3.write(Dict("error" => "Missing request_id")),
                         )
                     end
-                    
+
                     result = get(response_data, :result, nothing)
                     error = get(response_data, :error, nothing)
-                    
+
                     # Store the response using MCPRepl function
                     MCPRepl.store_vscode_response(string(request_id), result, error)
-                    
+
                     return HTTP.Response(
                         200,
                         ["Content-Type" => "application/json"],
@@ -59,7 +59,7 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                     )
                 end
             end
-            
+
             # Handle OAuth well-known metadata requests first (before JSON parsing)
             if req.target == "/.well-known/oauth-authorization-server"
                 oauth_metadata = Dict(
@@ -229,19 +229,19 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                 if haskey(tools, tool_name)
                     tool = tools[tool_name]
                     args = get(request.params, :arguments, Dict())
-                    
+
                     # Check if streaming is requested
                     enable_streaming = get(args, :stream, false)
-                    
+
                     if enable_streaming
                         # Create a channel for streaming
                         request_id = string(request.id)
                         stream_channel = Channel{String}(32)  # Buffer up to 32 events
-                        
+
                         lock(SSE_LOCK) do
                             SSE_STREAMS[request_id] = stream_channel
                         end
-                        
+
                         # Start async task to run the tool and stream results
                         @async begin
                             try
@@ -257,25 +257,23 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                                         rethrow(e)
                                     end
                                 end
-                                
+
                                 # Send final result
-                                final_event = JSON3.write(Dict(
-                                    "type" => "complete",
-                                    "content" => result_text
-                                ))
+                                final_event = JSON3.write(
+                                    Dict("type" => "complete", "content" => result_text),
+                                )
                                 put!(stream_channel, final_event)
                             catch e
                                 # Send error event
-                                error_event = JSON3.write(Dict(
-                                    "type" => "error",
-                                    "error" => string(e)
-                                ))
+                                error_event = JSON3.write(
+                                    Dict("type" => "error", "error" => string(e)),
+                                )
                                 put!(stream_channel, error_event)
                             finally
                                 close(stream_channel)
                             end
                         end
-                        
+
                         # Return SSE endpoint info
                         response = Dict(
                             "jsonrpc" => "2.0",
@@ -283,7 +281,12 @@ function create_handler(tools::Dict{String,MCPTool}, port::Int)
                             "result" => Dict(
                                 "streaming" => true,
                                 "sse_endpoint" => "/sse/$request_id",
-                                "content" => [Dict("type" => "text", "text" => "Streaming started at /sse/$request_id")]
+                                "content" => [
+                                    Dict(
+                                        "type" => "text",
+                                        "text" => "Streaming started at /sse/$request_id",
+                                    ),
+                                ],
                             ),
                         )
                         return HTTP.Response(
@@ -387,14 +390,14 @@ end
 
 function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Bool = true)
     tools_dict = Dict(tool.name => tool for tool in tools)
-    
+
     # Create a hybrid handler that supports both regular and streaming responses
     function hybrid_handler(http::HTTP.Stream)
         req = http.message
-        
+
         # Read the request body
         body = String(read(http))
-        
+
         try
             if isempty(body)
                 HTTP.setstatus(http, 400)
@@ -411,16 +414,16 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                 write(http, JSON3.write(error_response))
                 return nothing
             end
-            
+
             request = JSON3.read(body)
-            
+
             # Handle tool calls with potential streaming
             if request.method == "tools/call"
                 tool_name = request.params.name
                 if haskey(tools_dict, tool_name)
                     tool = tools_dict[tool_name]
                     args = get(request.params, :arguments, Dict())
-                    
+
                     # Check Accept header for text/event-stream support
                     accept_header = ""
                     for (name, value) in req.headers
@@ -430,11 +433,11 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                         end
                     end
                     client_supports_sse = contains(accept_header, "text/event-stream")
-                    
+
                     # Enable streaming if client supports SSE (automatically) OR if explicitly requested
                     stream_requested = get(args, :stream, false)
                     enable_streaming = client_supports_sse || stream_requested
-                    
+
                     if enable_streaming
                         # Set up SSE headers for streaming response
                         HTTP.setstatus(http, 200)
@@ -442,10 +445,10 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                         HTTP.setheader(http, "Cache-Control" => "no-cache")
                         HTTP.setheader(http, "Connection" => "keep-alive")
                         HTTP.startwrite(http)
-                        
+
                         # Create channel for streaming
                         stream_channel = Channel{String}(32)
-                        
+
                         # Start async task to run the tool
                         task = @async begin
                             try
@@ -460,14 +463,16 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                                         rethrow(e)
                                     end
                                 end
-                                
+
                                 # Send final result
                                 final_response = Dict(
                                     "jsonrpc" => "2.0",
                                     "id" => request.id,
                                     "result" => Dict(
-                                        "content" => [Dict("type" => "text", "text" => result_text)]
-                                    )
+                                        "content" => [
+                                            Dict("type" => "text", "text" => result_text),
+                                        ],
+                                    ),
                                 )
                                 final_event = JSON3.write(final_response)
                                 put!(stream_channel, final_event)
@@ -478,8 +483,8 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                                     "id" => request.id,
                                     "error" => Dict(
                                         "code" => -32603,
-                                        "message" => string(e)
-                                    )
+                                        "message" => string(e),
+                                    ),
                                 )
                                 error_event = JSON3.write(error_response)
                                 put!(stream_channel, error_event)
@@ -487,7 +492,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                                 close(stream_channel)
                             end
                         end
-                        
+
                         # Stream events as they come
                         try
                             for event_data in stream_channel
@@ -500,20 +505,21 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                         catch e
                             @warn "Streaming error" exception=e
                         end
-                        
+
                         return nothing
                     else
                         # Non-streaming mode (original behavior)
                         result_text = tool.handler(args)
-                        
+
                         response = Dict(
                             "jsonrpc" => "2.0",
                             "id" => request.id,
                             "result" => Dict(
-                                "content" => [Dict("type" => "text", "text" => result_text)],
+                                "content" =>
+                                    [Dict("type" => "text", "text" => result_text)],
                             ),
                         )
-                        
+
                         HTTP.setstatus(http, 200)
                         HTTP.setheader(http, "Content-Type" => "application/json")
                         HTTP.startwrite(http)
@@ -536,12 +542,12 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
                     return nothing
                 end
             end
-            
+
             # Handle other requests using the regular handler
             req_with_body = HTTP.Request(req.method, req.target, req.headers, body)
             handler = create_handler(tools_dict, port)
             response = handler(req_with_body)
-            
+
             HTTP.setstatus(http, response.status)
             for (name, value) in response.headers
                 HTTP.setheader(http, name => value)
@@ -549,19 +555,19 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
             HTTP.startwrite(http)
             write(http, response.body)
             return nothing
-            
+
         catch e
             HTTP.setstatus(http, 500)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            
+
             request_id = try
                 parsed = JSON3.read(body)
                 get(parsed, :id, 0)
             catch
                 0
             end
-            
+
             error_response = Dict(
                 "jsonrpc" => "2.0",
                 "id" => request_id,

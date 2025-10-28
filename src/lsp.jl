@@ -56,7 +56,7 @@ struct LSPPosition
 end
 
 # Convert from Julia 1-indexed to LSP 0-indexed
-LSPPosition(julia_line::Int, julia_col::Int, ::Val{:julia}) = 
+LSPPosition(julia_line::Int, julia_col::Int, ::Val{:julia}) =
     LSPPosition(julia_line - 1, julia_col - 1)
 
 """
@@ -93,31 +93,28 @@ Uses the bidirectional communication mechanism to get responses.
 # Returns
 - Dict with LSP response or error information
 """
-function send_lsp_request(method::String, params::Dict; timeout::Float64=10.0)
+function send_lsp_request(method::String, params::Dict; timeout::Float64 = 10.0)
     # Generate unique request ID
-    request_id = string(rand(UInt64), base=16)
-    
+    request_id = string(rand(UInt64), base = 16)
+
     try
         # Build the LSP request payload
         lsp_request = Dict(
             "jsonrpc" => "2.0",
             "id" => request_id,
             "method" => method,
-            "params" => params
+            "params" => params,
         )
-        
+
         # Use the julia.executeLSPRequest command (if it exists)
         # Otherwise, we'll use vscode.executeDefinitionProvider and similar
         # built-in commands that are LSP-aware
-        
+
         # For now, use the built-in VS Code LSP commands which are more reliable
         return execute_builtin_lsp_command(method, params, timeout)
-        
+
     catch e
-        return Dict(
-            "error" => "Failed to send LSP request: $e",
-            "method" => method
-        )
+        return Dict("error" => "Failed to send LSP request: $e", "method" => method)
     end
 end
 
@@ -139,18 +136,18 @@ function execute_builtin_lsp_command(method::String, params::Dict, timeout::Floa
         "textDocument/rename" => "vscode.executeDocumentRenameProvider",
         "textDocument/documentHighlight" => "vscode.executeDocumentHighlights",
     )
-    
+
     vscode_command = get(command_map, method, nothing)
     if vscode_command === nothing
         return Dict("error" => "Unsupported LSP method: $method")
     end
-    
+
     # Build VS Code command arguments based on LSP params
     args = build_vscode_command_args(method, params)
-    
+
     # Execute via the existing execute_vscode_command infrastructure
     result = execute_vscode_command_with_result(vscode_command, args, timeout)
-    
+
     return result
 end
 
@@ -161,28 +158,28 @@ Build VS Code command arguments from LSP parameters.
 """
 function build_vscode_command_args(method::String, params::Dict)
     args = []
-    
+
     if haskey(params, "textDocument")
         # Extract URI and convert to VS Code Uri format
         uri = get(params["textDocument"], "uri", "")
         push!(args, uri)
     end
-    
+
     if haskey(params, "position")
         # LSP positions are 0-indexed
         pos = params["position"]
         line = get(pos, "line", 0)
         character = get(pos, "character", 0)
-        
+
         # VS Code expects a Position object-like structure
         push!(args, Dict("line" => line, "character" => character))
     end
-    
+
     # Special handling for workspace/symbol
     if method == "workspace/symbol" && haskey(params, "query")
         args = [params["query"]]
     end
-    
+
     return args
 end
 
@@ -193,29 +190,31 @@ Execute a VS Code command and wait for the result using bidirectional communicat
 """
 function execute_vscode_command_with_result(command::String, args::Vector, timeout::Float64)
     # Generate unique request ID for tracking
-    request_id = string(rand(UInt64), base=16)
-    
+    request_id = string(rand(UInt64), base = 16)
+
     # Get current MCP server port
     server_port = SERVER[] !== nothing ? SERVER[].port : 3000
-    
+
     # Build the VS Code URI with request_id for response tracking
     args_json = isempty(args) ? nothing : JSON3.write(args)
-    uri = build_vscode_uri(command; 
-                          args = args_json === nothing ? nothing : HTTP.URIs.escapeuri(args_json),
-                          request_id = request_id,
-                          mcp_port = server_port)
-    
+    uri = build_vscode_uri(
+        command;
+        args = args_json === nothing ? nothing : HTTP.URIs.escapeuri(args_json),
+        request_id = request_id,
+        mcp_port = server_port,
+    )
+
     # Trigger the command
     trigger_vscode_uri(uri)
-    
+
     # Wait for response
     try
-        result, error = retrieve_vscode_response(request_id; timeout=timeout)
-        
+        result, error = retrieve_vscode_response(request_id; timeout = timeout)
+
         if error !== nothing
             return Dict("error" => error)
         end
-        
+
         return Dict("result" => result)
     catch e
         if e isa TimeoutError
@@ -235,21 +234,25 @@ function format_location(location)
     if location isa Dict
         uri = get(location, "uri", get(location, :uri, ""))
         range = get(location, "range", get(location, :range, nothing))
-        
+
         if range !== nothing
-            start_line = get(get(range, "start", get(range, :start, Dict())), 
-                           "line", get(get(range, "start", get(range, :start, Dict())), 
-                           :line, 0))
-            start_char = get(get(range, "start", get(range, :start, Dict())), 
-                           "character", get(get(range, "start", get(range, :start, Dict())), 
-                           :character, 0))
-            
+            start_line = get(
+                get(range, "start", get(range, :start, Dict())),
+                "line",
+                get(get(range, "start", get(range, :start, Dict())), :line, 0),
+            )
+            start_char = get(
+                get(range, "start", get(range, :start, Dict())),
+                "character",
+                get(get(range, "start", get(range, :start, Dict())), :character, 0),
+            )
+
             # Convert 0-indexed LSP to 1-indexed Julia
             file_path = uri_to_path(uri)
             return "$(file_path):$(start_line + 1):$(start_char + 1)"
         end
     end
-    
+
     return string(location)
 end
 
@@ -262,16 +265,16 @@ function format_locations(locations)
     if isnothing(locations) || (locations isa Vector && isempty(locations))
         return "No results found"
     end
-    
+
     if !(locations isa Vector)
         locations = [locations]
     end
-    
+
     result = "Found $(length(locations)) location(s):\n"
     for (i, loc) in enumerate(locations)
         result *= "  $i. $(format_location(loc))\n"
     end
-    
+
     return result
 end
 
@@ -283,7 +286,7 @@ Format hover information for display.
 function format_hover_info(hover_result)
     if hover_result isa Dict
         contents = get(hover_result, "contents", get(hover_result, :contents, nothing))
-        
+
         if contents !== nothing
             # Contents can be a string, MarkedString, or array
             if contents isa String
@@ -292,14 +295,17 @@ function format_hover_info(hover_result)
                 value = get(contents, "value", get(contents, :value, ""))
                 return value
             elseif contents isa Vector
-                return join([
-                    item isa String ? item : get(item, "value", get(item, :value, ""))
-                    for item in contents
-                ], "\n\n")
+                return join(
+                    [
+                        item isa String ? item : get(item, "value", get(item, :value, ""))
+                        for item in contents
+                    ],
+                    "\n\n",
+                )
             end
         end
     end
-    
+
     return "No hover information available"
 end
 
@@ -312,20 +318,20 @@ function format_symbols(symbols)
     if isnothing(symbols) || (symbols isa Vector && isempty(symbols))
         return "No symbols found"
     end
-    
+
     if !(symbols isa Vector)
         symbols = [symbols]
     end
-    
+
     result = "Found $(length(symbols)) symbol(s):\n"
     for (i, sym) in enumerate(symbols)
         if sym isa Dict
             name = get(sym, "name", get(sym, :name, ""))
             kind = get(sym, "kind", get(sym, :kind, 0))
             location = get(sym, "location", get(sym, :location, nothing))
-            
+
             kind_str = symbol_kind_to_string(kind)
-            
+
             if location !== nothing
                 loc_str = format_location(location)
                 result *= "  $i. [$kind_str] $name @ $loc_str\n"
@@ -334,7 +340,7 @@ function format_symbols(symbols)
             end
         end
     end
-    
+
     return result
 end
 
@@ -345,13 +351,32 @@ Convert LSP SymbolKind enum to string.
 """
 function symbol_kind_to_string(kind::Int)
     kinds = Dict(
-        1 => "File", 2 => "Module", 3 => "Namespace", 4 => "Package",
-        5 => "Class", 6 => "Method", 7 => "Property", 8 => "Field",
-        9 => "Constructor", 10 => "Enum", 11 => "Interface", 12 => "Function",
-        13 => "Variable", 14 => "Constant", 15 => "String", 16 => "Number",
-        17 => "Boolean", 18 => "Array", 19 => "Object", 20 => "Key",
-        21 => "Null", 22 => "EnumMember", 23 => "Struct", 24 => "Event",
-        25 => "Operator", 26 => "TypeParameter"
+        1 => "File",
+        2 => "Module",
+        3 => "Namespace",
+        4 => "Package",
+        5 => "Class",
+        6 => "Method",
+        7 => "Property",
+        8 => "Field",
+        9 => "Constructor",
+        10 => "Enum",
+        11 => "Interface",
+        12 => "Function",
+        13 => "Variable",
+        14 => "Constant",
+        15 => "String",
+        16 => "Number",
+        17 => "Boolean",
+        18 => "Array",
+        19 => "Object",
+        20 => "Key",
+        21 => "Null",
+        22 => "EnumMember",
+        23 => "Struct",
+        24 => "Event",
+        25 => "Operator",
+        26 => "TypeParameter",
     )
     return get(kinds, kind, "Unknown")
 end
@@ -367,18 +392,18 @@ function create_lsp_tools()
     goto_definition_tool = MCPTool(
         "lsp_goto_definition",
         """Jump to the definition of a symbol using Julia LSP.
-        
+
         Uses the Julia Language Server to find where a function, type, or variable
         is defined in the codebase.
-        
+
         # Arguments
         - `file_path`: Absolute path to the file (required)
         - `line`: Line number, 1-indexed (required)
         - `column`: Column number, 1-indexed (required)
-        
+
         # Returns
         File path and position of the definition(s).
-        
+
         # Examples
         - Find definition at line 42, column 10: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
         """,
@@ -387,74 +412,71 @@ function create_lsp_tools()
             "properties" => Dict(
                 "file_path" => Dict(
                     "type" => "string",
-                    "description" => "Absolute path to the file"
+                    "description" => "Absolute path to the file",
                 ),
                 "line" => Dict(
                     "type" => "integer",
-                    "description" => "Line number (1-indexed)"
+                    "description" => "Line number (1-indexed)",
                 ),
                 "column" => Dict(
                     "type" => "integer",
-                    "description" => "Column number (1-indexed)"
-                )
+                    "description" => "Column number (1-indexed)",
+                ),
             ),
-            "required" => ["file_path", "line", "column"]
+            "required" => ["file_path", "line", "column"],
         ),
         function (args)
             try
                 file_path = get(args, "file_path", "")
                 line = get(args, "line", 1)
                 column = get(args, "column", 1)
-                
+
                 if isempty(file_path)
                     return "Error: file_path is required"
                 end
-                
+
                 if !isfile(file_path)
                     return "Error: File not found: $file_path"
                 end
-                
+
                 # Convert to LSP format (0-indexed)
                 lsp_params = Dict(
                     "textDocument" => Dict("uri" => file_uri(file_path)),
-                    "position" => Dict(
-                        "line" => line - 1,
-                        "character" => column - 1
-                    )
+                    "position" => Dict("line" => line - 1, "character" => column - 1),
                 )
-                
+
                 # Send LSP request
                 response = send_lsp_request("textDocument/definition", lsp_params)
-                
+
                 if haskey(response, "error")
                     return "Error: $(response["error"])"
                 end
-                
+
                 result = get(response, "result", nothing)
                 return format_locations(result)
-                
+
             catch e
                 return "Error finding definition: $e"
             end
-        end
+        end,
     )
-    
+
     find_references_tool = MCPTool(
         "lsp_find_references",
         """Find all references to a symbol using Julia LSP.
-        
+
         Uses the Julia Language Server to find where a function, type, or variable
         is used throughout the codebase.
-        
+
         # Arguments
         - `file_path`: Absolute path to the file (required)
         - `line`: Line number, 1-indexed (required)
         - `column`: Column number, 1-indexed (required)
         - `include_declaration`: Include the declaration in results (default: true)
-        
+
         # Returns
         List of file paths and positions where the symbol is referenced.
-        
+
         # Examples
         - Find references: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
         """,
@@ -463,22 +485,22 @@ function create_lsp_tools()
             "properties" => Dict(
                 "file_path" => Dict(
                     "type" => "string",
-                    "description" => "Absolute path to the file"
+                    "description" => "Absolute path to the file",
                 ),
                 "line" => Dict(
                     "type" => "integer",
-                    "description" => "Line number (1-indexed)"
+                    "description" => "Line number (1-indexed)",
                 ),
                 "column" => Dict(
                     "type" => "integer",
-                    "description" => "Column number (1-indexed)"
+                    "description" => "Column number (1-indexed)",
                 ),
                 "include_declaration" => Dict(
                     "type" => "boolean",
-                    "description" => "Include declaration (default: true)"
-                )
+                    "description" => "Include declaration (default: true)",
+                ),
             ),
-            "required" => ["file_path", "line", "column"]
+            "required" => ["file_path", "line", "column"],
         ),
         function (args)
             try
@@ -486,58 +508,53 @@ function create_lsp_tools()
                 line = get(args, "line", 1)
                 column = get(args, "column", 1)
                 include_decl = get(args, "include_declaration", true)
-                
+
                 if isempty(file_path)
                     return "Error: file_path is required"
                 end
-                
+
                 if !isfile(file_path)
                     return "Error: File not found: $file_path"
                 end
-                
+
                 # Convert to LSP format
                 lsp_params = Dict(
                     "textDocument" => Dict("uri" => file_uri(file_path)),
-                    "position" => Dict(
-                        "line" => line - 1,
-                        "character" => column - 1
-                    ),
-                    "context" => Dict(
-                        "includeDeclaration" => include_decl
-                    )
+                    "position" => Dict("line" => line - 1, "character" => column - 1),
+                    "context" => Dict("includeDeclaration" => include_decl),
                 )
-                
+
                 # Send LSP request
                 response = send_lsp_request("textDocument/references", lsp_params)
-                
+
                 if haskey(response, "error")
                     return "Error: $(response["error"])"
                 end
-                
+
                 result = get(response, "result", nothing)
                 return format_locations(result)
-                
+
             catch e
                 return "Error finding references: $e"
             end
-        end
+        end,
     )
-    
+
     hover_info_tool = MCPTool(
         "lsp_hover_info",
         """Get hover information (documentation, type info) at a position using Julia LSP.
-        
+
         Uses the Julia Language Server to get the same information that appears
         when you hover over a symbol in VS Code.
-        
+
         # Arguments
         - `file_path`: Absolute path to the file (required)
         - `line`: Line number, 1-indexed (required)
         - `column`: Column number, 1-indexed (required)
-        
+
         # Returns
         Documentation string, type information, and signatures.
-        
+
         # Examples
         - Get hover info: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
         """,
@@ -546,71 +563,68 @@ function create_lsp_tools()
             "properties" => Dict(
                 "file_path" => Dict(
                     "type" => "string",
-                    "description" => "Absolute path to the file"
+                    "description" => "Absolute path to the file",
                 ),
                 "line" => Dict(
                     "type" => "integer",
-                    "description" => "Line number (1-indexed)"
+                    "description" => "Line number (1-indexed)",
                 ),
                 "column" => Dict(
                     "type" => "integer",
-                    "description" => "Column number (1-indexed)"
-                )
+                    "description" => "Column number (1-indexed)",
+                ),
             ),
-            "required" => ["file_path", "line", "column"]
+            "required" => ["file_path", "line", "column"],
         ),
         function (args)
             try
                 file_path = get(args, "file_path", "")
                 line = get(args, "line", 1)
                 column = get(args, "column", 1)
-                
+
                 if isempty(file_path)
                     return "Error: file_path is required"
                 end
-                
+
                 if !isfile(file_path)
                     return "Error: File not found: $file_path"
                 end
-                
+
                 # Convert to LSP format
                 lsp_params = Dict(
                     "textDocument" => Dict("uri" => file_uri(file_path)),
-                    "position" => Dict(
-                        "line" => line - 1,
-                        "character" => column - 1
-                    )
+                    "position" => Dict("line" => line - 1, "character" => column - 1),
                 )
-                
+
                 # Send LSP request
                 response = send_lsp_request("textDocument/hover", lsp_params)
-                
+
                 if haskey(response, "error")
                     return "Error: $(response["error"])"
                 end
-                
+
                 result = get(response, "result", nothing)
                 return format_hover_info(result)
-                
+
             catch e
                 return "Error getting hover info: $e"
             end
-        end
+        end,
     )
-    
+
     document_symbols_tool = MCPTool(
         "lsp_document_symbols",
         """List all symbols (functions, types, etc.) in a file using Julia LSP.
-        
+
         Uses the Julia Language Server to get a structured list of all symbols
         defined in a file, similar to the outline view in VS Code.
-        
+
         # Arguments
         - `file_path`: Absolute path to the file (required)
-        
+
         # Returns
         List of symbols with their types, names, and locations.
-        
+
         # Examples
         - List symbols: `{"file_path": "/path/to/file.jl"}`
         """,
@@ -619,57 +633,55 @@ function create_lsp_tools()
             "properties" => Dict(
                 "file_path" => Dict(
                     "type" => "string",
-                    "description" => "Absolute path to the file"
-                )
+                    "description" => "Absolute path to the file",
+                ),
             ),
-            "required" => ["file_path"]
+            "required" => ["file_path"],
         ),
         function (args)
             try
                 file_path = get(args, "file_path", "")
-                
+
                 if isempty(file_path)
                     return "Error: file_path is required"
                 end
-                
+
                 if !isfile(file_path)
                     return "Error: File not found: $file_path"
                 end
-                
+
                 # Convert to LSP format
-                lsp_params = Dict(
-                    "textDocument" => Dict("uri" => file_uri(file_path))
-                )
-                
+                lsp_params = Dict("textDocument" => Dict("uri" => file_uri(file_path)))
+
                 # Send LSP request
                 response = send_lsp_request("textDocument/documentSymbol", lsp_params)
-                
+
                 if haskey(response, "error")
                     return "Error: $(response["error"])"
                 end
-                
+
                 result = get(response, "result", nothing)
                 return format_symbols(result)
-                
+
             catch e
                 return "Error listing symbols: $e"
             end
-        end
+        end,
     )
-    
+
     workspace_symbols_tool = MCPTool(
         "lsp_workspace_symbols",
         """Search for symbols across the entire workspace using Julia LSP.
-        
+
         Uses the Julia Language Server to search for functions, types, and other
         symbols by name across all files in the workspace.
-        
+
         # Arguments
         - `query`: Search query (can be partial name)
-        
+
         # Returns
         List of matching symbols with their locations.
-        
+
         # Examples
         - Search for "calculate": `{"query": "calculate"}`
         - Search for types ending in "Error": `{"query": "Error"}`
@@ -679,43 +691,43 @@ function create_lsp_tools()
             "properties" => Dict(
                 "query" => Dict(
                     "type" => "string",
-                    "description" => "Search query for symbol names"
-                )
+                    "description" => "Search query for symbol names",
+                ),
             ),
-            "required" => ["query"]
+            "required" => ["query"],
         ),
         function (args)
             try
                 query = get(args, "query", "")
-                
+
                 if isempty(query)
                     return "Error: query is required"
                 end
-                
+
                 # Convert to LSP format
                 lsp_params = Dict("query" => query)
-                
+
                 # Send LSP request
                 response = send_lsp_request("workspace/symbol", lsp_params)
-                
+
                 if haskey(response, "error")
                     return "Error: $(response["error"])"
                 end
-                
+
                 result = get(response, "result", nothing)
                 return format_symbols(result)
-                
+
             catch e
                 return "Error searching symbols: $e"
             end
-        end
+        end,
     )
-    
+
     return [
         goto_definition_tool,
         find_references_tool,
         hover_info_tool,
         document_symbols_tool,
-        workspace_symbols_tool
+        workspace_symbols_tool,
     ]
 end

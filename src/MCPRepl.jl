@@ -41,14 +41,18 @@ Retrieve a stored VS Code response, waiting up to `timeout` seconds.
 Returns (result, error) tuple or throws TimeoutError.
 Automatically cleans up the stored response after retrieval.
 """
-function retrieve_vscode_response(request_id::String; timeout::Float64=5.0, poll_interval::Float64=0.1)
+function retrieve_vscode_response(
+    request_id::String;
+    timeout::Float64 = 5.0,
+    poll_interval::Float64 = 0.1,
+)
     start_time = time()
-    
+
     while (time() - start_time) < timeout
         response = lock(VSCODE_RESPONSE_LOCK) do
             get(VSCODE_RESPONSES, request_id, nothing)
         end
-        
+
         if response !== nothing
             # Clean up the stored response
             lock(VSCODE_RESPONSE_LOCK) do
@@ -56,10 +60,10 @@ function retrieve_vscode_response(request_id::String; timeout::Float64=5.0, poll
             end
             return (response[1], response[2])  # (result, error)
         end
-        
+
         sleep(poll_interval)
     end
-    
+
     error("Timeout waiting for VS Code response (request_id: $request_id)")
 end
 
@@ -69,7 +73,7 @@ end
 Remove responses older than `max_age` seconds to prevent memory leaks.
 Should be called periodically.
 """
-function cleanup_old_vscode_responses(max_age::Float64=60.0)
+function cleanup_old_vscode_responses(max_age::Float64 = 60.0)
     current_time = time()
     lock(VSCODE_RESPONSE_LOCK) do
         for (request_id, (_, _, timestamp)) in collect(VSCODE_RESPONSES)
@@ -98,11 +102,14 @@ function trigger_vscode_uri(uri::String)
 end
 
 # Helper function to build VS Code command URI
-function build_vscode_uri(command::String; args::Union{Nothing,String}=nothing, 
-                         request_id::Union{Nothing,String}=nothing,
-                         mcp_port::Int=3000,
-                         publisher::String="MCPRepl", 
-                         name::String="vscode-remote-control")
+function build_vscode_uri(
+    command::String;
+    args::Union{Nothing,String} = nothing,
+    request_id::Union{Nothing,String} = nothing,
+    mcp_port::Int = 3000,
+    publisher::String = "MCPRepl",
+    name::String = "vscode-remote-control",
+)
     uri = "vscode://$(publisher).$(name)?cmd=$(command)"
     if args !== nothing
         uri *= "&args=$(args)"
@@ -166,34 +173,31 @@ function execute_repllike(
     # If streaming is enabled, send progress updates through the channel
     if stream_channel !== nothing
         # Streaming mode - use separate REPL backend with line-by-line output forwarding
-        
+
         # Send initial "started" event
         start_event = Dict(
             "jsonrpc" => "2.0",
             "method" => "notifications/progress",
-            "params" => Dict(
-                "progress" => 0,
-                "message" => "Execution started..."
-            )
+            "params" => Dict("progress" => 0, "message" => "Execution started..."),
         )
         put!(stream_channel, JSON3.write(start_event))
-        
+
         # Save original streams
         orig_stdout = stdout
         orig_stderr = stderr
-        
+
         # Create pipes for redirection
         stdout_reader, stdout_writer = redirect_stdout()
         stderr_reader, stderr_writer = redirect_stderr()
-        
+
         # Buffers for final capture
         stdout_buf = IOBuffer()
         stderr_buf = IOBuffer()
-        
+
         # Helper to process and forward output line by line
         function forward_output(reader, original_stream, buffer, stream_name)
             line_buffer = IOBuffer()
-            
+
             try
                 while isopen(reader)
                     # Read available data
@@ -202,17 +206,17 @@ function execute_repllike(
                         # Write to original stream (real-time display)
                         write(original_stream, data)
                         flush(original_stream)
-                        
+
                         # Write to capture buffer
                         write(buffer, data)
-                        
+
                         # Process line by line for SSE streaming
                         write(line_buffer, data)
-                        
+
                         # Extract complete lines
                         seekstart(line_buffer)
                         while !eof(line_buffer)
-                            line = readline(line_buffer; keep=true)
+                            line = readline(line_buffer; keep = true)
                             if endswith(line, '\n')
                                 # Complete line - send via SSE
                                 try
@@ -221,8 +225,8 @@ function execute_repllike(
                                         "method" => "notifications/message",
                                         "params" => Dict(
                                             "level" => stream_name,
-                                            "message" => line
-                                        )
+                                            "message" => line,
+                                        ),
                                     )
                                     put!(stream_channel, JSON3.write(output_event))
                                 catch e
@@ -239,7 +243,7 @@ function execute_repllike(
                     end
                     sleep(0.001) # Small yield
                 end
-                
+
                 # Flush any remaining partial line
                 remaining = String(take!(line_buffer))
                 if !isempty(remaining)
@@ -247,10 +251,8 @@ function execute_repllike(
                         output_event = Dict(
                             "jsonrpc" => "2.0",
                             "method" => "notifications/message",
-                            "params" => Dict(
-                                "level" => stream_name,
-                                "message" => remaining
-                            )
+                            "params" =>
+                                Dict("level" => stream_name, "message" => remaining),
                         )
                         put!(stream_channel, JSON3.write(output_event))
                     catch e
@@ -263,11 +265,11 @@ function execute_repllike(
                 end
             end
         end
-        
+
         # Start async tasks to forward output
         stdout_task = @async forward_output(stdout_reader, orig_stdout, stdout_buf, "info")
         stderr_task = @async forward_output(stderr_reader, orig_stderr, stderr_buf, "error")
-        
+
         # Evaluate using the backend
         response = try
             REPL.eval_on_backend(expr, backend)
@@ -275,10 +277,7 @@ function execute_repllike(
             error_event = Dict(
                 "jsonrpc" => "2.0",
                 "method" => "notifications/progress",
-                "params" => Dict(
-                    "progress" => 100,
-                    "message" => "Error: $e"
-                )
+                "params" => Dict("progress" => 100, "message" => "Error: $e"),
             )
             put!(stream_channel, JSON3.write(error_event))
             e
@@ -286,38 +285,35 @@ function execute_repllike(
             # Restore stdout/stderr
             redirect_stdout(orig_stdout)
             redirect_stderr(orig_stderr)
-            
+
             # Close readers to stop tasks
             close(stdout_reader)
             close(stderr_reader)
-            
+
             # Wait for forwarding tasks to finish
             sleep(0.1)
             wait(stdout_task)
             wait(stderr_task)
         end
-        
+
         # Get captured content
         captured_content = String(take!(stdout_buf))
         stderr_content = String(take!(stderr_buf))
         if !isempty(stderr_content)
             captured_content = captured_content * "\n" * stderr_content
         end
-        
+
         # Send completion notification
         complete_event = Dict(
             "jsonrpc" => "2.0",
             "method" => "notifications/progress",
-            "params" => Dict(
-                "progress" => 100,
-                "message" => "Execution complete"
-            )
+            "params" => Dict("progress" => 100, "message" => "Execution complete"),
         )
         put!(stream_channel, JSON3.write(complete_event))
     else
         # Non-streaming mode (original behavior)
         captured_output = Pipe()
-        
+
         response = redirect_stdout(captured_output) do
             redirect_stderr(captured_output) do
                 r = REPL.eval_on_backend(expr, backend)
@@ -325,7 +321,7 @@ function execute_repllike(
                 r
             end
         end
-        
+
         captured_content = read(captured_output, String)
 
         # Only reshow output if not silent
@@ -574,58 +570,65 @@ function start!(; port = 3000, verbose::Bool = true)
                     "prompts",
                     "vscode_commands.json",
                 )
-                
+
                 if !isfile(workflow_path)
                     return "Error: julia_repl_workflow.md not found at $workflow_path"
                 end
-                
+
                 base_content = read(workflow_path, String)
-                
+
                 # Try to read actual allowed commands from workspace settings and format with descriptions
                 try
                     settings = read_vscode_settings()
-                    allowed_commands = get(settings, "vscode-remote-control.allowedCommands", nothing)
-                    
+                    allowed_commands = get(
+                        settings,
+                        "vscode-remote-control.allowedCommands",
+                        nothing,
+                    )
+
                     if allowed_commands !== nothing && !isempty(allowed_commands)
                         # Load command documentation
                         command_docs = Dict{String,String}()
-                        command_categories = Dict{String,Tuple{String,Vector{String}}}()  # category_id => (name, commands)
-                        
+                        command_categories =
+                            Dict{String,Tuple{String,Vector{String}}}()  # category_id => (name, commands)
+
                         if isfile(commands_json_path)
                             try
-                                commands_data = JSON3.read(read(commands_json_path, String))
+                                commands_data =
+                                    JSON3.read(read(commands_json_path, String))
                                 categories = get(commands_data, :categories, Dict())
-                                
+
                                 # Build lookup table and category mapping
                                 for (cat_id, cat_data) in pairs(categories)
                                     cat_name = get(cat_data, :name, string(cat_id))
                                     cat_commands = String[]
-                                    
+
                                     cmds = get(cat_data, :commands, Dict())
                                     for (cmd, desc) in pairs(cmds)
                                         command_docs[string(cmd)] = string(desc)
                                         push!(cat_commands, string(cmd))
                                     end
-                                    
-                                    command_categories[string(cat_id)] = (cat_name, cat_commands)
+
+                                    command_categories[string(cat_id)] =
+                                        (cat_name, cat_commands)
                                 end
                             catch e
                                 @debug "Could not load command documentation" exception=e
                             end
                         end
-                        
+
                         # Append formatted commands section
                         commands_section = "\n\n---\n\n## Currently Configured VS Code Commands\n\n"
                         commands_section *= "Your workspace has **$(length(allowed_commands)) commands** configured in `.vscode/settings.json`.\n\n"
-                        
+
                         # Group commands by category
                         categorized_commands = Dict{String,Vector{String}}()
                         uncategorized_commands = String[]
-                        
+
                         for cmd in allowed_commands
                             cmd_str = string(cmd)
                             found_category = false
-                            
+
                             for (cat_id, (cat_name, cat_cmds)) in command_categories
                                 if cmd_str in cat_cmds
                                     if !haskey(categorized_commands, cat_id)
@@ -636,29 +639,41 @@ function start!(; port = 3000, verbose::Bool = true)
                                     break
                                 end
                             end
-                            
+
                             if !found_category
                                 push!(uncategorized_commands, cmd_str)
                             end
                         end
-                        
+
                         # Output categorized commands
-                        category_order = ["julia", "file", "navigation", "window", "terminal", "search", "git", "debug", "tasks", "extensions", "vscode_api"]
-                        
+                        category_order = [
+                            "julia",
+                            "file",
+                            "navigation",
+                            "window",
+                            "terminal",
+                            "search",
+                            "git",
+                            "debug",
+                            "tasks",
+                            "extensions",
+                            "vscode_api",
+                        ]
+
                         for cat_id in category_order
                             if haskey(categorized_commands, cat_id)
                                 cat_name, _ = command_categories[cat_id]
                                 commands_section *= "### $(cat_name)\n\n"
-                                
+
                                 for cmd in sort(categorized_commands[cat_id])
                                     desc = get(command_docs, cmd, "No description available")
                                     commands_section *= "- **`$(cmd)`** - $(desc)\n"
                                 end
-                                
+
                                 commands_section *= "\n"
                             end
                         end
-                        
+
                         # Output uncategorized commands
                         if !isempty(uncategorized_commands)
                             commands_section *= "### 📋 Other Commands\n\n"
@@ -668,7 +683,7 @@ function start!(; port = 3000, verbose::Bool = true)
                             end
                             commands_section *= "\n"
                         end
-                        
+
                         return base_content * commands_section
                     end
                 catch e
@@ -717,13 +732,13 @@ function start!(; port = 3000, verbose::Bool = true)
             ),
             "required" => ["expression"],
         ),
-        (args, stream_channel=nothing) -> begin
+        (args, stream_channel = nothing) -> begin
             try
                 silent = get(args, "silent", false)
                 execute_repllike(
-                    get(args, "expression", ""); 
+                    get(args, "expression", "");
                     silent = silent,
-                    stream_channel = stream_channel
+                    stream_channel = stream_channel,
                 )
             catch e
                 println("Error during execute_repllike", e)
@@ -735,29 +750,32 @@ function start!(; port = 3000, verbose::Bool = true)
     restart_repl_tool = MCPTool(
         "restart_repl",
         """Restart the Julia REPL and return immediately.
-        
+
         **Workflow for AI Agents:**
         1. Call this tool to trigger the restart
         2. Wait 5-10 seconds (don't make any MCP requests during this time)
         3. Try your next request - if it fails, wait a bit longer and retry
-        
+
         The MCP server connection will be interrupted during restart. This is expected.
         The tool returns immediately, and you (the AI agent) must wait before making
         new requests to allow the Julia REPL to restart and the MCP server to reinitialize.
-        
+
         Typical restart time is 5-10 seconds depending on system load and package precompilation.
-        
+
         Use this tool after making changes to the MCP server code or when the REPL needs a fresh start.""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
-        (args, stream_channel=nothing) -> begin
+        (args, stream_channel = nothing) -> begin
             try
                 # Get the current server port (before restart)
                 server_port = SERVER[] !== nothing ? SERVER[].port : 3000
-                
+
                 # Execute the restart command using the vscode URI trigger
-                restart_uri = build_vscode_uri("language-julia.restartREPL"; mcp_port=server_port)
+                restart_uri = build_vscode_uri(
+                    "language-julia.restartREPL";
+                    mcp_port = server_port,
+                )
                 trigger_vscode_uri(restart_uri)
-                
+
                 # Return immediately - the server will be restarting
                 return "✓ Julia REPL restart initiated on port $server_port.\n\n⏳ Typical restart time: 5-10 seconds. Waiting for restart to complete...\n\n(The AI agent should not make any MCP requests during this waiting period.)"
             catch e
@@ -840,11 +858,11 @@ function start!(; port = 3000, verbose::Bool = true)
         execute_vscode_command("workbench.action.files.saveAll")
         execute_vscode_command("workbench.action.terminal.focus")
         execute_vscode_command("workbench.action.tasks.runTask", ["test"])
-        
+
         # Execute shell commands (RECOMMENDED for julia --project commands):
         execute_vscode_command("workbench.action.terminal.sendSequence",
           ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
-        
+
         # Get a value back from VS Code:
         execute_vscode_command("someCommand", wait_for_response=true, timeout=10.0)
         ```
@@ -881,32 +899,34 @@ function start!(; port = 3000, verbose::Bool = true)
                 if isempty(cmd)
                     return "Error: command parameter is required"
                 end
-                
+
                 wait_for_response = get(args, "wait_for_response", false)
                 timeout = get(args, "timeout", 5.0)
-                
+
                 # Generate unique request ID if waiting for response
-                request_id = wait_for_response ? string(rand(UInt128), base=16) : nothing
-                
+                request_id =
+                    wait_for_response ? string(rand(UInt128), base = 16) : nothing
+
                 # Build URI with command and optional args
                 args_param = nothing
                 if haskey(args, "args") && !isempty(args["args"])
                     args_json = JSON3.write(args["args"])
                     args_param = HTTP.URIs.escapeuri(args_json)
                 end
-                
-                uri = build_vscode_uri(cmd; args=args_param, request_id=request_id)
+
+                uri = build_vscode_uri(cmd; args = args_param, request_id = request_id)
                 trigger_vscode_uri(uri)
-                
+
                 # If waiting for response, poll for it
                 if wait_for_response
                     try
-                        result, error = retrieve_vscode_response(request_id; timeout=timeout)
-                        
+                        result, error =
+                            retrieve_vscode_response(request_id; timeout = timeout)
+
                         if error !== nothing
                             return "VS Code command '$(cmd)' failed: $error"
                         end
-                        
+
                         # Format result for display
                         if result === nothing
                             return "VS Code command '$(cmd)' executed successfully (no return value)"
@@ -1309,21 +1329,21 @@ function start!(; port = 3000, verbose::Bool = true)
     format_tool = MCPTool(
         "format_code",
         """Format Julia code using JuliaFormatter.jl (optional).
-        
+
         Formats Julia source files or directories according to standard style guidelines.
         This tool requires JuliaFormatter.jl to be installed in your environment.
-        
+
         # Arguments
         - `path`: Path to a Julia file or directory to format
         - `overwrite`: Whether to overwrite files in place (default: true)
         - `verbose`: Show which files are being formatted (default: true)
-        
+
         # Installation
         If JuliaFormatter is not installed, add it with:
         ```julia
         using Pkg; Pkg.add("JuliaFormatter")
         ```
-        
+
         # Examples
         - Format a single file: `{"path": "src/MyModule.jl"}`
         - Format entire src directory: `{"path": "src"}`
@@ -1332,9 +1352,20 @@ function start!(; port = 3000, verbose::Bool = true)
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "path" => Dict("type" => "string", "description" => "File or directory path to format"),
-                "overwrite" => Dict("type" => "boolean", "description" => "Overwrite files in place", "default" => true),
-                "verbose" => Dict("type" => "boolean", "description" => "Show formatting progress", "default" => true),
+                "path" => Dict(
+                    "type" => "string",
+                    "description" => "File or directory path to format",
+                ),
+                "overwrite" => Dict(
+                    "type" => "boolean",
+                    "description" => "Overwrite files in place",
+                    "default" => true,
+                ),
+                "verbose" => Dict(
+                    "type" => "boolean",
+                    "description" => "Show formatting progress",
+                    "default" => true,
+                ),
             ),
             "required" => ["path"],
         ),
@@ -1348,22 +1379,22 @@ function start!(; port = 3000, verbose::Bool = true)
                         return "Error: JuliaFormatter.jl is not installed. Install it with: using Pkg; Pkg.add(\"JuliaFormatter\")"
                     end
                 end
-                
+
                 path = get(args, "path", "")
                 overwrite = get(args, "overwrite", true)
                 verbose = get(args, "verbose", true)
-                
+
                 if isempty(path)
                     return "Error: path parameter is required"
                 end
-                
+
                 # Make path absolute
                 abs_path = isabspath(path) ? path : joinpath(pwd(), path)
-                
+
                 if !ispath(abs_path)
                     return "Error: Path does not exist: $abs_path"
                 end
-                
+
                 code = """
                 using JuliaFormatter
                 result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
@@ -1374,7 +1405,7 @@ function start!(; port = 3000, verbose::Bool = true)
                 end
                 result
                 """
-                
+
                 execute_repllike(code; description = "[Formatting code at: $abs_path]")
             catch e
                 "Error formatting code: $e"
@@ -1386,7 +1417,7 @@ function start!(; port = 3000, verbose::Bool = true)
     lint_tool = MCPTool(
         "lint_package",
         """Run Aqua.jl quality assurance tests on a Julia package (optional).
-        
+
         Performs comprehensive package quality checks including:
         - Ambiguity detection in method signatures
         - Undefined exports
@@ -1394,18 +1425,18 @@ function start!(; port = 3000, verbose::Bool = true)
         - Dependency analysis
         - Project.toml validation
         - And more
-        
+
         This tool requires Aqua.jl to be installed in your environment.
-        
+
         # Arguments
         - `package_name`: Name of the package to test (default: current project)
-        
+
         # Installation
         If Aqua is not installed, add it with:
         ```julia
         using Pkg; Pkg.add("Aqua")
         ```
-        
+
         # Examples
         - Test current package: `{}`
         - Test specific package: `{"package_name": "MyPackage"}`
@@ -1413,7 +1444,10 @@ function start!(; port = 3000, verbose::Bool = true)
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "package_name" => Dict("type" => "string", "description" => "Package name to test (defaults to current project)"),
+                "package_name" => Dict(
+                    "type" => "string",
+                    "description" => "Package name to test (defaults to current project)",
+                ),
             ),
             "required" => [],
         ),
@@ -1427,9 +1461,9 @@ function start!(; port = 3000, verbose::Bool = true)
                         return "Error: Aqua.jl is not installed. Install it with: using Pkg; Pkg.add(\"Aqua\")"
                     end
                 end
-                
+
                 pkg_name = get(args, "package_name", nothing)
-                
+
                 if pkg_name === nothing
                     # Use current project
                     code = """
@@ -1463,7 +1497,7 @@ function start!(; port = 3000, verbose::Bool = true)
                     println("✅ All Aqua tests passed for $pkg_name")
                     """
                 end
-                
+
                 execute_repllike(code; description = "[Running Aqua quality tests]")
             catch e
                 "Error running Aqua tests: $e"
@@ -1475,14 +1509,14 @@ function start!(; port = 3000, verbose::Bool = true)
     open_and_breakpoint_tool = MCPTool(
         "open_file_and_set_breakpoint",
         """Open a file in VS Code and set a breakpoint at a specific line.
-        
+
         This is a convenience tool that combines file opening and breakpoint setting
         into a single operation, making it easier to set up debugging.
-        
+
         # Arguments
         - `file_path`: Absolute path to the file to open
         - `line`: Line number to set the breakpoint (optional, defaults to current cursor position)
-        
+
         # Examples
         - Open file and set breakpoint at line 42: `{"file_path": "/path/to/file.jl", "line": 42}`
         - Open file (breakpoint at cursor): `{"file_path": "/path/to/file.jl"}`
@@ -1490,8 +1524,14 @@ function start!(; port = 3000, verbose::Bool = true)
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "file_path" => Dict("type" => "string", "description" => "Absolute path to the file"),
-                "line" => Dict("type" => "integer", "description" => "Line number for breakpoint (optional)"),
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "line" => Dict(
+                    "type" => "integer",
+                    "description" => "Line number for breakpoint (optional)",
+                ),
             ),
             "required" => ["file_path"],
         ),
@@ -1499,44 +1539,45 @@ function start!(; port = 3000, verbose::Bool = true)
             try
                 file_path = get(args, "file_path", "")
                 line = get(args, "line", nothing)
-                
+
                 if isempty(file_path)
                     return "Error: file_path is required"
                 end
-                
+
                 # Make sure it's an absolute path
-                abs_path = isabspath(file_path) ? file_path : joinpath(pwd(), file_path)
-                
+                abs_path =
+                    isabspath(file_path) ? file_path : joinpath(pwd(), file_path)
+
                 if !isfile(abs_path)
                     return "Error: File does not exist: $abs_path"
                 end
-                
+
                 # Open the file using vscode.open command
                 uri = "file://$abs_path"
                 args_json = JSON3.write([uri])
                 args_encoded = HTTP.URIs.escapeuri(args_json)
-                open_uri = build_vscode_uri("vscode.open"; args=args_encoded)
+                open_uri = build_vscode_uri("vscode.open"; args = args_encoded)
                 trigger_vscode_uri(open_uri)
-                
+
                 sleep(0.5)  # Give VS Code time to open the file
-                
+
                 # Navigate to line if specified
                 if line !== nothing
                     goto_uri = build_vscode_uri("workbench.action.gotoLine")
                     trigger_vscode_uri(goto_uri)
                     sleep(0.3)
                 end
-                
+
                 # Set breakpoint
                 bp_uri = build_vscode_uri("editor.debug.action.toggleBreakpoint")
                 trigger_vscode_uri(bp_uri)
-                
+
                 result = "Opened $abs_path"
                 if line !== nothing
                     result *= " and navigated to line $line"
                 end
                 result *= ", breakpoint set"
-                
+
                 return result
             catch e
                 return "Error: $e"
@@ -1547,30 +1588,26 @@ function start!(; port = 3000, verbose::Bool = true)
     start_debug_session_tool = MCPTool(
         "start_debug_session",
         """Start a debugging session in VS Code.
-        
+
         Opens the debug view and starts debugging with the current configuration.
         Useful after setting breakpoints to begin stepping through code.
-        
+
         # Examples
         - Start debugging: `{}`
         """,
-        Dict(
-            "type" => "object",
-            "properties" => Dict(),
-            "required" => [],
-        ),
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
                 # Open debug view
                 view_uri = build_vscode_uri("workbench.view.debug")
                 trigger_vscode_uri(view_uri)
-                
+
                 sleep(0.3)
-                
+
                 # Start debugging
                 start_uri = build_vscode_uri("workbench.action.debug.start")
                 trigger_vscode_uri(start_uri)
-                
+
                 return "Debug session started. Use stepping commands to navigate through code."
             catch e
                 return "Error starting debug session: $e"
@@ -1581,13 +1618,13 @@ function start!(; port = 3000, verbose::Bool = true)
     add_watch_expression_tool = MCPTool(
         "add_watch_expression",
         """Add a watch expression to monitor during debugging.
-        
+
         Watch expressions let you monitor the value of variables or expressions
         as you step through code during debugging.
-        
+
         # Arguments
         - `expression`: The Julia expression to watch (e.g., "x", "length(arr)", "myvar > 10")
-        
+
         # Examples
         - Watch a variable: `{"expression": "x"}`
         - Watch an expression: `{"expression": "length(my_array)"}`
@@ -1596,28 +1633,31 @@ function start!(; port = 3000, verbose::Bool = true)
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "expression" => Dict("type" => "string", "description" => "Expression to watch"),
+                "expression" => Dict(
+                    "type" => "string",
+                    "description" => "Expression to watch",
+                ),
             ),
             "required" => ["expression"],
         ),
         function (args)
             try
                 expression = get(args, "expression", "")
-                
+
                 if isempty(expression)
                     return "Error: expression is required"
                 end
-                
+
                 # Focus watch view first
                 watch_uri = build_vscode_uri("workbench.debug.action.focusWatchView")
                 trigger_vscode_uri(watch_uri)
-                
+
                 sleep(0.2)
-                
+
                 # Add watch expression
                 add_uri = build_vscode_uri("workbench.action.debug.addWatch")
                 trigger_vscode_uri(add_uri)
-                
+
                 return "Watch expression dialog opened for: $expression (user will need to enter it)"
             catch e
                 return "Error adding watch expression: $e"
@@ -1628,23 +1668,19 @@ function start!(; port = 3000, verbose::Bool = true)
     quick_file_open_tool = MCPTool(
         "quick_open_file",
         """Quickly open a file using VS Code's quick open (Cmd+P/Ctrl+P).
-        
+
         Opens the quick file picker, allowing navigation to files by name.
         This is faster than navigating through the file explorer for known files.
-        
+
         # Examples
         - Open quick picker: `{}`
         """,
-        Dict(
-            "type" => "object",
-            "properties" => Dict(),
-            "required" => [],
-        ),
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
                 quick_uri = build_vscode_uri("workbench.action.quickOpen")
                 trigger_vscode_uri(quick_uri)
-                
+
                 return "Quick open dialog opened (user will type filename)"
             catch e
                 return "Error opening quick open: $e"
@@ -1655,27 +1691,27 @@ function start!(; port = 3000, verbose::Bool = true)
     copy_debug_value_tool = MCPTool(
         "copy_debug_value",
         """Copy the value of a variable or expression during debugging to the clipboard.
-        
+
         This tool allows AI agents to inspect variable values during a debug session.
         The value is copied to the clipboard and can then be read using shell commands.
-        
+
         **Prerequisites:**
         - Must be in an active debug session (paused at a breakpoint)
         - The variable/expression must be selected or focused in the debug view
-        
+
         **Workflow:**
         1. Focus the appropriate debug view (Variables or Watch)
         2. The user or AI should have the variable selected/focused
         3. Copy the value to clipboard
         4. Read clipboard contents to get the value
-        
+
         # Arguments
         - `view`: Which debug view to focus - "variables" or "watch" (default: "variables")
-        
+
         # Examples
         - Copy from variables view: `{"view": "variables"}`
         - Copy from watch view: `{"view": "watch"}`
-        
+
         **Note:** After copying, use a shell command to read the clipboard:
         - macOS: `pbpaste`
         - Linux: `xclip -selection clipboard -o` or `xsel --clipboard --output`
@@ -1688,7 +1724,7 @@ function start!(; port = 3000, verbose::Bool = true)
                     "type" => "string",
                     "description" => "Debug view to focus: 'variables' or 'watch'",
                     "enum" => ["variables", "watch"],
-                    "default" => "variables"
+                    "default" => "variables",
                 ),
             ),
             "required" => [],
@@ -1696,21 +1732,22 @@ function start!(; port = 3000, verbose::Bool = true)
         function (args)
             try
                 view = get(args, "view", "variables")
-                
+
                 # Focus the appropriate debug view
                 if view == "watch"
                     focus_uri = build_vscode_uri("workbench.debug.action.focusWatchView")
                 else
-                    focus_uri = build_vscode_uri("workbench.debug.action.focusVariablesView")
+                    focus_uri =
+                        build_vscode_uri("workbench.debug.action.focusVariablesView")
                 end
                 trigger_vscode_uri(focus_uri)
-                
+
                 sleep(0.2)
-                
+
                 # Copy the selected value
                 copy_uri = build_vscode_uri("workbench.action.debug.copyValue")
                 trigger_vscode_uri(copy_uri)
-                
+
                 clipboard_cmd = if Sys.isapple()
                     "pbpaste"
                 elseif Sys.islinux()
@@ -1720,7 +1757,7 @@ function start!(; port = 3000, verbose::Bool = true)
                 else
                     "appropriate clipboard command for your OS"
                 end
-                
+
                 return """Value copied to clipboard from $(view) view. 
 To read the value, run in terminal: $clipboard_cmd
 Note: Make sure a variable is selected/focused in the debug view before copying."""
@@ -1734,10 +1771,10 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     debug_step_over_tool = MCPTool(
         "debug_step_over",
         """Step over the current line in the debugger.
-        
+
         Executes the current line and moves to the next line without entering function calls.
         Must be in an active debug session (paused at a breakpoint).
-        
+
         # Examples
         - `debug_step_over()`
         - `debug_step_over(wait_for_response=true)` - Wait for confirmation
@@ -1748,7 +1785,7 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
                 "wait_for_response" => Dict(
                     "type" => "boolean",
                     "description" => "Wait for command completion (default: false)",
-                    "default" => false
+                    "default" => false,
                 ),
             ),
             "required" => [],
@@ -1756,12 +1793,12 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         function (args)
             try
                 wait_response = get(args, "wait_for_response", false)
-                
+
                 if wait_response
                     result = execute_repllike(
                         """execute_vscode_command("workbench.action.debug.stepOver", 
                                                   wait_for_response=true, timeout=10.0)""";
-                        silent = false
+                        silent = false,
                     )
                     return result
                 else
@@ -1777,10 +1814,10 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     debug_step_into_tool = MCPTool(
         "debug_step_into",
         """Step into a function call in the debugger.
-        
+
         Enters the function on the current line to debug its internals.
         Must be in an active debug session (paused at a breakpoint).
-        
+
         # Examples
         - `debug_step_into()`
         """,
@@ -1798,10 +1835,10 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     debug_step_out_tool = MCPTool(
         "debug_step_out",
         """Step out of the current function in the debugger.
-        
+
         Continues execution until the current function returns to its caller.
         Must be in an active debug session (paused at a breakpoint).
-        
+
         # Examples
         - `debug_step_out()`
         """,
@@ -1819,10 +1856,10 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     debug_continue_tool = MCPTool(
         "debug_continue",
         """Continue execution in the debugger.
-        
+
         Resumes execution until the next breakpoint or program completion.
         Must be in an active debug session (paused at a breakpoint).
-        
+
         # Examples
         - `debug_continue()`
         """,
@@ -1840,9 +1877,9 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     debug_stop_tool = MCPTool(
         "debug_stop",
         """Stop the current debug session.
-        
+
         Terminates the active debug session and returns to normal execution.
-        
+
         # Examples
         - `debug_stop()`
         """,
@@ -1861,16 +1898,16 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     pkg_add_tool = MCPTool(
         "pkg_add",
         """Add one or more Julia packages to the current environment.
-        
+
         This is a convenience wrapper around Pkg.add() that provides better
         feedback and error handling for AI agents.
-        
+
         **Note**: This modifies Project.toml. For more control, agents can
         directly edit Project.toml and run Pkg.instantiate().
-        
+
         # Arguments
         - `packages`: Array of package names to add (e.g., ["DataFrames", "Plots"])
-        
+
         # Examples
         - `pkg_add(packages=["DataFrames"])`
         - `pkg_add(packages=["Plots", "StatsPlots"])`
@@ -1892,10 +1929,10 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
                 if isempty(packages)
                     return "Error: packages array is required and cannot be empty"
                 end
-                
+
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
                 code = "using Pkg; Pkg.add([$pkg_names])"
-                
+
                 result = execute_repllike(code; silent = false)
                 return "Added packages: $(join(packages, ", "))\n\n$result"
             catch e
@@ -1907,10 +1944,10 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     pkg_rm_tool = MCPTool(
         "pkg_rm",
         """Remove one or more Julia packages from the current environment.
-        
+
         # Arguments
         - `packages`: Array of package names to remove
-        
+
         # Examples
         - `pkg_rm(packages=["OldPackage"])`
         - `pkg_rm(packages=["Package1", "Package2"])`
@@ -1932,10 +1969,10 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
                 if isempty(packages)
                     return "Error: packages array is required and cannot be empty"
                 end
-                
+
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
                 code = "using Pkg; Pkg.rm([$pkg_names])"
-                
+
                 result = execute_repllike(code; silent = false)
                 return "Removed packages: $(join(packages, ", "))\n\n$result"
             catch e

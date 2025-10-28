@@ -361,7 +361,7 @@ function prompt_and_setup_vscode_extension()
     println()
     println("📝 VS Code Remote Control Extension")
     println()
-    
+
     if has_extension
         println("   ✓ Extension already installed")
         print("   Reinstall VS Code Remote Control extension? [Y/n]: ")
@@ -372,7 +372,7 @@ function prompt_and_setup_vscode_extension()
         println()
         print("   Install VS Code Remote Control extension? [Y/n]: ")
     end
-    
+
     response = strip(lowercase(readline()))
 
     # Default to yes
@@ -387,14 +387,14 @@ function prompt_and_setup_vscode_extension()
                     "language-julia.restartREPL",
                     "language-julia.startREPL",
                     "workbench.action.reloadWindow",
-                    
+
                     # File Operations
                     "workbench.action.files.saveAll",
                     "workbench.action.closeAllEditors",
                     "workbench.action.files.openFile",
                     "vscode.open",
                     "vscode.openWith",
-                    
+
                     # Navigation & Focus
                     "workbench.action.terminal.focus",
                     "workbench.action.focusActiveEditorGroup",
@@ -404,12 +404,12 @@ function prompt_and_setup_vscode_extension()
                     "workbench.action.navigateToLastEditLocation",
                     "editor.action.goToLocations",
                     "workbench.action.showAllSymbols",
-                    
+
                     # Terminal Operations
                     "workbench.action.terminal.new",
                     "workbench.action.terminal.sendSequence",
                     "workbench.action.terminal.kill",
-                    
+
                     # Testing - VS Code Test Explorer
                     "testing.runAll",
                     "testing.runCurrentFile",
@@ -424,7 +424,7 @@ function prompt_and_setup_vscode_extension()
                     "testing.openOutputPeek",
                     "testing.toggleTestingView",
                     "workbench.view.testing.focus",
-                    
+
                     # Testing & Debugging - Basic Controls
                     "workbench.action.tasks.runTask",
                     "workbench.action.debug.start",
@@ -433,13 +433,13 @@ function prompt_and_setup_vscode_extension()
                     "workbench.action.debug.restart",
                     "workbench.action.debug.pause",
                     "workbench.action.debug.continue",
-                    
+
                     # Debugger - Stepping
                     "workbench.action.debug.stepOver",
                     "workbench.action.debug.stepInto",
                     "workbench.action.debug.stepOut",
                     "workbench.action.debug.stepBack",
-                    
+
                     # Debugger - Breakpoints
                     "editor.debug.action.toggleBreakpoint",
                     "editor.debug.action.conditionalBreakpoint",
@@ -447,20 +447,20 @@ function prompt_and_setup_vscode_extension()
                     "workbench.debug.viewlet.action.removeAllBreakpoints",
                     "workbench.debug.viewlet.action.enableAllBreakpoints",
                     "workbench.debug.viewlet.action.disableAllBreakpoints",
-                    
+
                     # Debugger - Views & Panels
                     "workbench.view.debug",
                     "workbench.debug.action.focusVariablesView",
                     "workbench.debug.action.focusWatchView",
                     "workbench.debug.action.focusCallStackView",
                     "workbench.debug.action.focusBreakpointsView",
-                    
+
                     # Debugger - Watch & Variables
                     "workbench.debug.viewlet.action.addFunctionBreakpoint",
                     "workbench.action.debug.addWatch",
                     "workbench.action.debug.removeWatch",
                     "workbench.debug.action.copyValue",
-                    
+
                     # Git Operations
                     "git.commit",
                     "git.refresh",
@@ -469,16 +469,16 @@ function prompt_and_setup_vscode_extension()
                     "git.pull",
                     "git.push",
                     "git.fetch",
-                    
+
                     # Search & Replace
                     "workbench.action.findInFiles",
                     "workbench.action.replaceInFiles",
-                    
+
                     # Window Management
                     "workbench.action.splitEditor",
                     "workbench.action.togglePanel",
                     "workbench.action.toggleSidebarVisibility",
-                    
+
                     # Extension Management
                     "workbench.extensions.installExtension",
                 ],
@@ -589,7 +589,8 @@ function check_gemini_status()
 
     if haskey(mcp_servers, "julia-repl")
         server_config = mcp_servers["julia-repl"]
-        if haskey(server_config, "url") && contains(server_config["url"], "http://localhost")
+        if haskey(server_config, "url") &&
+           contains(server_config["url"], "http://localhost")
             return :configured_http
         elseif haskey(server_config, "command")
             return :configured_script

@@ -19,12 +19,14 @@ Usage:
         "workbench.action.files.save",
     ])
 """
-function install_vscode_remote_control(workspace_dir::AbstractString;
-        publisher::AbstractString="MCPRepl",
-        name::AbstractString="vscode-remote-control",
-        version::AbstractString="0.0.1",
-        allowed_commands::Vector{String} = [],
-        require_confirmation::Bool = false)
+function install_vscode_remote_control(
+    workspace_dir::AbstractString;
+    publisher::AbstractString = "MCPRepl",
+    name::AbstractString = "vscode-remote-control",
+    version::AbstractString = "0.0.1",
+    allowed_commands::Vector{String} = [],
+    require_confirmation::Bool = false,
+)
 
     # -------------------------------- paths --------------------------------
     ext_folder_name = "$(publisher).$(name)-$(version)"
@@ -42,7 +44,7 @@ function install_vscode_remote_control(workspace_dir::AbstractString;
             if startswith(entry, "$(publisher).$(name)-")
                 old_path = joinpath(exts_dir, entry)
                 try
-                    rm(old_path; recursive=true, force=true)
+                    rm(old_path; recursive = true, force = true)
                     println("Removed old extension: $entry")
                 catch e
                     @warn "Could not remove old extension at $old_path" exception=e
@@ -249,7 +251,7 @@ function install_vscode_remote_control(workspace_dir::AbstractString;
     union!(allowed_set, allowed_commands)
     existing[key_allowed] = sort(collect(allowed_set))
     existing[key_confirm] = require_confirmation
-    
+
     # Write back with JSON3
     io_buf = IOBuffer()
     JSON3.pretty(io_buf, existing)

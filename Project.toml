@@ -1,7 +1,7 @@
 name = "MCPRepl"
 uuid = "b62cb57a-788d-40b5-9d64-84a1dfc37ce3"
+version = "0.2.0"
 authors = ["Hans Würfel <git@wuerfel.io>"]
-version = "0.1.0"
 
 [deps]
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
@@ -11,18 +11,22 @@ Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 
 [compat]
+Aqua = "0.8"
 Dates = "1.10"
 HTTP = "1.10"
 InteractiveUtils = "1.10"
 JSON3 = "1.14.3"
+JuliaFormatter = "1, 2"
 Profile = "1.10"
 REPL = "1.10"
 Test = "1.10"
 julia = "1.10"
 
 [extras]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "Dates"]
+test = ["Test", "Dates", "Aqua", "JuliaFormatter"]
