@@ -102,19 +102,14 @@ const VSCODE_ALLOWED_COMMANDS = [
     "workbench.files.action.focusFilesExplorer",
     "workbench.view.debug",
     "workbench.view.testing.focus",
-    "vscode.executeDocumentSymbolProvider",
+    # VS Code LSP command providers (used by LSP tools)
+    "vscode.executeCodeActionProvider",
     "vscode.executeDefinitionProvider",
-    "vscode.executeTypeDefinitionProvider",
-    "vscode.executeImplementationProvider",
-    "vscode.executeReferenceProvider",
-    "vscode.executeHoverProvider",
-    "vscode.executeDocumentHighlights",
-    "vscode.executeCompletionItemProvider",
-    "vscode.executeSignatureHelpProvider",
     "vscode.executeDocumentRenameProvider",
+    "vscode.executeDocumentSymbolProvider",
     "vscode.executeFormatDocumentProvider",
     "vscode.executeFormatRangeProvider",
-    "vscode.executeCodeActionProvider",
+    "vscode.executeReferenceProvider",
     "vscode.executeWorkspaceSymbolProvider",
 ]
 

@@ -174,27 +174,26 @@ This software is provided "as is" without warranties. Use at your own risk.
 
 ## LSP Integration
 
-MCPRepl.jl includes comprehensive Language Server Protocol (LSP) integration, giving AI agents access to the same code intelligence features available in VS Code. This enables intelligent code navigation, refactoring, and analysis.
+MCPRepl.jl includes Language Server Protocol (LSP) integration, giving AI agents access to code navigation and refactoring capabilities. These tools enable intelligent code analysis without requiring interactive GUI features.
 
-### Available LSP Tools (most useful first)
+### Available LSP Tools
 
-These are the highest-value LSP operations — listed first for quick discovery:
-
+**Navigation & Analysis:**
 - **`lsp_goto_definition`** — Jump to where a function, type, or variable is defined
 - **`lsp_find_references`** — Find all usages of a symbol throughout the codebase
-- **`lsp_hover_info`** — Get documentation, type information, and signatures for a symbol
-- **`lsp_completions`** — Get intelligent code completion suggestions at a position
-- **`lsp_code_actions`** — Get available quick fixes and refactorings for errors/warnings
-- **`lsp_format_document`** — Format an entire Julia file
-- **`lsp_rename`** — Safely rename a symbol across the entire workspace
-
-Other available LSP tools:
-
 - **`lsp_document_symbols`** — Get outline/structure of a file (all functions, types, etc.)
 - **`lsp_workspace_symbols`** — Search for symbols across the entire workspace
-- **`lsp_document_highlights`** — Highlight all occurrences of a symbol in a file
-- **`lsp_signature_help`** — Get function signatures and parameter information
+
+**Refactoring & Formatting:**
+- **`lsp_rename`** — Safely rename a symbol across the entire workspace
+- **`lsp_code_actions`** — Get available quick fixes and refactorings for errors/warnings
+- **`lsp_format_document`** — Format an entire Julia file
 - **`lsp_format_range`** — Format only specific lines of code
+
+> **Note for AI Agents:** For documentation and type information, use Julia's built-in introspection in the REPL:
+> - `@doc function_name` — Get documentation
+> - `methods(function_name)` — See all method signatures
+> - `?function_name` — Interactive help
 
 ### Example Usage
 
@@ -227,30 +226,31 @@ lsp_code_actions(
     start_line = 42,
     start_column = 10
 )
+```
 
-# Get code completions at a position
-lsp_completions(
-    file_path = "/path/to/file.jl",
-    line = 42,
-    column = 10
-)
-
-# Format an entire file
-lsp_format_document(file_path = "/path/to/file.jl")
 ```
 
 ### AI Agent Benefits
 
 The LSP integration enables AI agents to:
 
-- **Navigate code intelligently** - Jump to definitions and find usages instead of searching text
-- **Understand context** - Get hover info and signatures to understand APIs
-- **Refactor safely** - Use rename to change symbols across the entire codebase
-- **Fix errors automatically** - Get code actions for quick fixes
-- **Discover APIs** - Use completions to explore available functions and types
-- **Format consistently** - Apply standard formatting to code
+- **Navigate code intelligently** — Jump to definitions and find usages instead of searching text
+- **Refactor safely** — Use rename to change symbols across the entire codebase
+- **Fix errors automatically** — Get code actions for quick fixes and suggested improvements
+- **Format consistently** — Apply standard formatting to code
+- **Discover structure** — Get document outlines and search for symbols workspace-wide
 
-All LSP operations use the Julia Language Server that's already running in VS Code, ensuring consistent and accurate results.
+All LSP operations use the Julia Language Server already running in VS Code, ensuring accurate results.
+
+> **Tip:** For documentation and type introspection, agents should use the REPL directly (`@doc`, `methods()`, `fieldnames()`, etc.) rather than LSP tools, as this provides richer information and context.
+
+
+## Similar Packages
+- [ModelContexProtocol.jl](https://github.com/JuliaSMLM/ModelContextProtocol.jl) offers a way of defining your own servers. Since MCPRepl is using a HTTP server I decieded to not go with this package.
+
+- [REPLicant.jl](https://github.com/MichaelHatherly/REPLicant.jl) is very similar, but the focus of MCPRepl.jl is to integrate with the user repl so you can see what your agent is doing.
+
+```
 
 
 ## Similar Packages

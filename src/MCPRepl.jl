@@ -2331,9 +2331,18 @@ function call_tool(tool_name::String, args::Dict)
 
     tool = server.tools[tool_name]
 
-    # Call with both parameters (args, stream_channel)
-    # Most tools expect this signature for streaming support
-    return tool.handler(args, nothing)
+    # Try calling with both parameters first (for streaming support)
+    # If that fails, try with just args (for simpler handlers)
+    try
+        return tool.handler(args, nothing)
+    catch e
+        if e isa MethodError
+            # Handler doesn't support streaming, call with just args
+            return tool.handler(args)
+        else
+            rethrow(e)
+        end
+    end
 end
 
 """
