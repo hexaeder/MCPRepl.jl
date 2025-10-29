@@ -21,11 +21,14 @@ using JSON
                 @test endswith(mcp_path, ".vscode/mcp.json")
                 @test !isfile(mcp_path)
 
-                # Test 3: Add HTTP transport
-                @test MCPRepl.add_vscode_mcp_server("http", 3000) == true
+                # Test 3: Create security config first (required for add_vscode_mcp_server)
+                MCPRepl.quick_setup(:lax, 3000, temp_dir)
+
+                # Test 4: Add HTTP transport
+                @test MCPRepl.add_vscode_mcp_server("http") == true
                 @test isfile(mcp_path)
 
-                # Test 4: Verify config was created correctly
+                # Test 5: Verify config was created correctly
                 config = MCPRepl.read_vscode_mcp_config()
                 @test config !== nothing
                 @test haskey(config, "servers")
@@ -33,26 +36,19 @@ using JSON
                 @test config["servers"]["julia-repl"]["type"] == "http"
                 @test config["servers"]["julia-repl"]["url"] == "http://localhost:3000"
 
-                # Test 5: Check status after configuration
+                # Test 6: Check status after configuration
                 @test MCPRepl.check_vscode_status() == :configured_http
 
-                # Test 6: Update to different port
-                @test MCPRepl.add_vscode_mcp_server("http", 4000) == true
+                # Test 7: Update security config to different port
+                MCPRepl.quick_setup(:lax, 4000, temp_dir)
+                @test MCPRepl.add_vscode_mcp_server("http") == true
                 config = MCPRepl.read_vscode_mcp_config()
                 @test config["servers"]["julia-repl"]["url"] == "http://localhost:4000"
 
-                # Test 7: Change to stdio transport
-                @test MCPRepl.add_vscode_mcp_server("stdio", 3000) == true
-                config = MCPRepl.read_vscode_mcp_config()
-                @test config["servers"]["julia-repl"]["type"] == "stdio"
-                @test config["servers"]["julia-repl"]["command"] ==
-                      joinpath(pkgdir(MCPRepl), "mcp-julia-adapter")
-                @test config["servers"]["julia-repl"]["args"] == ["3000"]
+                # Note: stdio transport removed - add_vscode_mcp_server now only creates HTTP configs
+                # Skipping stdio tests (lines previously at Test 8)
 
-                # Test 8: Check status after stdio config
-                @test MCPRepl.check_vscode_status() == :configured_stdio
-
-                # Test 9: Remove configuration
+                # Test 8: Remove configuration
                 @test MCPRepl.remove_vscode_mcp_server() == true
                 config = MCPRepl.read_vscode_mcp_config()
                 @test !haskey(config["servers"], "julia-repl")
@@ -79,8 +75,9 @@ using JSON
                 # Test 1: Read non-existent config
                 @test MCPRepl.read_vscode_mcp_config() === nothing
 
-                # Test 2: Write then read config
-                MCPRepl.add_vscode_mcp_server("http", 5000)
+                # Test 2: Create security config, then write and read vscode config
+                MCPRepl.quick_setup(:lax, 5000, test_subdir)
+                MCPRepl.add_vscode_mcp_server("http")
                 config = MCPRepl.read_vscode_mcp_config()
                 @test config !== nothing
                 @test haskey(config, "servers")
@@ -108,17 +105,14 @@ using JSON
                 test_ports = [3000, 3003, 8080, 9000]
 
                 for port in test_ports
-                    MCPRepl.add_vscode_mcp_server("http", port)
+                    MCPRepl.quick_setup(:lax, port, temp_dir)
+                    MCPRepl.add_vscode_mcp_server("http")
                     config = MCPRepl.read_vscode_mcp_config()
                     @test config["servers"]["julia-repl"]["url"] == "http://localhost:$port"
                 end
 
-                # Test stdio with different ports
-                for port in test_ports
-                    MCPRepl.add_vscode_mcp_server("stdio", port)
-                    config = MCPRepl.read_vscode_mcp_config()
-                    @test config["servers"]["julia-repl"]["args"] == [string(port)]
-                end
+                # Note: stdio support removed since add_vscode_mcp_server now only creates HTTP configs
+                # and reads port from security.json
 
             finally
                 cd(original_dir)
@@ -193,24 +187,25 @@ using JSON
                 # Test 1: Check non-existent startup script
                 @test MCPRepl.has_startup_script() == false
 
-                # Test 2: Install startup script with default port
-                @test MCPRepl.install_startup_script(3000) == true
+                # Test 2: Create security config first (install_startup_script reads from it)
+                MCPRepl.quick_setup(:lax, 3000, temp_dir)
+                
+                # Test 3: Install startup script
+                @test MCPRepl.install_startup_script() == true
                 @test isfile(startup_path)
 
-                # Test 3: Verify script content
+                # Test 4: Verify script content
                 content = read(startup_path, String)
                 @test contains(content, "using MCPRepl")
                 @test contains(content, "MCPRepl.start!")
                 @test contains(content, "JULIA_MCP_PORT")
-                @test contains(content, "3000")  # Default port
+                # Note: Port is read dynamically from security.json, not hardcoded in file
 
                 # Test 4: Check has startup script
                 @test MCPRepl.has_startup_script() == true
 
-                # Test 5: Install with different port
-                @test MCPRepl.install_startup_script(8080) == true
-                content = read(startup_path, String)
-                @test contains(content, "8080")
+                # Note: install_startup_script() no longer accepts port parameter
+                # Port is read from security.json at runtime
 
             finally
                 cd(original_dir)

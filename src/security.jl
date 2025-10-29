@@ -226,7 +226,7 @@ function show_security_status(config::SecurityConfig)
     println()
     println("API Keys: ", length(config.api_keys))
     for (i, key) in enumerate(config.api_keys)
-        masked_key = key[1:min(15, length(key))] * "..." * key[max(1, end - 3):end]
+        masked_key = key[1:min(15, length(key))] * "..." * key[max(1, end-3):end]
         println("  $i. $masked_key")
     end
     println()
@@ -286,8 +286,13 @@ function remove_api_key!(key::String, workspace_dir::String = pwd())
     end
 
     new_keys = filter(k -> k != key, config.api_keys)
-    new_config =
-        SecurityConfig(config.mode, new_keys, config.allowed_ips, config.port, config.created_at)
+    new_config = SecurityConfig(
+        config.mode,
+        new_keys,
+        config.allowed_ips,
+        config.port,
+        config.created_at,
+    )
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Removed API key")
@@ -314,8 +319,13 @@ function add_allowed_ip!(ip::String, workspace_dir::String = pwd())
     end
 
     new_ips = vcat(config.allowed_ips, [ip])
-    new_config =
-        SecurityConfig(config.mode, config.api_keys, new_ips, config.port, config.created_at)
+    new_config = SecurityConfig(
+        config.mode,
+        config.api_keys,
+        new_ips,
+        config.port,
+        config.created_at,
+    )
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Added IP address to allowlist: $ip")
@@ -342,8 +352,13 @@ function remove_allowed_ip!(ip::String, workspace_dir::String = pwd())
     end
 
     new_ips = filter(i -> i != ip, config.allowed_ips)
-    new_config =
-        SecurityConfig(config.mode, config.api_keys, new_ips, config.port, config.created_at)
+    new_config = SecurityConfig(
+        config.mode,
+        config.api_keys,
+        new_ips,
+        config.port,
+        config.created_at,
+    )
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Removed IP address from allowlist: $ip")
@@ -368,8 +383,13 @@ function change_security_mode!(mode::Symbol, workspace_dir::String = pwd())
         error("No security configuration found. Run MCPRepl.setup() first.")
     end
 
-    new_config =
-        SecurityConfig(mode, config.api_keys, config.allowed_ips, config.port, config.created_at)
+    new_config = SecurityConfig(
+        mode,
+        config.api_keys,
+        config.allowed_ips,
+        config.port,
+        config.created_at,
+    )
 
     if save_security_config(new_config, workspace_dir)
         println("✅ Changed security mode to: $mode")

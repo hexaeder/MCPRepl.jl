@@ -901,8 +901,14 @@ function create_lsp_tools()
                 lsp_params = [
                     uri,
                     Dict(
-                        "start" => Dict("line" => start_line - 1, "character" => start_column - 1),
-                        "end" => Dict("line" => end_line - 1, "character" => end_column - 1),
+                        "start" => Dict(
+                            "line" => start_line - 1,
+                            "character" => start_column - 1,
+                        ),
+                        "end" => Dict(
+                            "line" => end_line - 1,
+                            "character" => end_column - 1,
+                        ),
                     ),
                 ]
 
@@ -987,7 +993,8 @@ function create_lsp_tools()
                     "position" => Dict("line" => line - 1, "character" => column - 1),
                 )
 
-                response = send_lsp_request("textDocument/documentHighlight", lsp_params)
+                response =
+                    send_lsp_request("textDocument/documentHighlight", lsp_params)
 
                 if haskey(response, "error")
                     return "Error: $(response["error"])"
@@ -1263,7 +1270,8 @@ function create_lsp_tools()
                     "description" => "End column number (1-indexed)",
                 ),
             ),
-            "required" => ["file_path", "start_line", "start_column", "end_line", "end_column"],
+            "required" =>
+                ["file_path", "start_line", "start_column", "end_line", "end_column"],
         ),
         function (args)
             try
@@ -1283,8 +1291,12 @@ function create_lsp_tools()
 
                 uri = file_uri(file_path)
                 range = Dict(
-                    "start" => Dict("line" => start_line - 1, "character" => start_column - 1),
-                    "end" => Dict("line" => end_line - 1, "character" => end_column - 1),
+                    "start" => Dict(
+                        "line" => start_line - 1,
+                        "character" => start_column - 1,
+                    ),
+                    "end" =>
+                        Dict("line" => end_line - 1, "character" => end_column - 1),
                 )
 
                 result = execute_vscode_command_with_result(
@@ -1402,7 +1414,7 @@ function format_highlights(highlights)
         range = get(highlight, "range", nothing)
         kind = get(highlight, "kind", 1)  # 1=text, 2=read, 3=write
         kind_str = kind == 2 ? "read" : kind == 3 ? "write" : "text"
-        
+
         if range !== nothing
             start = get(range, "start", Dict())
             line = get(start, "line", 0) + 1
@@ -1438,7 +1450,7 @@ function format_completions(completions)
         label = get(item, "label", "")
         kind = get(item, "kind", 0)
         detail = get(item, "detail", "")
-        
+
         kind_str = completion_kind_to_string(kind)
         result *= "  $i. [$kind_str] $label"
         if !isempty(detail)
@@ -1461,12 +1473,30 @@ Convert LSP CompletionItemKind to string.
 """
 function completion_kind_to_string(kind::Int)
     kinds = Dict(
-        1 => "Text", 2 => "Method", 3 => "Function", 4 => "Constructor",
-        5 => "Field", 6 => "Variable", 7 => "Class", 8 => "Interface",
-        9 => "Module", 10 => "Property", 11 => "Unit", 12 => "Value",
-        13 => "Enum", 14 => "Keyword", 15 => "Snippet", 16 => "Color",
-        17 => "File", 18 => "Reference", 19 => "Folder", 20 => "EnumMember",
-        21 => "Constant", 22 => "Struct", 23 => "Event", 24 => "Operator",
+        1 => "Text",
+        2 => "Method",
+        3 => "Function",
+        4 => "Constructor",
+        5 => "Field",
+        6 => "Variable",
+        7 => "Class",
+        8 => "Interface",
+        9 => "Module",
+        10 => "Property",
+        11 => "Unit",
+        12 => "Value",
+        13 => "Enum",
+        14 => "Keyword",
+        15 => "Snippet",
+        16 => "Color",
+        17 => "File",
+        18 => "Reference",
+        19 => "Folder",
+        20 => "EnumMember",
+        21 => "Constant",
+        22 => "Struct",
+        23 => "Event",
+        24 => "Operator",
         25 => "TypeParameter",
     )
     return get(kinds, kind, "Unknown")
@@ -1494,10 +1524,10 @@ function format_signature_help(sig_help)
     for (i, sig) in enumerate(signatures)
         label = get(sig, "label", "")
         doc = get(sig, "documentation", nothing)
-        
+
         prefix = i == active_sig + 1 ? "▶ " : "  "
         result *= "$prefix$i. $label\n"
-        
+
         if doc !== nothing
             doc_str = doc isa String ? doc : get(doc, "value", "")
             if !isempty(doc_str)
@@ -1531,15 +1561,16 @@ function format_text_edits(edits, operation::String)
     for (i, edit) in enumerate(edits)
         range = get(edit, "range", nothing)
         new_text = get(edit, "newText", "")
-        
+
         if range !== nothing
             start = get(range, "start", Dict())
             end_pos = get(range, "end", Dict())
             start_line = get(start, "line", 0) + 1
             end_line = get(end_pos, "line", 0) + 1
-            
+
             lines = split(new_text, '\n')
-            preview = length(lines) > 1 ? "$(lines[1])... ($(length(lines)) lines)" : new_text
+            preview =
+                length(lines) > 1 ? "$(lines[1])... ($(length(lines)) lines)" : new_text
             result *= "  $i. Lines $start_line-$end_line: $preview\n"
         end
     end

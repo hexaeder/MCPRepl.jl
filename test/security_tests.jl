@@ -97,8 +97,8 @@ using JSON
                 rm(config_dir; recursive=true)
             end
             
-            # Quick setup with lax mode
-            config = MCPRepl.quick_setup(:lax, test_dir)
+            # Quick setup with lax mode (default port 3000)
+            config = MCPRepl.quick_setup(:lax, 3000, test_dir)
             @test config.mode == :lax
             @test length(config.api_keys) == 0  # No keys in lax mode
             @test "127.0.0.1" in config.allowed_ips
@@ -116,8 +116,8 @@ using JSON
                 rm(config_dir; recursive=true)
             end
             
-            # Create initial config
-            MCPRepl.quick_setup(:strict, test_dir)
+            # Create initial config (default port 3000)
+            MCPRepl.quick_setup(:strict, 3000, test_dir)
             
             # Generate new key
             key = MCPRepl.add_api_key!(test_dir)
@@ -169,68 +169,110 @@ using JSON
                 security_config = security_config,
             )
             
-            sleep(0.2)  # Give server time to start
+            # Give server plenty of time to start and stabilize
+            sleep(3.0)
             
-            try
-                # Test 1: No API key - should fail
-                request_body = JSON.json(
-                    Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => 1,
-                        "method" => "tools/call",
-                        "params" => Dict(
-                            "name" => "test_echo",
-                            "arguments" => Dict("message" => "hello"),
-                        ),
-                    ),
-                )
-                
-                response = HTTP.post(
-                    "http://localhost:$test_port/",
-                    ["Content-Type" => "application/json"],
-                    request_body;
-                    status_exception = false,
-                )
-                
-                @test response.status == 401  # Unauthorized
-                body = JSON.parse(String(response.body))
-                @test contains(body["error"], "Unauthorized")
-                
-                # Test 2: Invalid API key - should fail
-                response = HTTP.post(
-                    "http://localhost:$test_port/",
-                    [
-                        "Content-Type" => "application/json",
-                        "Authorization" => "Bearer invalid_key",
-                    ],
-                    request_body;
-                    status_exception = false,
-                )
-                
-                @test response.status == 403  # Forbidden
-                body = JSON.parse(String(response.body))
-                @test contains(body["error"], "Forbidden")
-                
-                # Test 3: Valid API key - should succeed
-                response = HTTP.post(
-                    "http://localhost:$test_port/",
-                    [
-                        "Content-Type" => "application/json",
-                        "Authorization" => "Bearer $api_key",
-                    ],
-                    request_body;
-                    status_exception = false,
-                )
-                
-                @test response.status == 200
-                body = JSON.parse(String(response.body))
-                @test haskey(body, "result")
-                @test body["result"]["content"][1]["text"] == "hello"
-                
-            finally
-                MCPRepl.stop_mcp_server(server)
-                sleep(0.1)
+            # Wait for server to be ready with robust retry logic
+            # Use valid auth from the start to avoid connection resets
+            server_ready = false
+            last_error = nothing
+            for attempt in 1:40
+                try
+                    # Make a simple POST request with valid auth to test connectivity
+                    test_body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 0, "method" => "tools/list"))
+                    response = HTTP.post(
+                        "http://localhost:$test_port/",
+                        [
+                            "Content-Type" => "application/json",
+                            "Authorization" => "Bearer $api_key"
+                        ],
+                        test_body;
+                        status_exception = false,
+                        readtimeout = 5,
+                        retry = false,
+                        connect_timeout = 5
+                    )
+                    # Any response (even error) means server is ready
+                    if response.status >= 100
+                        server_ready = true
+                        break
+                    end
+                catch e
+                    last_error = e
+                    sleep(0.5)
+                end
             end
+            
+            if !server_ready
+                @error "Server did not become ready after 20 seconds" last_error
+            end
+            @test server_ready
+            
+            # Now run the actual authentication tests
+            request_body = JSON.json(
+                Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => 1,
+                    "method" => "tools/call",
+                    "params" => Dict(
+                        "name" => "test_echo",
+                        "arguments" => Dict("message" => "hello"),
+                    ),
+                ),
+            )
+            
+            # Test 1: No API key - should fail with 401
+            response = HTTP.post(
+                "http://localhost:$test_port/",
+                ["Content-Type" => "application/json"],
+                request_body;
+                status_exception = false,
+                readtimeout = 10,
+                retry = false,
+            )
+            
+            @test response.status == 401  # Unauthorized
+            body = JSON.parse(String(response.body))
+            @test contains(body["error"], "Unauthorized")
+            
+            # Test 2: Invalid API key - should fail with 403
+            response = HTTP.post(
+                "http://localhost:$test_port/",
+                [
+                    "Content-Type" => "application/json",
+                    "Authorization" => "Bearer invalid_key",
+                ],
+                request_body;
+                status_exception = false,
+                readtimeout = 10,
+                retry = false,
+            )
+            
+            @test response.status == 403  # Forbidden
+            body = JSON.parse(String(response.body))
+            @test contains(body["error"], "Forbidden")
+            
+            # Test 3: Valid API key - should succeed with 200
+            response = HTTP.post(
+                "http://localhost:$test_port/",
+                [
+                    "Content-Type" => "application/json",
+                    "Authorization" => "Bearer $api_key",
+                ],
+                request_body;
+                status_exception = false,
+                readtimeout = 10,
+                retry = false,
+            )
+            
+            @test response.status == 200
+            body = JSON.parse(String(response.body))
+            @test haskey(body, "result")
+            @test body["result"]["content"][1]["text"] == "hello"
+            
+            # Clean up
+            MCPRepl.stop_mcp_server(server)
+            sleep(0.2)
         end
         
     finally

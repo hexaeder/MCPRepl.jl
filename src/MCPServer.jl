@@ -2,7 +2,8 @@ using HTTP
 using JSON
 
 # Import types and functions from parent module
-import ..MCPRepl: SecurityConfig, extract_api_key, validate_api_key, get_client_ip, validate_ip
+import ..MCPRepl:
+    SecurityConfig, extract_api_key, validate_api_key, get_client_ip, validate_ip
 
 # Global storage for active streaming responses (request_id => Stream)
 const ACTIVE_STREAMS = Dict{String,HTTP.Stream}()
@@ -43,7 +44,9 @@ function create_handler(
                     401,
                     ["Content-Type" => "application/json"],
                     JSON.json(
-                        Dict("error" => "Unauthorized: Missing API key in Authorization header"),
+                        Dict(
+                            "error" => "Unauthorized: Missing API key in Authorization header",
+                        ),
                     ),
                 )
             end
@@ -465,6 +468,10 @@ function start_mcp_server(
     function hybrid_handler(http::HTTP.Stream)
         req = http.message
 
+        # CRITICAL: Read the request body FIRST before any response
+        # HTTP.jl requires reading the full request before writing responses
+        body = String(read(http))
+
         # Security check - apply to ALL endpoints including vscode-response
         if security_config !== nothing
             # Extract and validate API key
@@ -476,7 +483,9 @@ function start_mcp_server(
                 write(
                     http,
                     JSON.json(
-                        Dict("error" => "Unauthorized: Missing API key in Authorization header"),
+                        Dict(
+                            "error" => "Unauthorized: Missing API key in Authorization header",
+                        ),
                     ),
                 )
                 return nothing
@@ -505,9 +514,6 @@ function start_mcp_server(
                 return nothing
             end
         end
-
-        # Read the request body
-        body = String(read(http))
 
         try
             # Handle VS Code response endpoint FIRST (before any JSON parsing)

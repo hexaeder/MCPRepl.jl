@@ -21,6 +21,102 @@ using Dates
 import ..MCPRepl
 
 export generate
+# Export file generation functions for use by setup.jl
+export create_security_config, create_startup_script, create_vscode_config
+export create_vscode_settings, create_claude_config_template
+export create_gemini_config_template, create_gitignore
+# Export the VS Code commands constant for testing
+export VSCODE_ALLOWED_COMMANDS
+
+# VS Code Remote Control allowed commands list
+# This list is used in generated .vscode/settings.json files
+const VSCODE_ALLOWED_COMMANDS = [
+    "editor.action.goToLocations",
+    "editor.debug.action.conditionalBreakpoint",
+    "editor.debug.action.toggleBreakpoint",
+    "editor.debug.action.toggleInlineBreakpoint",
+    "git.branchFrom",
+    "git.commit",
+    "git.fetch",
+    "git.pull",
+    "git.push",
+    "git.refresh",
+    "git.sync",
+    "language-julia.restartREPL",
+    "language-julia.startREPL",
+    "testing.cancelRun",
+    "testing.debugAll",
+    "testing.debugAtCursor",
+    "testing.debugCurrentFile",
+    "testing.openOutputPeek",
+    "testing.reRunFailedTests",
+    "testing.reRunLastRun",
+    "testing.runAll",
+    "testing.runAtCursor",
+    "testing.runCurrentFile",
+    "testing.showMostRecentOutput",
+    "testing.toggleTestingView",
+    "vscode.open",
+    "vscode.openWith",
+    "workbench.action.closeAllEditors",
+    "workbench.action.debug.addWatch",
+    "workbench.action.debug.continue",
+    "workbench.action.debug.pause",
+    "workbench.action.debug.removeWatch",
+    "workbench.action.debug.restart",
+    "workbench.action.debug.run",
+    "workbench.action.debug.start",
+    "workbench.action.debug.stepBack",
+    "workbench.action.debug.stepInto",
+    "workbench.action.debug.stepOut",
+    "workbench.action.debug.stepOver",
+    "workbench.action.debug.stop",
+    "workbench.action.files.openFile",
+    "workbench.action.files.saveAll",
+    "workbench.action.findInFiles",
+    "workbench.action.focusActiveEditorGroup",
+    "workbench.action.gotoLine",
+    "workbench.action.navigateToLastEditLocation",
+    "workbench.action.quickOpen",
+    "workbench.action.reloadWindow",
+    "workbench.action.replaceInFiles",
+    "workbench.action.showAllSymbols",
+    "workbench.action.splitEditor",
+    "workbench.action.tasks.runTask",
+    "workbench.action.terminal.focus",
+    "workbench.action.terminal.kill",
+    "workbench.action.terminal.new",
+    "workbench.action.terminal.sendSequence",
+    "workbench.action.togglePanel",
+    "workbench.action.toggleSidebarVisibility",
+    "workbench.debug.action.copyValue",
+    "workbench.debug.action.focusBreakpointsView",
+    "workbench.debug.action.focusCallStackView",
+    "workbench.debug.action.focusVariablesView",
+    "workbench.debug.action.focusWatchView",
+    "workbench.debug.viewlet.action.addFunctionBreakpoint",
+    "workbench.debug.viewlet.action.disableAllBreakpoints",
+    "workbench.debug.viewlet.action.enableAllBreakpoints",
+    "workbench.debug.viewlet.action.removeAllBreakpoints",
+    "workbench.extensions.installExtension",
+    "workbench.files.action.focusFilesExplorer",
+    "workbench.view.debug",
+    "workbench.view.testing.focus",
+    "vscode.executeDocumentSymbolProvider",
+    "vscode.executeDefinitionProvider",
+    "vscode.executeTypeDefinitionProvider",
+    "vscode.executeImplementationProvider",
+    "vscode.executeReferenceProvider",
+    "vscode.executeHoverProvider",
+    "vscode.executeDocumentHighlights",
+    "vscode.executeCompletionItemProvider",
+    "vscode.executeSignatureHelpProvider",
+    "vscode.executeDocumentRenameProvider",
+    "vscode.executeFormatDocumentProvider",
+    "vscode.executeFormatRangeProvider",
+    "vscode.executeCodeActionProvider",
+    "vscode.executeWorkspaceSymbolProvider",
+]
 
 """
     generate(project_name::String; 
@@ -108,15 +204,27 @@ function generate(
     end
 
     # Generate all configuration files
-    _create_security_config(project_path, security_mode, port)
-    _create_startup_script(project_path, emoticon)
-    _create_vscode_config(project_path, security_mode, port)
-    _create_vscode_settings(project_path)
-    _create_claude_config_template(project_path, security_mode, port)
-    _create_gemini_config_template(project_path, security_mode, port)
+    create_security_config(project_path, security_mode, port)
+
+    # Get API key for VS Code config (if not lax mode)
+    api_key = nothing
+    if security_mode != :lax
+        security_config_path = joinpath(project_path, ".mcprepl", "security.json")
+        security_data = JSON.parsefile(security_config_path)
+        api_keys = get(security_data, "api_keys", String[])
+        if !isempty(api_keys)
+            api_key = first(api_keys)
+        end
+    end
+
+    create_startup_script(project_path, port, emoticon)
+    create_vscode_config(project_path, port, api_key)
+    create_vscode_settings(project_path)
+    create_claude_config_template(project_path, port, api_key)
+    create_gemini_config_template(project_path, port, api_key)
     _create_readme(project_path, project_name, security_mode, port)
     _create_agents_guide(project_path, project_name)
-    _create_gitignore(project_path)
+    create_gitignore(project_path)
     _enhance_test_file(project_path, project_name)  # Do this before Pkg operations
     _add_mcprepl_dependency(project_path)
 
@@ -138,7 +246,7 @@ end
 # Internal Helper Functions
 # ============================================================================
 
-function _create_security_config(project_path::String, mode::Symbol, port::Int)
+function create_security_config(project_path::String, mode::Symbol, port::Int)
     println("🔒 Creating security configuration...")
 
     config_dir = joinpath(project_path, ".mcprepl")
@@ -184,7 +292,7 @@ function _create_security_config(project_path::String, mode::Symbol, port::Int)
     end
 end
 
-function _create_startup_script(project_path::String, emoticon::String)
+function create_startup_script(project_path::String, port::Int, emoticon::String = "🐉")
     println("📝 Creating Julia startup script...")
 
     startup_content = """
@@ -237,26 +345,25 @@ end
 
     startup_path = joinpath(project_path, ".julia-startup.jl")
     write(startup_path, startup_content)
+    return true
 end
 
-function _create_vscode_config(project_path::String, mode::Symbol, port::Int)
+function create_vscode_config(
+    project_path::String,
+    port::Int,
+    api_key::Union{String,Nothing} = nothing,
+)
     println("⚙️  Creating VS Code MCP configuration...")
 
     vscode_dir = joinpath(project_path, ".vscode")
     mkpath(vscode_dir)
 
-    # Load security config to get API key if needed
-    security_config_path = joinpath(project_path, ".mcprepl", "security.json")
-    security_data = JSON.parsefile(security_config_path)
-    api_keys = get(security_data, "api_keys", String[])
-
     # Build server config
     server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
 
-    # Add Authorization header if not in lax mode
-    if mode != :lax && !isempty(api_keys)
-        server_config["headers"] =
-            Dict{String,Any}("Authorization" => "Bearer $(first(api_keys))")
+    # Add Authorization header if api_key is provided
+    if api_key !== nothing
+        server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer $api_key")
     end
 
     mcp_config = Dict("servers" => Dict("julia-repl" => server_config), "inputs" => [])
@@ -268,9 +375,11 @@ function _create_vscode_config(project_path::String, mode::Symbol, port::Int)
     if haskey(server_config, "headers") && !Sys.iswindows()
         chmod(mcp_path, 0o600)
     end
+
+    return true
 end
 
-function _create_vscode_settings(project_path::String)
+function create_vscode_settings(project_path::String)
     println("⚙️  Creating VS Code settings...")
 
     vscode_dir = joinpath(project_path, ".vscode")
@@ -279,54 +388,21 @@ function _create_vscode_settings(project_path::String)
     settings = Dict(
         "julia.environmentPath" => "\${workspaceFolder}",
         "julia.additionalArgs" => ["--load=\${workspaceFolder}/.julia-startup.jl"],
-        "vscode-remote-control.allowedCommands" => [
-            "language-julia.restartREPL",
-            "language-julia.startREPL",
-            "workbench.action.reloadWindow",
-            "workbench.action.files.saveAll",
-            "workbench.action.closeAllEditors",
-            "workbench.action.terminal.focus",
-            "workbench.action.focusActiveEditorGroup",
-            "workbench.files.action.focusFilesExplorer",
-            "workbench.action.quickOpen",
-            "workbench.action.terminal.sendSequence",
-            "workbench.action.tasks.runTask",
-            "workbench.action.debug.start",
-            "workbench.action.debug.stop",
-            "workbench.action.debug.continue",
-            "workbench.action.debug.stepOver",
-            "workbench.action.debug.stepInto",
-            "workbench.action.debug.stepOut",
-            "editor.debug.action.toggleBreakpoint",
-            "workbench.debug.action.focusVariablesView",
-            "workbench.debug.action.focusWatchView",
-            "workbench.action.debug.copyValue",
-            "git.commit",
-            "git.refresh",
-            "git.sync",
-            "search.action.openNewEditor",
-            "editor.action.replaceAll",
-            "workbench.action.splitEditor",
-            "workbench.action.togglePanel",
-            "workbench.action.toggleSidebarVisibility",
-            "vscode.open",
-            "workbench.action.gotoLine",
-        ],
+        "vscode-remote-control.allowedCommands" => VSCODE_ALLOWED_COMMANDS,
     )
 
     settings_path = joinpath(vscode_dir, "settings.json")
     write(settings_path, JSON.json(settings, 2))
 end
 
-function _create_claude_config_template(project_path::String, mode::Symbol, port::Int)
+function create_claude_config_template(
+    project_path::String,
+    port::Int,
+    api_key::Union{String,Nothing} = nothing,
+)
     println("🤖 Creating Claude Desktop config template...")
 
-    # Load security config to get API key
-    security_config_path = joinpath(project_path, ".mcprepl", "security.json")
-    security_data = JSON.parsefile(security_config_path)
-    api_keys = get(security_data, "api_keys", String[])
-
-    config_template = if mode == :lax
+    config_template = if api_key === nothing
         """
 {
   "servers": {
@@ -345,7 +421,7 @@ function _create_claude_config_template(project_path::String, mode::Symbol, port
       "type": "http",
       "url": "http://localhost:$port",
       "headers": {
-        "Authorization": "Bearer $(first(api_keys))"
+        "Authorization": "Bearer $api_key"
       }
     }
   }
@@ -357,17 +433,22 @@ function _create_claude_config_template(project_path::String, mode::Symbol, port
     write(template_path, config_template)
 
     println("   ℹ️  To use with Claude Desktop, run:")
-    if mode == :lax
+    if api_key === nothing
         println("      claude mcp add julia-repl http://localhost:$port --transport http")
     else
         println(
             "      claude mcp add julia-repl http://localhost:$port --transport http \\",
         )
-        println("        --header \"Authorization: Bearer $(first(api_keys))\"")
+        println("        --header \"Authorization: Bearer $api_key\"")
     end
+    return true
 end
 
-function _create_gemini_config_template(project_path::String, mode::Symbol, port::Int)
+function create_gemini_config_template(
+    project_path::String,
+    port::Int,
+    api_key::Union{String,Nothing} = nothing,
+)
     println("💎 Creating Gemini config template...")
 
     config_template = """
@@ -384,14 +465,10 @@ function _create_gemini_config_template(project_path::String, mode::Symbol, port
     write(template_path, config_template)
 
     println("   ℹ️  Copy this to ~/.gemini/settings.json to use with Gemini")
+    return true
 end
 
-function _create_readme(
-    project_path::String,
-    project_name::String,
-    mode::Symbol,
-    port::Int,
-)
+function _create_readme(project_path::String, project_name::String, mode::Symbol, port::Int)
     println("📖 Creating README.md...")
 
     # Load security config for API key
@@ -857,7 +934,7 @@ Happy coding! 🚀
     write(agents_path, agents_content)
 end
 
-function _create_gitignore(project_path::String)
+function create_gitignore(project_path::String)
     println("📝 Creating .gitignore...")
 
     gitignore_content = """
@@ -950,7 +1027,7 @@ end
         if !isdir(test_dir)
             mkpath(test_dir)
         end
-        
+
         test_path = joinpath(test_dir, "runtests.jl")
         write(test_path, test_content)
         println("   ✓ Created test/runtests.jl")

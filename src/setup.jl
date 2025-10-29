@@ -34,23 +34,24 @@ function write_vscode_mcp_config(config::Dict)
         # Pretty-print with 2-space indentation for readability
         content = JSON.json(config, 2)
         write(mcp_path, content)
-        
+
         # Check if config contains API keys in Authorization headers
         has_auth_header = false
         if haskey(config, "servers")
             for (name, server_config) in config["servers"]
-                if haskey(server_config, "headers") && haskey(server_config["headers"], "Authorization")
+                if haskey(server_config, "headers") &&
+                   haskey(server_config["headers"], "Authorization")
                     has_auth_header = true
                     break
                 end
             end
         end
-        
+
         # Set restrictive permissions if file contains sensitive data (Unix-like systems)
         if has_auth_header && !Sys.iswindows()
             chmod(mcp_path, 0o600)  # Read/write for owner only
         end
-        
+
         return true
     catch e
         @warn "Failed to write VS Code config" exception = e
@@ -85,47 +86,20 @@ function check_vscode_status()
 end
 
 function add_vscode_mcp_server(transport_type::String)
-    config = read_vscode_mcp_config()
-
-    if config === nothing
-        config = Dict("servers" => Dict(), "inputs" => [])
-    end
-
-    if !haskey(config, "servers")
-        config["servers"] = Dict()
-    end
-
     # Load security config to get port and check if API key is required
     security_config = load_security_config()
-    
+
     if security_config === nothing
         @warn "No security configuration found. Run MCPRepl.setup() first."
         return false
     end
-    
-    port = security_config.port
-    
-    if transport_type == "http"
-        server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
-        
-        # Add Authorization header if security is configured and not in lax mode
-        if security_config.mode != :lax
-            if !isempty(security_config.api_keys)
-                api_key = first(security_config.api_keys)
-                server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer $api_key")
-            end
-        end
-        
-        config["servers"]["julia-repl"] = server_config
-    elseif transport_type == "stdio"
-        adapter_path = joinpath(pkgdir(@__MODULE__), "mcp-julia-adapter")
-        config["servers"]["julia-repl"] =
-            Dict("type" => "stdio", "command" => adapter_path, "args" => [string(port)])
-    else
-        return false
-    end
 
-    return write_vscode_mcp_config(config)
+    # Use Generate module's shared function
+    return Generate.create_vscode_config(
+        pwd(),
+        security_config.port,
+        security_config.mode == :lax ? nothing : first(security_config.api_keys, nothing),
+    )
 end
 
 function remove_vscode_mcp_server()
@@ -158,11 +132,11 @@ end
 
 function read_claude_config()
     config_path = get_claude_config_path()
-    
+
     if !isfile(config_path)
         return nothing
     end
-    
+
     try
         content = read(config_path, String)
         return JSON.parse(content; dicttype = Dict)
@@ -173,17 +147,17 @@ end
 
 function write_claude_config(config::Dict)
     config_path = get_claude_config_path()
-    
+
     try
         # Pretty-print Claude project config with 2-space indentation
         content = JSON.json(config, 2)
         write(config_path, content)
-        
+
         # Set restrictive permissions (Unix-like systems)
         if !Sys.iswindows()
             chmod(config_path, 0o600)  # Read/write for owner only
         end
-        
+
         return true
     catch e
         @warn "Failed to write Claude config" exception = e
@@ -191,26 +165,26 @@ function write_claude_config(config::Dict)
     end
 end
 
-function add_claude_mcp_server(;
-    api_key::Union{String,Nothing} = nothing
-)
+function add_claude_mcp_server(; api_key::Union{String,Nothing} = nothing)
     # Load security config to get port and API key
     security_config = load_security_config()
-    
+
     if security_config === nothing
         @warn "No security configuration found. Run MCPRepl.setup() first."
         return false
     end
-    
+
     port = security_config.port
     url = "http://localhost:$port"
-    
+
     # Use claude mcp add command instead of manipulating JSON directly
     # Use --scope=project because the REPL and port config are local to the project
     try
         if api_key !== nothing
             # Add with Authorization header using --header flag
-            run(`claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl $url`)
+            run(
+                `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl $url`,
+            )
         else
             # Add without Authorization header (for lax mode)
             run(`claude mcp add --scope project --transport http julia-repl $url`)
@@ -299,61 +273,12 @@ end
 function install_startup_script(; emoticon::String = "🐉")
     startup_path = get_startup_script_path()
 
-    startup_content = """
-using Pkg
-Pkg.activate(".")
-import Base.Threads
-using MCPRepl
+    # Load security config to get port if available
+    security_config = load_security_config()
+    port = security_config !== nothing ? security_config.port : 3000
 
-# Load Revise for hot reloading (optional but recommended)
-try
-    using Revise
-    @info "✓ Revise loaded - code changes will be tracked and auto-reloaded"
-catch e
-    @info "ℹ Revise not loaded (optional - install with: Pkg.add(\\"Revise\\"))"
-end
-
-# Start MCP REPL server for VS Code Copilot integration
-try
-    if Threads.threadid() == 1
-        Threads.@spawn begin
-            try
-                sleep(1)
-                # Port is determined by:
-                # 1. JULIA_MCP_PORT environment variable (highest priority)
-                # 2. .mcprepl/security.json port field (default)
-                MCPRepl.start!(verbose=false)
-
-                # Wait a moment for server to fully initialize
-                sleep(0.5)
-
-                @info "✓ MCP REPL server started $emoticon"
-                # Refresh the prompt to ensure clean display after test completes
-                if isdefined(Base, :active_repl)
-                    try
-                        println()  # Add clean newline
-                        REPL.LineEdit.refresh_line(Base.active_repl.mistate)
-                    catch
-                        # Ignore if REPL isn't ready yet
-                    end
-                end
-            catch e
-                @warn "Could not start MCP REPL server" exception=e
-            end
-        end
-    end
-catch e
-    @warn "Could not start MCP REPL server" exception=e
-end
-"""
-
-    try
-        write(startup_path, startup_content)
-        return true
-    catch e
-        @warn "Failed to write startup script" exception = e
-        return false
-    end
+    # Use Generate module's shared function
+    return Generate.create_startup_script(dirname(startup_path), port, emoticon)
 end
 
 function configure_vscode_julia_args()
@@ -447,7 +372,7 @@ function prompt_and_setup_vscode_startup(; gentle::Bool = false)
 
         # Install startup script if needed
         if !has_script
-            if install_startup_script(emoticon=emoticon)
+            if install_startup_script(emoticon = emoticon)
                 println("   ✅ Created .julia-startup.jl")
             else
                 println("   ❌ Failed to create .julia-startup.jl")
@@ -647,7 +572,7 @@ function check_claude_status()
     try
         # Use success() to check if command exists and runs without error
         # Redirect both stdout and stderr to devnull
-        if !success(pipeline(`claude --version`, stdout=devnull, stderr=devnull))
+        if !success(pipeline(`claude --version`, stdout = devnull, stderr = devnull))
             return :claude_not_found
         end
     catch
@@ -719,7 +644,7 @@ function check_gemini_status()
     # Check if gemini command exists (cross-platform)
     try
         # Use success() to check if command exists and runs without error
-        if !success(pipeline(`gemini --version`, stdout=devnull, stderr=devnull))
+        if !success(pipeline(`gemini --version`, stdout = devnull, stderr = devnull))
             return :gemini_not_found
         end
     catch
@@ -749,14 +674,14 @@ end
 function add_gemini_mcp_server(transport_type::String)
     # Load security config to get port
     security_config = load_security_config()
-    
+
     if security_config === nothing
         @warn "No security configuration found. Run MCPRepl.setup() first."
         return false
     end
-    
+
     port = security_config.port
-    
+
     settings = read_gemini_settings()
 
     if !haskey(settings, "mcpServers")
@@ -831,20 +756,40 @@ to see it in action.
 function setup(; gentle::Bool = false)
     # FIRST: Check security configuration
     security_config = load_security_config()
-    
+
     if security_config === nothing
-        printstyled("\n╔═══════════════════════════════════════════════════════════╗\n", color = :cyan, bold = true)
-        printstyled("║                                                           ║\n", color = :cyan, bold = true)
-        printstyled("║         🔒 MCPRepl Security Setup Required 🔒             ║\n", color = :yellow, bold = true)
-        printstyled("║                                                           ║\n", color = :cyan, bold = true)
-        printstyled("╚═══════════════════════════════════════════════════════════╝\n", color = :cyan, bold = true)
+        printstyled(
+            "\n╔═══════════════════════════════════════════════════════════╗\n",
+            color = :cyan,
+            bold = true,
+        )
+        printstyled(
+            "║                                                           ║\n",
+            color = :cyan,
+            bold = true,
+        )
+        printstyled(
+            "║         🔒 MCPRepl Security Setup Required 🔒             ║\n",
+            color = :yellow,
+            bold = true,
+        )
+        printstyled(
+            "║                                                           ║\n",
+            color = :cyan,
+            bold = true,
+        )
+        printstyled(
+            "╚═══════════════════════════════════════════════════════════╝\n",
+            color = :cyan,
+            bold = true,
+        )
         println()
         println("MCPRepl now requires security configuration before use.")
         println("This includes API key authentication and IP allowlisting.")
         println()
         print("Run security setup wizard now? [Y/n]: ")
         response = strip(lowercase(readline()))
-        
+
         if isempty(response) || response == "y" || response == "yes"
             security_config = security_setup_wizard(pwd(); gentle = gentle)
             println()
@@ -852,20 +797,26 @@ function setup(; gentle::Bool = false)
             println()
         else
             println()
-            printstyled("⚠️  Setup incomplete. Run MCPRepl.setup_security() later.\n", color = :yellow)
+            printstyled(
+                "⚠️  Setup incomplete. Run MCPRepl.setup_security() later.\n",
+                color = :yellow,
+            )
             println()
             return
         end
     else
-        printstyled("\n✅ Security configured (mode: $(security_config.mode))\n", color = :green)
+        printstyled(
+            "\n✅ Security configured (mode: $(security_config.mode))\n",
+            color = :green,
+        )
         println()
     end
-    
+
     # Install/update startup script
     emoticon = gentle ? "🦋" : "🐉"
     if !has_startup_script()
         println("📝 Installing Julia startup script...")
-        if install_startup_script(emoticon=emoticon)
+        if install_startup_script(emoticon = emoticon)
             println("   ✅ Created .julia-startup.jl")
         else
             println("   ❌ Failed to create .julia-startup.jl")
@@ -873,7 +824,7 @@ function setup(; gentle::Bool = false)
     else
         println("📝 Startup script: ✅ .julia-startup.jl exists")
     end
-    
+
     # Configure VS Code settings for startup script
     if !check_vscode_startup_configured()
         println("📝 Configuring VS Code to load startup script...")
@@ -886,7 +837,7 @@ function setup(; gentle::Bool = false)
         println("📝 VS Code settings: ✅ Configured to load startup script")
     end
     println()
-    
+
     # Get port from security config (can be overridden by ENV var when server starts)
     port = security_config.port
 
@@ -999,7 +950,7 @@ function setup(; gentle::Bool = false)
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1018,7 +969,7 @@ function setup(; gentle::Bool = false)
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1034,7 +985,7 @@ function setup(; gentle::Bool = false)
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1052,7 +1003,7 @@ function setup(; gentle::Bool = false)
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1078,9 +1029,13 @@ function setup(; gentle::Bool = false)
                 # Add Authorization header if not in lax mode
                 if security_config.mode != :lax && !isempty(security_config.api_keys)
                     api_key = first(security_config.api_keys)
-                    run(`claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`)
+                    run(
+                        `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`,
+                    )
                 else
-                    run(`claude mcp add --scope project --transport http julia-repl http://localhost:$port`)
+                    run(
+                        `claude mcp add --scope project --transport http julia-repl http://localhost:$port`,
+                    )
                 end
                 println("   ✅ Successfully configured Claude HTTP transport")
             catch e
@@ -1094,9 +1049,13 @@ function setup(; gentle::Bool = false)
                 # Add Authorization header if not in lax mode
                 if security_config.mode != :lax && !isempty(security_config.api_keys)
                     api_key = first(security_config.api_keys)
-                    run(`claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`)
+                    run(
+                        `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`,
+                    )
                 else
-                    run(`claude mcp add --scope project --transport http julia-repl http://localhost:$port`)
+                    run(
+                        `claude mcp add --scope project --transport http julia-repl http://localhost:$port`,
+                    )
                 end
                 println("   ✅ Successfully configured Claude HTTP transport")
             catch e
@@ -1196,17 +1155,17 @@ function reset(; workspace_dir::String = pwd())
     println()
     print("Are you sure you want to reset? [y/N]: ")
     response = strip(lowercase(readline()))
-    
+
     if !(response == "y" || response == "yes")
         println()
         println("Reset cancelled.")
         return false
     end
-    
+
     println()
     success_count = 0
     total_count = 0
-    
+
     # Remove .mcprepl directory
     total_count += 1
     mcprepl_dir = joinpath(workspace_dir, ".mcprepl")
@@ -1222,7 +1181,7 @@ function reset(; workspace_dir::String = pwd())
         println("ℹ️  .mcprepl/ directory not found (already clean)")
         success_count += 1
     end
-    
+
     # Remove .julia-startup.jl
     total_count += 1
     startup_script = joinpath(workspace_dir, ".julia-startup.jl")
@@ -1238,26 +1197,29 @@ function reset(; workspace_dir::String = pwd())
         println("ℹ️  .julia-startup.jl not found (already clean)")
         success_count += 1
     end
-    
+
     # Remove VS Code julia.additionalArgs configuration
     total_count += 1
     vscode_settings_path = joinpath(workspace_dir, ".vscode", "settings.json")
     if isfile(vscode_settings_path)
         try
             settings = JSON.parsefile(vscode_settings_path; dicttype = Dict{String,Any})
-            
+
             if haskey(settings, "julia.additionalArgs")
                 args = settings["julia.additionalArgs"]
                 # Remove --load argument
-                filter!(arg -> !(contains(arg, "--load") && contains(arg, ".julia-startup.jl")), args)
-                
+                filter!(
+                    arg -> !(contains(arg, "--load") && contains(arg, ".julia-startup.jl")),
+                    args,
+                )
+
                 # If array is now empty, remove the key entirely
                 if isempty(args)
                     delete!(settings, "julia.additionalArgs")
                 else
                     settings["julia.additionalArgs"] = args
                 end
-                
+
                 # Write back
                 open(vscode_settings_path, "w") do io
                     JSON.print(io, settings, 2)
@@ -1275,14 +1237,14 @@ function reset(; workspace_dir::String = pwd())
         println("ℹ️  .vscode/settings.json not found (already clean)")
         success_count += 1
     end
-    
+
     # Remove MCP server entries from .vscode/mcp.json
     total_count += 1
     mcp_config_path = joinpath(workspace_dir, ".vscode", "mcp.json")
     if isfile(mcp_config_path)
         try
             mcp_config = JSON.parsefile(mcp_config_path; dicttype = Dict{String,Any})
-            
+
             if haskey(mcp_config, "servers")
                 servers = mcp_config["servers"]
                 # Remove julia-repl server entries
@@ -1291,7 +1253,7 @@ function reset(; workspace_dir::String = pwd())
                     delete!(servers, "julia-repl")
                     removed = true
                 end
-                
+
                 if removed
                     # Write back
                     open(mcp_config_path, "w") do io
@@ -1314,16 +1276,24 @@ function reset(; workspace_dir::String = pwd())
         println("ℹ️  .vscode/mcp.json not found (already clean)")
         success_count += 1
     end
-    
+
     println()
     if success_count == total_count
-        printstyled("✅ Reset complete! All MCPRepl files removed.\n", color = :green, bold = true)
+        printstyled(
+            "✅ Reset complete! All MCPRepl files removed.\n",
+            color = :green,
+            bold = true,
+        )
         println()
         println("Run MCPRepl.setup() to configure again.")
     else
-        printstyled("⚠️  Reset completed with some errors ($success_count/$total_count successful)\n", color = :yellow, bold = true)
+        printstyled(
+            "⚠️  Reset completed with some errors ($success_count/$total_count successful)\n",
+            color = :yellow,
+            bold = true,
+        )
     end
     println()
-    
+
     return success_count == total_count
 end

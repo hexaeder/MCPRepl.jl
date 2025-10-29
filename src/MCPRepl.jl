@@ -557,12 +557,16 @@ function repl_status_report()
     end
 end
 
-function start!(; port::Union{Int,Nothing} = nothing, verbose::Bool = true, security_mode::Union{Symbol,Nothing} = nothing)
+function start!(;
+    port::Union{Int,Nothing} = nothing,
+    verbose::Bool = true,
+    security_mode::Union{Symbol,Nothing} = nothing,
+)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     # Load or prompt for security configuration
     security_config = load_security_config()
-    
+
     if security_config === nothing
         printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color = :red, bold = true)
         println()
@@ -675,7 +679,8 @@ function start!(; port::Union{Int,Nothing} = nothing, verbose::Bool = true, secu
                                         (cat_name, cat_commands)
                                 end
                             catch e
-                                @debug "Could not load command documentation" exception = e
+                                @debug "Could not load command documentation" exception =
+                                    e
                             end
                         end
 
@@ -2318,14 +2323,14 @@ function call_tool(tool_name::String, args::Dict)
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
-    
+
     server = SERVER[]
     if !haskey(server.tools, tool_name)
         error("Tool '$tool_name' not found. Call list_tools() to see available tools.")
     end
-    
+
     tool = server.tools[tool_name]
-    
+
     # Call with both parameters (args, stream_channel)
     # Most tools expect this signature for streaming support
     return tool.handler(args, nothing)
@@ -2342,19 +2347,19 @@ function list_tools()
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
-    
+
     server = SERVER[]
     tools_info = Dict{String,String}()
-    
+
     for (name, tool) in server.tools
         tools_info[name] = tool.description
     end
-    
+
     # Print formatted output
     println("\n📚 Available MCP Tools")
     println("="^70)
     println()
-    
+
     for (name, desc) in sort(collect(tools_info))
         printstyled("  • ", name, "\n", color = :cyan, bold = true)
         # Print first line of description
@@ -2362,11 +2367,11 @@ function list_tools()
         println("    ", first_line)
         println()
     end
-    
+
     println("Use MCPRepl.call_tool(\"tool_name\", Dict(...)) to call a tool")
     println("Use @doc MCPRepl.call_tool for examples")
     println()
-    
+
     return tools_info
 end
 

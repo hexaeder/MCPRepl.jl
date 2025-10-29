@@ -87,8 +87,10 @@ Check if terminal supports Sixel graphics.
 function check_sixel_support()
     # Check if we're in a terminal that might support Sixel
     term = get(ENV, "TERM", "")
-    return occursin("xterm", term) || occursin("mlterm", term) || 
-           haskey(ENV, "WEZTERM_EXECUTABLE") || haskey(ENV, "KITTY_PID")
+    return occursin("xterm", term) ||
+           occursin("mlterm", term) ||
+           haskey(ENV, "WEZTERM_EXECUTABLE") ||
+           haskey(ENV, "KITTY_PID")
 end
 
 const DRAGON_ASCII = raw"""
@@ -199,7 +201,7 @@ end
 Center and render the epic wizard with a subtle shimmering aura.
 If gentle=true, adds a butterfly companion next to the wizard.
 """
-function wizard_entrance_animation(; gentle::Bool=false)
+function wizard_entrance_animation(; gentle::Bool = false)
     rows, cols = get_terminal_size()
     clear_screen()
     sleep(0.15)
@@ -229,7 +231,7 @@ function wizard_entrance_animation(; gentle::Bool=false)
         # Position butterfly to the right of wizard
         butterfly_col = start_col + art_width + 5
         butterfly_row = start_row + div(art_height, 3)
-        
+
         for (i, line) in enumerate(butterfly_lines)
             move_cursor(butterfly_row + i - 1, butterfly_col)
             # Use pastel colors for butterfly
@@ -244,10 +246,10 @@ function wizard_entrance_animation(; gentle::Bool=false)
     local twinkles = gentle ? ["✧", "✨", "⋆", "🦋"] : ["✧", "✨", "⋆"]
     # Calculate iterations: ~2 seconds with 0.03s sleep = ~66 iterations
     # Using 15 twinkles gives us coverage, so we'll do multiple passes
-    for pass in 1:4  # 4 passes * 15 twinkles * 0.03s ≈ 1.8 seconds
-        for _ in 1:15
-            r = start_row + rand(-2:art_height+2)
-            c = start_col + rand(-2:art_width+2)
+    for pass = 1:4  # 4 passes * 15 twinkles * 0.03s ≈ 1.8 seconds
+        for _ = 1:15
+            r = start_row + rand(-2:(art_height+2))
+            c = start_col + rand(-2:(art_width+2))
             if r > 0 && r <= rows && c > 0 && c <= cols
                 move_cursor(r, c)
                 print("\e[38;5;$(rand([51,81,123,159,195]))m" * rand(twinkles) * "\e[0m")
@@ -305,12 +307,12 @@ Animate the dragon breathing EPIC fire OUT OF HIS MOUTH!
 function breathing_dragon_animation()
     hide_cursor()
     rows, cols = get_terminal_size()
-    
+
     # Completely clear and reset terminal
     clear_screen()
     print("\e[0m")  # Reset all attributes
     sleep(0.5)
-    
+
     # Slow fade-in of dragon from darkness
     for alpha = 1:length(RED_GRADIENT)
         clear_screen()
@@ -318,13 +320,13 @@ function breathing_dragon_animation()
         print_with_color_gradient(DRAGON_ASCII, RED_GRADIENT[1:alpha])
         sleep(0.2)
     end
-    
+
     sleep(0.4)
-    
+
     # Determine mouth origin dynamically from ASCII
     # Fire streams LEFT from the mouth origin
     mouth_row, mouth_col_start = detect_mouth_origin()
-    
+
     # MASSIVE FIRE BREATHING SEQUENCE
     for breath = 1:4
         # Build up (inhale) - dragon glows, mouth CLOSED
@@ -332,7 +334,7 @@ function breathing_dragon_animation()
             print("\e[H")
             # Darker, building tension
             print_with_color_gradient(DRAGON_ASCII, reverse(RED_GRADIENT))
-            
+
             if frame == 3
                 # Sparks gathering at mouth
                 for _ = 1:8
@@ -343,7 +345,7 @@ function breathing_dragon_animation()
             end
             sleep(0.15)
         end
-        
+
         # EXPLOSIVE FIRE BREATH - mouth OPENS and fire streams!
         for explosion = 1:6
             print("\e[H")
@@ -353,7 +355,7 @@ function breathing_dragon_animation()
             else
                 print_with_color_gradient(DRAGON_MOUTH_OPEN, YELLOW_FIRE)
             end
-            
+
             # FIRE STREAMS LEFT (toward viewer) from dragon's mouth
             for distance = 1:38
                 # Fire flows LEFT horizontally from mouth
@@ -364,7 +366,7 @@ function breathing_dragon_animation()
                     curl = distance < 8 ? rand(-1:0) : rand(-2:2)
                     fire_row = clamp(mouth_row + curl, 1, rows)
                     move_cursor(fire_row, fire_col)
-                    
+
                     # Closer to mouth = hotter (yellow), further = cooler (red)
                     if distance < 10
                         fire_char = rand(["�", "�", "⚡"])
@@ -376,9 +378,9 @@ function breathing_dragon_animation()
                         fire_char = rand(["🔥", "✨"])
                         color = rand(FIRE_COLORS[1:6])
                     end
-                    
+
                     print("\e[38;5;$(color);1m$(fire_char)\e[0m")
-                    
+
                     # Smoke particles above and below
                     if rand() > 0.5
                         smoke_row = fire_row + rand([-3, -2, -1, 1, 2, 3])
@@ -390,28 +392,30 @@ function breathing_dragon_animation()
                     end
                 end
             end
-            
+
             # Additional fire particles spreading in cone LEFT from mouth
             for _ = 1:18
                 spread = rand(5:44)
                 fire_col = mouth_col_start - spread
-                fire_row = mouth_row + rand(-max(2, spread÷4):max(2, spread÷4))
-                
+                fire_row = mouth_row + rand((-max(2, spread÷4)):max(2, spread÷4))
+
                 if fire_row > 0 && fire_row <= rows && fire_col > 2
                     move_cursor(fire_row, fire_col)
-                    print("\e[38;5;$(rand(FIRE_COLORS));1m$(rand(["🔥", "💥", "⚡", "✨", "🌟"]))\e[0m")
+                    print(
+                        "\e[38;5;$(rand(FIRE_COLORS));1m$(rand(["🔥", "💥", "⚡", "✨", "🌟"]))\e[0m",
+                    )
                 end
             end
-            
+
             flush(stdout)
             sleep(0.08)
         end
-        
+
         # Cool down - smoke dissipates, mouth CLOSES
         for frame = 1:2
             print("\e[H")
             print_with_color_gradient(DRAGON_ASCII, ORANGE_FIRE)
-            
+
             # Lingering smoke
             for _ = 1:10
                 smoke_col = mouth_col_start - rand(10:60)
@@ -421,12 +425,12 @@ function breathing_dragon_animation()
                     print("\e[38;5;$(rand([237, 238, 239, 240]))m░\e[0m")
                 end
             end
-            
+
             flush(stdout)
             sleep(0.15)
         end
     end
-    
+
     # Final MEGA BREATH - MOUTH WIDE OPEN, longest fire stream LEFT!
     for frame = 1:12
         print("\e[H")
@@ -436,7 +440,7 @@ function breathing_dragon_animation()
         else
             print_with_color_gradient(DRAGON_MOUTH_OPEN, FIRE_COLORS)
         end
-        
+
         # MASSIVE fire jet streaming LEFT
         for distance = 1:56
             fire_col = mouth_col_start - distance * 2
@@ -446,7 +450,7 @@ function breathing_dragon_animation()
                     fire_row = clamp(mouth_row + width + curl + rand(-1:1), 1, rows)
                     if fire_row > 0 && fire_row <= rows
                         move_cursor(fire_row, fire_col)
-                        
+
                         if distance < 16
                             print("\e[38;5;$(rand(YELLOW_FIRE));1m💥\e[0m")
                         elseif distance < 34
@@ -458,17 +462,17 @@ function breathing_dragon_animation()
                 end
             end
         end
-        
+
         flush(stdout)
         sleep(0.1)
     end
-    
+
     # Fade to red with smoke clearing
     sleep(0.3)
     clear_screen()
     print("\e[0m")  # Reset all attributes
     print_with_color_gradient(DRAGON_ASCII, RED_GRADIENT)
-    
+
     # Move cursor below dragon
     println("\n")
     print("\e[0m")  # Final reset
@@ -483,25 +487,25 @@ INTENSE warning flashes that will get anyone's attention!
 function flash_warning(times::Int = 3)
     hide_cursor()
     rows, cols = get_terminal_size()
-    
+
     for round = 1:times
         # Build intensity
         for speed_mult = 1:3
             for (idx, flame) in enumerate(FLAMES)
                 # Full screen flash
                 clear_screen()
-                
+
                 # Random flames across entire screen
                 num_flames = 50 + round * 20
                 for _ = 1:num_flames
                     row = rand(1:rows)
-                    col = rand(1:cols-2)
+                    col = rand(1:(cols-2))
                     move_cursor(row, col)
-                    
+
                     color = FIRE_COLORS[mod1(round * idx, length(FIRE_COLORS))]
                     print("\e[38;5;$(color);1m$(flame)\e[0m")
                 end
-                
+
                 # Center warning
                 center_row = div(rows, 2)
                 center_col = div(cols, 2) - 20
@@ -509,13 +513,13 @@ function flash_warning(times::Int = 3)
                 print("$(BOLD)$(BLINK)\e[38;5;196m")
                 print(" ⚠️  DANGER ZONE  ⚠️ ")
                 print("$(RESET)")
-                
+
                 flush(stdout)
                 sleep(0.05 / speed_mult)
             end
         end
     end
-    
+
     # Final clear - ensure everything is gone and attributes reset
     clear_screen()
     move_cursor(1, 1)
@@ -532,33 +536,33 @@ Uses butterflies from art.jl (b1, b2, b3).
 function gentle_butterfly_animation()
     hide_cursor()
     rows, cols = get_terminal_size()
-    
+
     # Soft fade-in
     clear_screen()
     sleep(0.3)
-    
+
     # Display multiple butterflies from art.jl
     butterfly_arts = [b1, b2, b3]
     all_butterflies = []
-    
+
     # Position butterflies across the screen
     for (idx, butterfly_art) in enumerate(butterfly_arts)
         lines = split(butterfly_art, '\n')
         art_height = length(lines)
         art_width = maximum(length.(lines))
-        
+
         # Spread butterflies horizontally
         start_row = max(1, div(rows - art_height, 2) + rand(-5:5))
         start_col = div(cols * idx, length(butterfly_arts) + 1) - div(art_width, 2)
-        
+
         push!(all_butterflies, (lines, start_row, start_col, art_height, art_width))
     end
-    
+
     # Gentle fade-in with gradient
     for alpha = 1:length(BUTTERFLY_COLORS)
         clear_screen()
         print("\e[0m")
-        
+
         # Draw all butterflies
         for (lines, start_row, start_col, art_height, art_width) in all_butterflies
             for (i, line) in enumerate(lines)
@@ -569,18 +573,18 @@ function gentle_butterfly_animation()
                 end
             end
         end
-        
+
         flush(stdout)
         sleep(0.15)
     end
-    
+
     # Calculate average position for message
     avg_row = div(rows, 2)
-    
+
     # Sparkles and small butterflies floating around
     sparkles = ["✨", "⭐", "✧", "⋆", "˚", "°", "·"]
     small_butterflies = ["🦋", "🌸", "🌺", "🌼", "💮", "🌷"]
-    
+
     for wave = 1:4
         # Show motivational phrase
         phrase = MOTIVATIONAL_PHRASES[mod1(wave, length(MOTIVATIONAL_PHRASES))]
@@ -588,22 +592,24 @@ function gentle_butterfly_animation()
         phrase_col = max(1, div(cols - length(phrase), 2))
         move_cursor(phrase_row, phrase_col)
         printstyled(phrase, color = :magenta, bold = true)
-        
+
         # Gentle sparkles and small butterflies
         for _ = 1:20
             r = rand(1:rows)
-            c = rand(1:cols-2)
-            
+            c = rand(1:(cols-2))
+
             # Avoid drawing over the large butterfly art
             skip = false
             for (_, start_row, start_col, art_height, art_width) in all_butterflies
-                if r >= start_row - 2 && r <= start_row + art_height + 2 &&
-                   c >= start_col - 5 && c <= start_col + art_width + 5
+                if r >= start_row - 2 &&
+                   r <= start_row + art_height + 2 &&
+                   c >= start_col - 5 &&
+                   c <= start_col + art_width + 5
                     skip = true
                     break
                 end
             end
-            
+
             if !skip
                 move_cursor(r, c)
                 if rand() > 0.5
@@ -612,14 +618,14 @@ function gentle_butterfly_animation()
                     print(rand(small_butterflies))
                 end
             end
-            
+
             flush(stdout)
             sleep(0.04)
         end
-        
+
         sleep(0.5)
     end
-    
+
     # Final calm state
     sleep(0.5)
     clear_screen()
@@ -634,15 +640,21 @@ Display a gentle, supportive message box.
 """
 function supportive_message_box(title::String, messages::Vector{String})
     println()
-    printstyled("╔═══════════════════════════════════════════════════════════════════╗\n", color = :light_magenta)
+    printstyled(
+        "╔═══════════════════════════════════════════════════════════════════╗\n",
+        color = :light_magenta,
+    )
     printstyled("║  ", color = :light_magenta)
     printstyled("$title", color = :cyan, bold = true)
     padding = 65 - length(title)
     print(" " ^ (padding-2))
     printstyled("║\n", color = :light_magenta)
-    printstyled("╚═══════════════════════════════════════════════════════════════════╝\n", color = :light_magenta)
+    printstyled(
+        "╚═══════════════════════════════════════════════════════════════════╝\n",
+        color = :light_magenta,
+    )
     println()
-    
+
     for msg in messages
         printstyled("  💫 ", color = :light_yellow)
         println(msg)
@@ -670,12 +682,20 @@ end
 Launch the security setup wizard with either dramatic dragon theme or gentle butterfly theme.
 Set `gentle=true` for a supportive, calm experience without scary dragons.
 """
-function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = false, gentle::Bool = false)
+function security_setup_wizard(
+    workspace_dir::String = pwd();
+    force::Bool = false,
+    gentle::Bool = false,
+)
     # Check if config already exists
     existing_config = load_security_config(workspace_dir)
     if existing_config !== nothing && !force
         println()
-        printstyled("✅ Security configuration already exists\n", color = :green, bold = true)
+        printstyled(
+            "✅ Security configuration already exists\n",
+            color = :green,
+            bold = true,
+        )
         println()
         show_security_status(existing_config)
         println()
@@ -691,12 +711,12 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
         # GENTLE BUTTERFLY ENTRANCE
         clear_screen()
         sleep(0.3)
-        
+
         # Show butterflies and motivation
         gentle_butterfly_animation()
-        
+
         sleep(0.5)
-        
+
         # Supportive security information
         supportive_message_box(
             "🌸 Let's Set Up Your Workspace Security! 🌸",
@@ -708,16 +728,16 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
                 "Security is important because this tool can run code.",
                 "We'll set up protection so only you can use it.",
                 "Think of it like putting a lock on your door. 🔐",
-            ]
+            ],
         )
     else
         # EPIC DRAGON ENTRANCE
         clear_screen()
         sleep(0.3)
-        
+
         # Animate the dragon breathing fire
         breathing_dragon_animation()
-        
+
         sleep(0.5)
 
         # Flash warnings with increasing intensity
@@ -725,17 +745,17 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
 
         # Clean transition - aggressively clear everything
         sleep(0.3)
-        
+
         # Multiple clears to ensure everything is gone
         for _ = 1:3
             clear_screen()
             print("\e[0m")  # Reset all terminal attributes
             sleep(0.05)
         end
-        
+
         move_cursor(1, 1)
         sleep(0.2)
-        
+
         # Add top padding and start drawing box from clean position
         println("\n")
         print("\e[0m")  # Extra reset before drawing box
@@ -823,22 +843,22 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
             color = :red,
             bold = true,
         )
-        
+
         target_text = "I UNDERSTAND THE RISKS"
         typed_text = ""
         space_count = 0
-        
+
         # Enable raw mode to read characters one by one
         try
             ccall(:jl_tty_set_mode, Int32, (Ptr{Cvoid}, Int32), stdin.handle, 1)
-            
+
             while typed_text != target_text
                 if eof(stdin)
                     break
                 end
-                
+
                 char = read(stdin, Char)
-                
+
                 if char == ' '
                     space_count += 1
                     # Auto-type the message as they hold space
@@ -847,7 +867,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
                         typed_text *= string(target_text[space_count])
                         flush(stdout)
                     end
-                    
+
                     if space_count >= length(target_text)
                         break
                     end
@@ -855,7 +875,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
                     break
                 elseif char == '\x7f' || char == '\b'
                     if !isempty(typed_text)
-                        typed_text = typed_text[1:end-1]
+                        typed_text = typed_text[1:(end-1)]
                         space_count = max(0, space_count - 1)
                         print("\b \b")
                         flush(stdout)
@@ -870,7 +890,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
         finally
             ccall(:jl_tty_set_mode, Int32, (Ptr{Cvoid}, Int32), stdin.handle, 0)
         end
-        
+
         println()
 
         if typed_text != target_text
@@ -881,19 +901,19 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
         printstyled("✅ Acknowledgment accepted. Proceeding with setup...\n", color = :green)
         println()
         sleep(0.8)
-        
+
         # The Wizard appears!
-        wizard_entrance_animation(gentle=gentle)
+        wizard_entrance_animation(gentle = gentle)
         println()
         sleep(0.6)
-        
+
         printstyled("The wizard speaks: ", color = :magenta, bold = true)
         sleep(0.5)
         animate_text("\"Let us configure your realm's defenses...\"", 0.04)
         println()
         sleep(0.8)
     end  # End of if gentle / else dragon theme
-    
+
     # Choose security mode
     printstyled("🔐 Choose Security Mode\n", color = :cyan, bold = true)
     println()
@@ -938,13 +958,16 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
     println()
     print("Port number [3000]: ")
     port_input = strip(readline())
-    
+
     port = 3000  # default
     if !isempty(port_input)
         try
             port = parse(Int, port_input)
             if port < 1024 || port > 65535
-                printstyled("⚠️  Port must be between 1024 and 65535, using default 3000\n", color = :yellow)
+                printstyled(
+                    "⚠️  Port must be between 1024 and 65535, using default 3000\n",
+                    color = :yellow,
+                )
                 port = 3000
             end
         catch
@@ -952,7 +975,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
             port = 3000
         end
     end
-    
+
     printstyled("✓ Using port: $port\n", color = :green)
     println()
 
@@ -973,7 +996,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
             bold = true,
         )
         println()
-        
+
         # Add configuration instructions
         printstyled("📝 How to configure your MCP client:\n\n", color = :cyan, bold = true)
         println("  Add this to your MCP client configuration:")
@@ -988,7 +1011,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
         printstyled("      }\n", color = :white)
         printstyled("    }\n", color = :white)
         printstyled("  }\n\n", color = :white)
-        
+
         println("  Or set the environment variable:")
         printstyled("    export MCPREPL_API_KEY=\"$api_key\"\n\n", color = :yellow)
 
@@ -1040,7 +1063,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
     println()
     print("Create this file automatically? [Y/n]: ")
     auto_create = strip(lowercase(readline()))
-    
+
     should_save = isempty(auto_create) || auto_create == "y" || auto_create == "yes"
 
     # Create and save configuration
@@ -1065,7 +1088,7 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
         printstyled("  $config_path\n\n", color = :yellow)
         println("With the following content:")
         println()
-        
+
         # Show the configuration they need to create manually
         printstyled("{\n", color = :cyan)
         printstyled("  \"mode\": \"$mode_choice\",\n", color = :cyan)
@@ -1120,7 +1143,11 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
 
         return config
     else
-        printstyled("⚠️  Server cannot start without security configuration!\n", color = :red, bold = true)
+        printstyled(
+            "⚠️  Server cannot start without security configuration!\n",
+            color = :red,
+            bold = true,
+        )
         println("Create the file manually, then run MCPRepl.start!()")
         println()
         return config
@@ -1133,7 +1160,11 @@ end
 Quick non-interactive setup for automated environments.
 Generates API key and uses default settings.
 """
-function quick_setup(mode::Symbol = :strict, port::Int = 3000, workspace_dir::String = pwd())
+function quick_setup(
+    mode::Symbol = :strict,
+    port::Int = 3000,
+    workspace_dir::String = pwd(),
+)
     if !(mode in [:strict, :relaxed, :lax])
         error("Invalid mode. Must be :strict, :relaxed, or :lax")
     end
@@ -1170,6 +1201,10 @@ Perfect for users who prefer a supportive, calm experience.
 Uses the same security configuration options as the regular setup,
 but with a kinder, more encouraging presentation.
 """
-function gentle_setup(mode::Symbol = :strict, port::Int = 3000, workspace_dir::String = pwd())
+function gentle_setup(
+    mode::Symbol = :strict,
+    port::Int = 3000,
+    workspace_dir::String = pwd(),
+)
     return security_setup_wizard(workspace_dir; force = false, gentle = true)
 end
