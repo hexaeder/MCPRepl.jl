@@ -741,11 +741,808 @@ function create_lsp_tools()
         end,
     )
 
+    # Rename symbol tool
+    rename_tool = MCPTool(
+        "lsp_rename",
+        """Rename a symbol across the entire workspace using Julia LSP.
+
+        Uses the Julia Language Server to safely rename a function, variable, or type
+        everywhere it's used. Returns a WorkspaceEdit showing all changes that would be made.
+
+        # Arguments
+        - `file_path`: Absolute path to the file containing the symbol (required)
+        - `line`: Line number where symbol is located, 1-indexed (required)
+        - `column`: Column number where symbol is located, 1-indexed (required)
+        - `new_name`: New name for the symbol (required)
+
+        # Returns
+        Description of all file changes that would be made (file paths and edit locations).
+
+        # Examples
+        - Rename function: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10, "new_name": "calculate_result"}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "line" => Dict(
+                    "type" => "integer",
+                    "description" => "Line number (1-indexed)",
+                ),
+                "column" => Dict(
+                    "type" => "integer",
+                    "description" => "Column number (1-indexed)",
+                ),
+                "new_name" => Dict(
+                    "type" => "string",
+                    "description" => "New name for the symbol",
+                ),
+            ),
+            "required" => ["file_path", "line", "column", "new_name"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                line = get(args, "line", 1)
+                column = get(args, "column", 1)
+                new_name = get(args, "new_name", "")
+
+                if isempty(file_path) || isempty(new_name)
+                    return "Error: file_path and new_name are required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File not found: $file_path"
+                end
+
+                # Convert to LSP format
+                lsp_params = Dict(
+                    "textDocument" => Dict("uri" => file_uri(file_path)),
+                    "position" => Dict("line" => line - 1, "character" => column - 1),
+                    "newName" => new_name,
+                )
+
+                # Send LSP request
+                response = send_lsp_request("textDocument/rename", lsp_params)
+
+                if haskey(response, "error")
+                    return "Error: $(response["error"])"
+                end
+
+                result = get(response, "result", nothing)
+                if result === nothing
+                    return "No rename edits generated. Symbol may not be renameable."
+                end
+
+                # Format workspace edit
+                return format_workspace_edit(result)
+
+            catch e
+                return "Error renaming symbol: $e"
+            end
+        end,
+    )
+
+    # Code actions tool
+    code_actions_tool = MCPTool(
+        "lsp_code_actions",
+        """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
+
+        Uses the Julia Language Server to get available fixes and refactorings for errors,
+        warnings, or code at a specific location. Similar to clicking the lightbulb in VS Code.
+
+        # Arguments
+        - `file_path`: Absolute path to the file (required)
+        - `start_line`: Start line number, 1-indexed (required)
+        - `start_column`: Start column number, 1-indexed (required)
+        - `end_line`: End line number, 1-indexed (optional, defaults to start_line)
+        - `end_column`: End column number, 1-indexed (optional, defaults to start_column)
+        - `kind`: Filter by action kind (optional): "quickfix", "refactor", "source", etc.
+
+        # Returns
+        List of available code actions with their titles and kinds.
+
+        # Examples
+        - Get all actions: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10}`
+        - Get only quick fixes: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10, "kind": "quickfix"}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "start_line" => Dict(
+                    "type" => "integer",
+                    "description" => "Start line number (1-indexed)",
+                ),
+                "start_column" => Dict(
+                    "type" => "integer",
+                    "description" => "Start column number (1-indexed)",
+                ),
+                "end_line" => Dict(
+                    "type" => "integer",
+                    "description" => "End line number (1-indexed, optional)",
+                ),
+                "end_column" => Dict(
+                    "type" => "integer",
+                    "description" => "End column number (1-indexed, optional)",
+                ),
+                "kind" => Dict(
+                    "type" => "string",
+                    "description" => "Filter by action kind (optional)",
+                ),
+            ),
+            "required" => ["file_path", "start_line", "start_column"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                start_line = get(args, "start_line", 1)
+                start_column = get(args, "start_column", 1)
+                end_line = get(args, "end_line", start_line)
+                end_column = get(args, "end_column", start_column)
+                kind = get(args, "kind", nothing)
+
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File not found: $file_path"
+                end
+
+                # Convert to LSP format
+                uri = file_uri(file_path)
+                lsp_params = [
+                    uri,
+                    Dict(
+                        "start" => Dict("line" => start_line - 1, "character" => start_column - 1),
+                        "end" => Dict("line" => end_line - 1, "character" => end_column - 1),
+                    ),
+                ]
+
+                if kind !== nothing
+                    push!(lsp_params, kind)
+                end
+
+                # Use execute_vscode_command_with_result directly
+                result = execute_vscode_command_with_result(
+                    "vscode.executeCodeActionProvider",
+                    lsp_params,
+                    10.0,
+                )
+
+                if haskey(result, "error")
+                    return "Error: $(result["error"])"
+                end
+
+                actions = get(result, "result", nothing)
+                return format_code_actions(actions)
+
+            catch e
+                return "Error getting code actions: $e"
+            end
+        end,
+    )
+
+    # Document highlights tool
+    document_highlights_tool = MCPTool(
+        "lsp_document_highlights",
+        """Highlight all occurrences of a symbol in the current document using Julia LSP.
+
+        Uses the Julia Language Server to find all read/write occurrences of a symbol
+        within the same file.
+
+        # Arguments
+        - `file_path`: Absolute path to the file (required)
+        - `line`: Line number, 1-indexed (required)
+        - `column`: Column number, 1-indexed (required)
+
+        # Returns
+        List of all positions where the symbol appears in the document.
+
+        # Examples
+        - Highlight symbol: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "line" => Dict(
+                    "type" => "integer",
+                    "description" => "Line number (1-indexed)",
+                ),
+                "column" => Dict(
+                    "type" => "integer",
+                    "description" => "Column number (1-indexed)",
+                ),
+            ),
+            "required" => ["file_path", "line", "column"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                line = get(args, "line", 1)
+                column = get(args, "column", 1)
+
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File not found: $file_path"
+                end
+
+                # Convert to LSP format
+                lsp_params = Dict(
+                    "textDocument" => Dict("uri" => file_uri(file_path)),
+                    "position" => Dict("line" => line - 1, "character" => column - 1),
+                )
+
+                response = send_lsp_request("textDocument/documentHighlight", lsp_params)
+
+                if haskey(response, "error")
+                    return "Error: $(response["error"])"
+                end
+
+                result = get(response, "result", nothing)
+                return format_highlights(result)
+
+            catch e
+                return "Error getting highlights: $e"
+            end
+        end,
+    )
+
+    # Completion tool
+    completion_tool = MCPTool(
+        "lsp_completions",
+        """Get code completion suggestions at a position using Julia LSP.
+
+        Uses the Julia Language Server to get intelligent code suggestions including
+        functions, variables, keywords, and more. Shows what you can type at a position.
+
+        # Arguments
+        - `file_path`: Absolute path to the file (required)
+        - `line`: Line number, 1-indexed (required)
+        - `column`: Column number, 1-indexed (required)
+        - `trigger_character`: Character that triggered completion (optional)
+
+        # Returns
+        List of completion items with labels, kinds, and documentation.
+
+        # Examples
+        - Get completions: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "line" => Dict(
+                    "type" => "integer",
+                    "description" => "Line number (1-indexed)",
+                ),
+                "column" => Dict(
+                    "type" => "integer",
+                    "description" => "Column number (1-indexed)",
+                ),
+                "trigger_character" => Dict(
+                    "type" => "string",
+                    "description" => "Trigger character (optional)",
+                ),
+            ),
+            "required" => ["file_path", "line", "column"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                line = get(args, "line", 1)
+                column = get(args, "column", 1)
+                trigger_char = get(args, "trigger_character", nothing)
+
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File not found: $file_path"
+                end
+
+                # Build arguments for VS Code command
+                uri = file_uri(file_path)
+                position = Dict("line" => line - 1, "character" => column - 1)
+                lsp_params = [uri, position]
+
+                if trigger_char !== nothing
+                    push!(lsp_params, trigger_char)
+                end
+
+                result = execute_vscode_command_with_result(
+                    "vscode.executeCompletionItemProvider",
+                    lsp_params,
+                    10.0,
+                )
+
+                if haskey(result, "error")
+                    return "Error: $(result["error"])"
+                end
+
+                completions = get(result, "result", nothing)
+                return format_completions(completions)
+
+            catch e
+                return "Error getting completions: $e"
+            end
+        end,
+    )
+
+    # Signature help tool
+    signature_help_tool = MCPTool(
+        "lsp_signature_help",
+        """Get function signature help at a position using Julia LSP.
+
+        Uses the Julia Language Server to get function signatures and parameter info.
+        Useful for understanding what parameters a function takes.
+
+        # Arguments
+        - `file_path`: Absolute path to the file (required)
+        - `line`: Line number, 1-indexed (required)
+        - `column`: Column number, 1-indexed (required)
+
+        # Returns
+        Function signatures with parameter information.
+
+        # Examples
+        - Get signature: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "line" => Dict(
+                    "type" => "integer",
+                    "description" => "Line number (1-indexed)",
+                ),
+                "column" => Dict(
+                    "type" => "integer",
+                    "description" => "Column number (1-indexed)",
+                ),
+            ),
+            "required" => ["file_path", "line", "column"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                line = get(args, "line", 1)
+                column = get(args, "column", 1)
+
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File not found: $file_path"
+                end
+
+                uri = file_uri(file_path)
+                position = Dict("line" => line - 1, "character" => column - 1)
+
+                result = execute_vscode_command_with_result(
+                    "vscode.executeSignatureHelpProvider",
+                    [uri, position],
+                    10.0,
+                )
+
+                if haskey(result, "error")
+                    return "Error: $(result["error"])"
+                end
+
+                sig_help = get(result, "result", nothing)
+                return format_signature_help(sig_help)
+
+            catch e
+                return "Error getting signature help: $e"
+            end
+        end,
+    )
+
+    # Format document tool
+    format_document_tool = MCPTool(
+        "lsp_format_document",
+        """Format an entire Julia document using the Julia LSP formatter.
+
+        Uses the Julia Language Server to format code according to style guidelines.
+
+        # Arguments
+        - `file_path`: Absolute path to the file (required)
+
+        # Returns
+        Formatted code or confirmation message.
+
+        # Examples
+        - Format file: `{"file_path": "/path/to/file.jl"}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+            ),
+            "required" => ["file_path"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File not found: $file_path"
+                end
+
+                uri = file_uri(file_path)
+
+                result = execute_vscode_command_with_result(
+                    "vscode.executeFormatDocumentProvider",
+                    [uri],
+                    15.0,  # Formatting can take longer
+                )
+
+                if haskey(result, "error")
+                    return "Error: $(result["error"])"
+                end
+
+                edits = get(result, "result", nothing)
+                return format_text_edits(edits, "Format document")
+
+            catch e
+                return "Error formatting document: $e"
+            end
+        end,
+    )
+
+    # Format range tool
+    format_range_tool = MCPTool(
+        "lsp_format_range",
+        """Format a specific range of code in a Julia document using the Julia LSP formatter.
+
+        Uses the Julia Language Server to format only the specified lines.
+
+        # Arguments
+        - `file_path`: Absolute path to the file (required)
+        - `start_line`: Start line number, 1-indexed (required)
+        - `start_column`: Start column number, 1-indexed (required)
+        - `end_line`: End line number, 1-indexed (required)
+        - `end_column`: End column number, 1-indexed (required)
+
+        # Returns
+        Formatted code for the range or confirmation message.
+
+        # Examples
+        - Format lines 10-20: `{"file_path": "/path/to/file.jl", "start_line": 10, "start_column": 1, "end_line": 20, "end_column": 1}`
+        """,
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "start_line" => Dict(
+                    "type" => "integer",
+                    "description" => "Start line number (1-indexed)",
+                ),
+                "start_column" => Dict(
+                    "type" => "integer",
+                    "description" => "Start column number (1-indexed)",
+                ),
+                "end_line" => Dict(
+                    "type" => "integer",
+                    "description" => "End line number (1-indexed)",
+                ),
+                "end_column" => Dict(
+                    "type" => "integer",
+                    "description" => "End column number (1-indexed)",
+                ),
+            ),
+            "required" => ["file_path", "start_line", "start_column", "end_line", "end_column"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                start_line = get(args, "start_line", 1)
+                start_column = get(args, "start_column", 1)
+                end_line = get(args, "end_line", start_line)
+                end_column = get(args, "end_column", start_column)
+
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+
+                if !isfile(file_path)
+                    return "Error: File not found: $file_path"
+                end
+
+                uri = file_uri(file_path)
+                range = Dict(
+                    "start" => Dict("line" => start_line - 1, "character" => start_column - 1),
+                    "end" => Dict("line" => end_line - 1, "character" => end_column - 1),
+                )
+
+                result = execute_vscode_command_with_result(
+                    "vscode.executeFormatRangeProvider",
+                    [uri, range],
+                    15.0,
+                )
+
+                if haskey(result, "error")
+                    return "Error: $(result["error"])"
+                end
+
+                edits = get(result, "result", nothing)
+                return format_text_edits(edits, "Format range")
+
+            catch e
+                return "Error formatting range: $e"
+            end
+        end,
+    )
+
     return [
         goto_definition_tool,
         find_references_tool,
         hover_info_tool,
         document_symbols_tool,
         workspace_symbols_tool,
+        rename_tool,
+        code_actions_tool,
+        document_highlights_tool,
+        completion_tool,
+        signature_help_tool,
+        format_document_tool,
+        format_range_tool,
     ]
+end
+
+# ============================================================================
+# Additional Formatting Functions
+# ============================================================================
+
+"""
+    format_workspace_edit(edit) -> String
+
+Format a workspace edit showing all file changes.
+"""
+function format_workspace_edit(edit)
+    if edit === nothing || (edit isa Dict && isempty(edit))
+        return "No edits to apply"
+    end
+
+    changes = get(edit, "changes", Dict())
+    if isempty(changes)
+        return "No file changes"
+    end
+
+    result = "Workspace edit would modify $(length(changes)) file(s):\n"
+    for (uri, text_edits) in changes
+        file_path = uri_to_path(uri)
+        result *= "\n📄 $file_path: $(length(text_edits)) edit(s)\n"
+        for (i, text_edit) in enumerate(text_edits)
+            range = get(text_edit, "range", nothing)
+            new_text = get(text_edit, "newText", "")
+            if range !== nothing
+                start = get(range, "start", Dict())
+                line = get(start, "line", 0) + 1
+                result *= "  $i. Line $line: \"$new_text\"\n"
+            end
+        end
+    end
+
+    return result
+end
+
+"""
+    format_code_actions(actions) -> String
+
+Format code actions for display.
+"""
+function format_code_actions(actions)
+    if actions === nothing || (actions isa Vector && isempty(actions))
+        return "No code actions available"
+    end
+
+    if !(actions isa Vector)
+        actions = [actions]
+    end
+
+    result = "Found $(length(actions)) code action(s):\n"
+    for (i, action) in enumerate(actions)
+        title = get(action, "title", "Untitled action")
+        kind = get(action, "kind", "unknown")
+        result *= "  $i. [$kind] $title\n"
+    end
+
+    return result
+end
+
+"""
+    format_highlights(highlights) -> String
+
+Format document highlights for display.
+"""
+function format_highlights(highlights)
+    if highlights === nothing || (highlights isa Vector && isempty(highlights))
+        return "No highlights found"
+    end
+
+    if !(highlights isa Vector)
+        highlights = [highlights]
+    end
+
+    result = "Found $(length(highlights)) occurrence(s):\n"
+    for (i, highlight) in enumerate(highlights)
+        range = get(highlight, "range", nothing)
+        kind = get(highlight, "kind", 1)  # 1=text, 2=read, 3=write
+        kind_str = kind == 2 ? "read" : kind == 3 ? "write" : "text"
+        
+        if range !== nothing
+            start = get(range, "start", Dict())
+            line = get(start, "line", 0) + 1
+            char = get(start, "character", 0) + 1
+            result *= "  $i. [$kind_str] Line $line, Col $char\n"
+        end
+    end
+
+    return result
+end
+
+"""
+    format_completions(completions) -> String
+
+Format completion items for display.
+"""
+function format_completions(completions)
+    # Handle CompletionList or array of CompletionItems
+    items = if completions isa Dict && haskey(completions, "items")
+        get(completions, "items", [])
+    elseif completions isa Vector
+        completions
+    else
+        []
+    end
+
+    if isempty(items)
+        return "No completions available"
+    end
+
+    result = "Found $(length(items)) completion(s):\n"
+    for (i, item) in enumerate(items[1:min(20, length(items))])  # Limit to 20
+        label = get(item, "label", "")
+        kind = get(item, "kind", 0)
+        detail = get(item, "detail", "")
+        
+        kind_str = completion_kind_to_string(kind)
+        result *= "  $i. [$kind_str] $label"
+        if !isempty(detail)
+            result *= " - $detail"
+        end
+        result *= "\n"
+    end
+
+    if length(items) > 20
+        result *= "  ... and $(length(items) - 20) more\n"
+    end
+
+    return result
+end
+
+"""
+    completion_kind_to_string(kind::Int) -> String
+
+Convert LSP CompletionItemKind to string.
+"""
+function completion_kind_to_string(kind::Int)
+    kinds = Dict(
+        1 => "Text", 2 => "Method", 3 => "Function", 4 => "Constructor",
+        5 => "Field", 6 => "Variable", 7 => "Class", 8 => "Interface",
+        9 => "Module", 10 => "Property", 11 => "Unit", 12 => "Value",
+        13 => "Enum", 14 => "Keyword", 15 => "Snippet", 16 => "Color",
+        17 => "File", 18 => "Reference", 19 => "Folder", 20 => "EnumMember",
+        21 => "Constant", 22 => "Struct", 23 => "Event", 24 => "Operator",
+        25 => "TypeParameter",
+    )
+    return get(kinds, kind, "Unknown")
+end
+
+"""
+    format_signature_help(sig_help) -> String
+
+Format signature help for display.
+"""
+function format_signature_help(sig_help)
+    if sig_help === nothing || (sig_help isa Dict && isempty(sig_help))
+        return "No signature help available"
+    end
+
+    signatures = get(sig_help, "signatures", [])
+    if isempty(signatures)
+        return "No signatures available"
+    end
+
+    active_sig = get(sig_help, "activeSignature", 0)
+    active_param = get(sig_help, "activeParameter", nothing)
+
+    result = "Function signatures:\n"
+    for (i, sig) in enumerate(signatures)
+        label = get(sig, "label", "")
+        doc = get(sig, "documentation", nothing)
+        
+        prefix = i == active_sig + 1 ? "▶ " : "  "
+        result *= "$prefix$i. $label\n"
+        
+        if doc !== nothing
+            doc_str = doc isa String ? doc : get(doc, "value", "")
+            if !isempty(doc_str)
+                result *= "     $(doc_str)\n"
+            end
+        end
+    end
+
+    if active_param !== nothing
+        result *= "\nActive parameter: $active_param\n"
+    end
+
+    return result
+end
+
+"""
+    format_text_edits(edits, operation::String) -> String
+
+Format text edits for display.
+"""
+function format_text_edits(edits, operation::String)
+    if edits === nothing || (edits isa Vector && isempty(edits))
+        return "No edits from $operation"
+    end
+
+    if !(edits isa Vector)
+        edits = [edits]
+    end
+
+    result = "$operation would make $(length(edits)) edit(s):\n"
+    for (i, edit) in enumerate(edits)
+        range = get(edit, "range", nothing)
+        new_text = get(edit, "newText", "")
+        
+        if range !== nothing
+            start = get(range, "start", Dict())
+            end_pos = get(range, "end", Dict())
+            start_line = get(start, "line", 0) + 1
+            end_line = get(end_pos, "line", 0) + 1
+            
+            lines = split(new_text, '\n')
+            preview = length(lines) > 1 ? "$(lines[1])... ($(length(lines)) lines)" : new_text
+            result *= "  $i. Lines $start_line-$end_line: $preview\n"
+        end
+    end
+
+    return result
 end

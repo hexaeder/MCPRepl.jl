@@ -410,35 +410,54 @@ execute_vscode_command("workbench.debug.viewlet.action.removeAllBreakpoints")
 
 ### LSP (Language Server) Tools
 
-The MCP server provides direct integration with Julia's Language Server Protocol for code navigation and intelligence:
+The MCP server provides direct integration with Julia's Language Server Protocol for code navigation and intelligence. The highest-value LSP operations are listed first for quick use.
 
-#### Navigation
-- **`lsp_goto_definition`** - Jump to where a symbol is defined
+#### Most-used LSP Tools
+- **`lsp_goto_definition`** — Jump to where a symbol is defined
   - Arguments: `file_path`, `line` (1-indexed), `column` (1-indexed)
   - Returns: File path and position of definition(s)
   - Example: `lsp_goto_definition(file_path="/path/to/file.jl", line=42, column=10)`
 
-- **`lsp_find_references`** - Find all usages of a symbol
+- **`lsp_find_references`** — Find all usages of a symbol
   - Arguments: `file_path`, `line`, `column`, `include_declaration` (optional, default: true)
   - Returns: List of all locations where symbol is used
   - Example: `lsp_find_references(file_path="/path/to/file.jl", line=42, column=10)`
 
-#### Information
-- **`lsp_hover_info`** - Get documentation and type info at a position
+- **`lsp_hover_info`** — Get documentation and type info at a position
   - Arguments: `file_path`, `line`, `column`
   - Returns: Documentation strings, type information, signatures
   - Example: `lsp_hover_info(file_path="/path/to/file.jl", line=42, column=10)`
 
-#### Symbols & Search
-- **`lsp_document_symbols`** - List all symbols in a file
+- **`lsp_completions`** — Get intelligent code completions at a position
+  - Arguments: `file_path`, `line`, `column`, `trigger_character` (optional)
+  - Returns: Completion items with labels, kinds, and documentation
+  - Example: `lsp_completions(file_path="/path/to/file.jl", line=42, column=10)`
+
+- **`lsp_code_actions`** — Get available quick fixes and refactorings
+  - Arguments: `file_path`, `start_line`, `start_column`, optional end range and `kind`
+  - Returns: List of available actions with titles and kinds
+  - Example: `lsp_code_actions(file_path="/path/to/file.jl", start_line=42, start_column=10)`
+
+- **`lsp_format_document`** — Format an entire file using the LSP formatter
   - Arguments: `file_path`
-  - Returns: Structured list of functions, types, constants, etc.
+  - Returns: Text edits or confirmation
+  - Example: `lsp_format_document(file_path="/path/to/file.jl")`
+
+- **`lsp_rename`** — Rename a symbol across the workspace
+  - Arguments: `file_path`, `line`, `column`, `new_name`
+  - Example: `lsp_rename(file_path="/path/to/file.jl", line=42, column=10, new_name="x")`
+
+#### Other LSP Tools
+- **`lsp_document_symbols`** — List all symbols in a file
+  - Arguments: `file_path`
   - Example: `lsp_document_symbols(file_path="/path/to/file.jl")`
 
-- **`lsp_workspace_symbols`** - Search for symbols across workspace
+- **`lsp_workspace_symbols`** — Search for symbols across workspace
   - Arguments: `query` (search string)
-  - Returns: Matching symbols with locations
   - Example: `lsp_workspace_symbols(query="MyFunction")`
+
+- **`lsp_document_highlights`** — Highlight all occurrences of a symbol in a file
+  - Arguments: `file_path`, `line`, `column`
 
 **LSP Usage Notes:**
 - LSP tools require the Julia Language Server to be running (automatic in VS Code)

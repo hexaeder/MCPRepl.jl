@@ -31,9 +31,8 @@ function write_vscode_mcp_config(config::Dict)
     end
 
     try
-        io = IOBuffer()
-        JSON.json(io, config)
-        content = String(take!(io))
+        # Pretty-print with 2-space indentation for readability
+        content = JSON.json(config, 2)
         write(mcp_path, content)
         
         # Check if config contains API keys in Authorization headers
@@ -176,9 +175,8 @@ function write_claude_config(config::Dict)
     config_path = get_claude_config_path()
     
     try
-        io = IOBuffer()
-        JSON.json(io, config)
-        content = String(take!(io))
+        # Pretty-print Claude project config with 2-space indentation
+        content = JSON.json(config, 2)
         write(config_path, content)
         
         # Set restrictive permissions (Unix-like systems)
@@ -313,10 +311,8 @@ function write_vscode_settings(settings::Dict)
     end
 
     try
-        # Pretty print JSON with indentation
-        io = IOBuffer()
-        JSON.json(io, settings)
-        content = String(take!(io))
+        # Pretty print VS Code settings with 2-space indentation
+        content = JSON.json(settings, 2)
         write(settings_path, content)
         return true
     catch e
@@ -566,6 +562,18 @@ function prompt_and_setup_vscode_extension()
                     "editor.action.goToLocations",
                     "workbench.action.showAllSymbols",
 
+                    # LSP / Editor Actions (useful for code navigation, refactor, and formatting)
+                    "editor.action.rename",
+                    "editor.action.formatDocument",
+                    "editor.action.organizeImports",
+                    "editor.action.codeAction",
+                    "editor.action.quickFix",
+                    "editor.action.referenceSearch.trigger",
+                    "editor.action.goToImplementation",
+                    "editor.action.peekImplementation",
+                    "editor.action.goToTypeDefinition",
+                    "editor.action.showHover",
+
                     # Terminal Operations
                     "workbench.action.terminal.new",
                     "workbench.action.terminal.sendSequence",
@@ -731,9 +739,8 @@ function write_gemini_settings(settings::Dict)
     end
 
     try
-        io = IOBuffer()
-        JSON.json(io, settings)
-        content = String(take!(io))
+        # Pretty-print Gemini settings with 2-space indentation
+        content = JSON.json(settings, 2)
         write(settings_path, content)
         return true
     catch

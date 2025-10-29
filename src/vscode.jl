@@ -291,11 +291,9 @@ function install_vscode_remote_control(
     existing[key_allowed] = sort(collect(allowed_set))
     existing[key_confirm] = require_confirmation
 
-    # Write back with JSON3
-    io_buf = IOBuffer()
-    JSON.json(io_buf, existing)
-    json_str = String(take!(io_buf))
-    write(ws_settings_path, json_str)
+  # Write back with pretty-printed JSON (2-space indentation)
+  json_str = JSON.json(existing, 2)
+  write(ws_settings_path, json_str)
 
     println("Installed extension into: ", ext_path)
     println("Workspace settings updated at: ", ws_settings_path)

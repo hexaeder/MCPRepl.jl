@@ -121,7 +121,18 @@
         "vscode.executeCompletionItemProvider": "Get completion suggestions at a position. Requires URI and position.",
         "vscode.executeSignatureHelpProvider": "Get signature help for a function call. Requires URI and position.",
         "vscode.executeFormatDocumentProvider": "Format entire document. Requires URI.",
-        "vscode.executeFormatRangeProvider": "Format a range in document. Requires URI, range, and options."
+        "vscode.executeFormatRangeProvider": "Format a range in document. Requires URI, range, and options.",
+        "vscode.executeCodeActionProvider": "Get available code actions (quick fixes, refactorings) for a location. Requires URI, range, and optional kind filter.",
+        "vscode.executeDocumentRenameProvider": "Rename a symbol across the workspace. Requires URI, position, and new name.",
+        "vscode.executeDocumentHighlightProvider": "Get all occurrences of a symbol in the current document. Requires URI and position.",
+        "vscode.prepareCallHierarchy": "Prepare call hierarchy for a symbol. Requires URI and position.",
+        "vscode.provideIncomingCalls": "Get incoming calls to a function/method. Requires call hierarchy item.",
+        "vscode.provideOutgoingCalls": "Get outgoing calls from a function/method. Requires call hierarchy item.",
+        "vscode.prepareTypeHierarchy": "Prepare type hierarchy for a type. Requires URI and position.",
+        "vscode.provideSupertypes": "Get supertypes of a type. Requires type hierarchy item.",
+        "vscode.provideSubtypes": "Get subtypes of a type. Requires type hierarchy item.",
+        "vscode.executeCodeLensProvider": "Get code lenses (inline actionable info) for a document. Requires URI.",
+        "vscode.executeInlayHintProvider": "Get inlay hints (type annotations, parameter names) for a range. Requires URI and range."
       }
     }
   }

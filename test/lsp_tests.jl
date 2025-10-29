@@ -7,14 +7,23 @@ using MCPRepl: MCPTool
     @testset "LSP Tool Creation" begin
         # Verify all tools are created
         tools = create_lsp_tools()
-        @test length(tools) == 5
+        @test length(tools) == 12  # Updated from 5 to 12
 
         tool_names = [tool.name for tool in tools]
+        # Original 5 tools
         @test "lsp_goto_definition" in tool_names
         @test "lsp_find_references" in tool_names
         @test "lsp_hover_info" in tool_names
         @test "lsp_document_symbols" in tool_names
         @test "lsp_workspace_symbols" in tool_names
+        # New tools
+        @test "lsp_rename" in tool_names
+        @test "lsp_code_actions" in tool_names
+        @test "lsp_document_highlights" in tool_names
+        @test "lsp_completions" in tool_names
+        @test "lsp_signature_help" in tool_names
+        @test "lsp_format_document" in tool_names
+        @test "lsp_format_range" in tool_names
 
         # Verify tool structure
         for tool in tools
