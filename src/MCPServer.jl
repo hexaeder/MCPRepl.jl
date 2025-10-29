@@ -5,14 +5,6 @@ using JSON
 import ..MCPRepl:
     SecurityConfig, extract_api_key, validate_api_key, get_client_ip, validate_ip
 
-# Global storage for active streaming responses (request_id => Stream)
-const ACTIVE_STREAMS = Dict{String,HTTP.Stream}()
-const STREAM_LOCK = ReentrantLock()
-
-# Global storage for SSE (Server-Sent Events) streaming channels
-const SSE_STREAMS = Dict{String,Channel{String}}()
-const SSE_LOCK = ReentrantLock()
-
 # Tool definition structure
 struct MCPTool
     name::String
@@ -299,87 +291,22 @@ function create_handler(
                     tool = tools[tool_name]
                     args = get(request["params"], "arguments", Dict())
 
-                    # Check if streaming is requested
-                    enable_streaming = get(args, "stream", false)
+                    # Non-streaming mode (streaming handled in hybrid_handler)
+                    result_text = tool.handler(args)
 
-                    if enable_streaming
-                        # Create a channel for streaming
-                        request_id = string(request["id"])
-                        stream_channel = Channel{String}(32)  # Buffer up to 32 events
-
-                        lock(SSE_LOCK) do
-                            SSE_STREAMS[request_id] = stream_channel
-                        end
-
-                        # Start async task to run the tool and stream results
-                        @async begin
-                            try
-                                # Call tool handler with streaming channel
-                                # Try to call with stream_channel if handler accepts it
-                                result_text = try
-                                    tool.handler(args, stream_channel)
-                                catch e
-                                    if isa(e, MethodError)
-                                        # Handler doesn't support streaming, fall back
-                                        tool.handler(args)
-                                    else
-                                        rethrow(e)
-                                    end
-                                end
-
-                                # Send final result
-                                final_event = JSON.json(
-                                    Dict("type" => "complete", "content" => result_text),
-                                )
-                                put!(stream_channel, final_event)
-                            catch e
-                                # Send error event
-                                error_event =
-                                    JSON.json(Dict("type" => "error", "error" => string(e)))
-                                put!(stream_channel, error_event)
-                            finally
-                                close(stream_channel)
-                            end
-                        end
-
-                        # Return SSE endpoint info
-                        response = Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => request["id"],
-                            "result" => Dict(
-                                "streaming" => true,
-                                "sse_endpoint" => "/sse/$request_id",
-                                "content" => [
-                                    Dict(
-                                        "type" => "text",
-                                        "text" => "Streaming started at /sse/$request_id",
-                                    ),
-                                ],
-                            ),
-                        )
-                        return HTTP.Response(
-                            200,
-                            ["Content-Type" => "application/json"],
-                            JSON.json(response),
-                        )
-                    else
-                        # Non-streaming mode (original behavior)
-                        result_text = tool.handler(args)
-
-                        response = Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => request["id"],
-                            "result" => Dict(
-                                "content" =>
-                                    [Dict("type" => "text", "text" => result_text)],
-                            ),
-                        )
-                        return HTTP.Response(
-                            200,
-                            ["Content-Type" => "application/json"],
-                            JSON.json(response),
-                        )
-                    end
+                    response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "result" => Dict(
+                            "content" =>
+                                [Dict("type" => "text", "text" => result_text)],
+                        ),
+                    )
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(response),
+                    )
                 else
                     error_response = Dict(
                         "jsonrpc" => "2.0",
