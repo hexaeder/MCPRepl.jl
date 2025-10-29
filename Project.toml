@@ -14,7 +14,6 @@ Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
-Sixel = "45858cf5-a6b0-47a3-bbea-62219f50df47"
 
 [compat]
 Aqua = "0.8"
@@ -29,7 +28,6 @@ Profile = "1.10"
 REPL = "1.10"
 Random = "1.10"
 SHA = "0.7"
-Sixel = "0.1.5"
 Test = "1.10"
 julia = "1.10"
 
