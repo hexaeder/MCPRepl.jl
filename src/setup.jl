@@ -205,71 +205,38 @@ function add_claude_mcp_server(;
     port = security_config.port
     url = "http://localhost:$port"
     
-    config = read_claude_config()
-    
-    if config === nothing
-        config = Dict()
+    # Use claude mcp add command instead of manipulating JSON directly
+    # Use --scope=project because the REPL and port config are local to the project
+    try
+        if api_key !== nothing
+            # Add with Authorization header using --header flag
+            run(`claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl $url`)
+        else
+            # Add without Authorization header (for lax mode)
+            run(`claude mcp add --scope project --transport http julia-repl $url`)
+        end
+        return true
+    catch e
+        @warn "Failed to configure Claude MCP server" exception = e
+        return false
     end
-    
-    # Get current project directory
-    project_dir = pwd()
-    
-    # Initialize projects structure if it doesn't exist
-    if !haskey(config, "projects")
-        config["projects"] = Dict()
-    end
-    
-    # Initialize this project's config if it doesn't exist
-    if !haskey(config["projects"], project_dir)
-        config["projects"][project_dir] = Dict(
-            "mcpServers" => Dict(),
-            "hasTrustDialogAccepted" => false
-        )
-    end
-    
-    project_config = config["projects"][project_dir]
-    
-    # Ensure mcpServers exists
-    if !haskey(project_config, "mcpServers")
-        project_config["mcpServers"] = Dict()
-    end
-    
-    # Configure the julia-repl server with Bearer token auth
-    server_config = Dict{String,Any}(
-        "type" => "http",
-        "url" => url
-    )
-    
-    # Add Authorization header if API key provided
-    if api_key !== nothing
-        server_config["headers"] = Dict{String,Any}(
-            "Authorization" => "Bearer $api_key"
-        )
-    end
-    
-    project_config["mcpServers"]["julia-repl"] = server_config
-    config["projects"][project_dir] = project_config
-    
-    return write_claude_config(config)
 end
 
 function remove_claude_mcp_server()
-    config = read_claude_config()
-    
-    if config === nothing
-        return true  # Nothing to remove
-    end
-    
-    project_dir = pwd()
-    
-    if haskey(config, "projects") && haskey(config["projects"], project_dir)
-        project_config = config["projects"][project_dir]
-        if haskey(project_config, "mcpServers")
-            delete!(project_config["mcpServers"], "julia-repl")
+    # Use claude mcp remove command instead of manipulating JSON directly
+    # Use --scope=project to match how the server was added
+    try
+        run(`claude mcp remove --scope project julia-repl`)
+        return true
+    catch e
+        # If command fails, it might be because the server doesn't exist
+        # which is fine - we wanted it removed anyway
+        if occursin("not found", string(e)) || occursin("does not exist", string(e))
+            return true
         end
+        @warn "Failed to remove Claude MCP server" exception = e
+        return false
     end
-    
-    return write_claude_config(config)
 end
 
 # ============================================================================
@@ -1100,7 +1067,7 @@ function setup(; gentle::Bool = false)
         if claude_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Removing Claude MCP configuration...")
             try
-                run(`claude mcp remove julia-repl`)
+                run(`claude mcp remove --scope project julia-repl`)
                 println("   ✅ Successfully removed Claude MCP configuration")
             catch e
                 println("   ❌ Failed to remove Claude MCP configuration: $e")
@@ -1108,7 +1075,13 @@ function setup(; gentle::Bool = false)
         elseif claude_status != :claude_not_found
             println("\n   Adding Claude HTTP transport...")
             try
-                run(`claude mcp add julia-repl http://localhost:$port --transport http`)
+                # Add Authorization header if not in lax mode
+                if security_config.mode != :lax && !isempty(security_config.api_keys)
+                    api_key = first(security_config.api_keys)
+                    run(`claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`)
+                else
+                    run(`claude mcp add --scope project --transport http julia-repl http://localhost:$port`)
+                end
                 println("   ✅ Successfully configured Claude HTTP transport")
             catch e
                 println("   ❌ Failed to configure Claude HTTP transport: $e")
@@ -1118,7 +1091,13 @@ function setup(; gentle::Bool = false)
         if claude_status in [:configured_http, :configured_script, :configured_unknown]
             println("\n   Adding/Replacing Claude with HTTP transport...")
             try
-                run(`claude mcp add julia-repl http://localhost:$port --transport http`)
+                # Add Authorization header if not in lax mode
+                if security_config.mode != :lax && !isempty(security_config.api_keys)
+                    api_key = first(security_config.api_keys)
+                    run(`claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`)
+                else
+                    run(`claude mcp add --scope project --transport http julia-repl http://localhost:$port`)
+                end
                 println("   ✅ Successfully configured Claude HTTP transport")
             catch e
                 println("   ❌ Failed to configure Claude HTTP transport: $e")
@@ -1127,7 +1106,7 @@ function setup(; gentle::Bool = false)
             adapter_path = joinpath(pkgdir(MCPRepl), "mcp-julia-adapter")
             println("\n   Adding Claude script transport...")
             try
-                run(`claude mcp add julia-repl $adapter_path`)
+                run(`claude mcp add --scope project julia-repl $adapter_path`)
                 println("   ✅ Successfully configured Claude script transport")
             catch e
                 println("   ❌ Failed to configure Claude script transport: $e")
@@ -1138,7 +1117,7 @@ function setup(; gentle::Bool = false)
             adapter_path = joinpath(pkgdir(MCPRepl), "mcp-julia-adapter")
             println("\n   Adding/Replacing Claude with script transport...")
             try
-                run(`claude mcp add julia-repl $adapter_path`)
+                run(`claude mcp add --scope project julia-repl $adapter_path`)
                 println("   ✅ Successfully configured Claude script transport")
             catch e
                 println("   ❌ Failed to configure Claude script transport: $e")
