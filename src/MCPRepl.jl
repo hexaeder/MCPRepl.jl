@@ -2235,8 +2235,8 @@ end
 
 Launch the security setup wizard.
 """
-function setup_security(; force::Bool = false)
-    return security_setup_wizard(pwd(); force = force)
+function setup_security(; force::Bool = false, gentle::Bool = false)
+    return security_setup_wizard(pwd(); force = force, gentle = gentle)
 end
 
 """
@@ -2285,8 +2285,8 @@ function set_security_mode(mode::Symbol)
 end
 
 # Export public API
-export start!, stop!, setup, test_server
+export start!, stop!, setup, test_server, reset
 export setup_security, security_status, generate_key, revoke_key
-export allow_ip, deny_ip, set_security_mode, quick_setup
+export allow_ip, deny_ip, set_security_mode, quick_setup, gentle_setup
 
 end #module

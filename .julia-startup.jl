@@ -17,26 +17,15 @@ try
         Threads.@spawn begin
             try
                 sleep(1)
-                port = parse(Int, get(ENV, "JULIA_MCP_PORT", "3000"))
-                
-                # Set up lax security mode if no config exists (for development)
-                if !isfile(joinpath(pwd(), ".mcprepl", "security.json"))
-                    MCPRepl.quick_setup(:lax)
-                end
-                
-                MCPRepl.start!(; port = port, verbose = false)
+                # Port is determined by:
+                # 1. JULIA_MCP_PORT environment variable (highest priority)
+                # 2. .mcprepl/security.json port field (default)
+                MCPRepl.start!(verbose=false)
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
 
-                # Test server connectivity
-                test_result = MCPRepl.test_server(port)
-
-                if test_result
-                    @info "✓ MCP REPL server started and responding on port $port"
-                else
-                    @info "✓ MCP REPL server started on port $port"
-                end
+                @info "✓ MCP REPL server started 🐉"
                 # Refresh the prompt to ensure clean display after test completes
                 if isdefined(Base, :active_repl)
                     try
@@ -47,10 +36,10 @@ try
                     end
                 end
             catch e
-                @warn "Could not start MCP REPL server" exception = e
+                @warn "Could not start MCP REPL server" exception=e
             end
         end
     end
 catch e
-    @warn "Could not start MCP REPL server" exception = e
+    @warn "Could not start MCP REPL server" exception=e
 end

@@ -333,7 +333,7 @@ function has_startup_script()
     return isfile(get_startup_script_path())
 end
 
-function install_startup_script()
+function install_startup_script(; emoticon::String = "🐉")
     startup_path = get_startup_script_path()
 
     startup_content = """
@@ -364,7 +364,7 @@ try
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
 
-                @info "✓ MCP REPL server started"
+                @info "✓ MCP REPL server started $emoticon"
                 # Refresh the prompt to ensure clean display after test completes
                 if isdefined(Base, :active_repl)
                     try
@@ -441,9 +441,10 @@ function check_vscode_extension_installed()
     end
 end
 
-function prompt_and_setup_vscode_startup()
+function prompt_and_setup_vscode_startup(; gentle::Bool = false)
     """Prompt user to install startup script and configure VS Code settings"""
 
+    emoticon = gentle ? "🦋" : "🐉"
     has_script = has_startup_script()
     has_args = check_vscode_startup_configured()
 
@@ -483,7 +484,7 @@ function prompt_and_setup_vscode_startup()
 
         # Install startup script if needed
         if !has_script
-            if install_startup_script()
+            if install_startup_script(emoticon=emoticon)
                 println("   ✅ Created .julia-startup.jl")
             else
                 println("   ❌ Failed to create .julia-startup.jl")
@@ -853,7 +854,7 @@ After configuring VS Code, reload the window (Cmd+Shift+P → "Reload Window")
 to apply changes. If you installed the startup script, restart your Julia REPL
 to see it in action.
 """
-function setup()
+function setup(; gentle::Bool = false)
     # FIRST: Check security configuration
     security_config = load_security_config()
     
@@ -871,7 +872,7 @@ function setup()
         response = strip(lowercase(readline()))
         
         if isempty(response) || response == "y" || response == "yes"
-            security_config = security_setup_wizard()
+            security_config = security_setup_wizard(pwd(); gentle = gentle)
             println()
             printstyled("✅ Security configuration complete!\n", color = :green, bold = true)
             println()
@@ -885,6 +886,32 @@ function setup()
         printstyled("\n✅ Security configured (mode: $(security_config.mode))\n", color = :green)
         println()
     end
+    
+    # Install/update startup script
+    emoticon = gentle ? "🦋" : "🐉"
+    if !has_startup_script()
+        println("📝 Installing Julia startup script...")
+        if install_startup_script(emoticon=emoticon)
+            println("   ✅ Created .julia-startup.jl")
+        else
+            println("   ❌ Failed to create .julia-startup.jl")
+        end
+    else
+        println("📝 Startup script: ✅ .julia-startup.jl exists")
+    end
+    
+    # Configure VS Code settings for startup script
+    if !check_vscode_startup_configured()
+        println("📝 Configuring VS Code to load startup script...")
+        if configure_vscode_julia_args()
+            println("   ✅ Updated .vscode/settings.json")
+        else
+            println("   ❌ Failed to update .vscode/settings.json")
+        end
+    else
+        println("📝 VS Code settings: ✅ Configured to load startup script")
+    end
+    println()
     
     # Get port from security config (can be overridden by ENV var when server starts)
     port = security_config.port
@@ -998,7 +1025,7 @@ function setup()
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup()
+                prompt_and_setup_vscode_startup(gentle=gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1017,7 +1044,7 @@ function setup()
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup()
+                prompt_and_setup_vscode_startup(gentle=gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1033,7 +1060,7 @@ function setup()
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup()
+                prompt_and_setup_vscode_startup(gentle=gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1051,7 +1078,7 @@ function setup()
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup()
+                prompt_and_setup_vscode_startup(gentle=gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1157,4 +1184,160 @@ function setup()
     end
 
     println("   💡 HTTP for direct connection, script for agent compatibility")
+end
+
+"""
+    reset(; workspace_dir::String=pwd())
+
+Reset MCPRepl configuration by removing all generated files and configurations.
+This includes:
+- .mcprepl/ directory (security config, API keys)
+- .julia-startup.jl script
+- VS Code settings modifications (julia.additionalArgs)
+- MCP server configurations from .vscode/mcp.json
+
+Use this to start fresh with a clean setup.
+"""
+function reset(; workspace_dir::String = pwd())
+    println()
+    printstyled("⚠️  MCPRepl Configuration Reset\n", color = :yellow, bold = true)
+    println()
+    println("This will remove:")
+    println("  • .mcprepl/ directory (security config and API keys)")
+    println("  • .julia-startup.jl script")
+    println("  • VS Code Julia startup configuration")
+    println("  • MCP server entries from .vscode/mcp.json")
+    println()
+    print("Are you sure you want to reset? [y/N]: ")
+    response = strip(lowercase(readline()))
+    
+    if !(response == "y" || response == "yes")
+        println()
+        println("Reset cancelled.")
+        return false
+    end
+    
+    println()
+    success_count = 0
+    total_count = 0
+    
+    # Remove .mcprepl directory
+    total_count += 1
+    mcprepl_dir = joinpath(workspace_dir, ".mcprepl")
+    if isdir(mcprepl_dir)
+        try
+            rm(mcprepl_dir; recursive = true, force = true)
+            println("✅ Removed .mcprepl/ directory")
+            success_count += 1
+        catch e
+            println("❌ Failed to remove .mcprepl/: $e")
+        end
+    else
+        println("ℹ️  .mcprepl/ directory not found (already clean)")
+        success_count += 1
+    end
+    
+    # Remove .julia-startup.jl
+    total_count += 1
+    startup_script = joinpath(workspace_dir, ".julia-startup.jl")
+    if isfile(startup_script)
+        try
+            rm(startup_script; force = true)
+            println("✅ Removed .julia-startup.jl")
+            success_count += 1
+        catch e
+            println("❌ Failed to remove .julia-startup.jl: $e")
+        end
+    else
+        println("ℹ️  .julia-startup.jl not found (already clean)")
+        success_count += 1
+    end
+    
+    # Remove VS Code julia.additionalArgs configuration
+    total_count += 1
+    vscode_settings_path = joinpath(workspace_dir, ".vscode", "settings.json")
+    if isfile(vscode_settings_path)
+        try
+            settings = JSON.parsefile(vscode_settings_path; dicttype = Dict{String,Any})
+            
+            if haskey(settings, "julia.additionalArgs")
+                args = settings["julia.additionalArgs"]
+                # Remove --load argument
+                filter!(arg -> !(contains(arg, "--load") && contains(arg, ".julia-startup.jl")), args)
+                
+                # If array is now empty, remove the key entirely
+                if isempty(args)
+                    delete!(settings, "julia.additionalArgs")
+                else
+                    settings["julia.additionalArgs"] = args
+                end
+                
+                # Write back
+                open(vscode_settings_path, "w") do io
+                    JSON.print(io, settings, 2)
+                end
+                println("✅ Removed Julia startup config from VS Code settings")
+                success_count += 1
+            else
+                println("ℹ️  No Julia startup config in VS Code settings (already clean)")
+                success_count += 1
+            end
+        catch e
+            println("❌ Failed to update VS Code settings: $e")
+        end
+    else
+        println("ℹ️  .vscode/settings.json not found (already clean)")
+        success_count += 1
+    end
+    
+    # Remove MCP server entries from .vscode/mcp.json
+    total_count += 1
+    mcp_config_path = joinpath(workspace_dir, ".vscode", "mcp.json")
+    if isfile(mcp_config_path)
+        try
+            mcp_config = JSON.parsefile(mcp_config_path; dicttype = Dict{String,Any})
+            
+            if haskey(mcp_config, "servers")
+                servers = mcp_config["servers"]
+                # Remove julia-repl server entries
+                removed = false
+                if haskey(servers, "julia-repl")
+                    delete!(servers, "julia-repl")
+                    removed = true
+                end
+                
+                if removed
+                    # Write back
+                    open(mcp_config_path, "w") do io
+                        JSON.print(io, mcp_config, 2)
+                    end
+                    println("✅ Removed MCPRepl server from .vscode/mcp.json")
+                    success_count += 1
+                else
+                    println("ℹ️  No MCPRepl server in .vscode/mcp.json (already clean)")
+                    success_count += 1
+                end
+            else
+                println("ℹ️  No servers in .vscode/mcp.json (already clean)")
+                success_count += 1
+            end
+        catch e
+            println("❌ Failed to update .vscode/mcp.json: $e")
+        end
+    else
+        println("ℹ️  .vscode/mcp.json not found (already clean)")
+        success_count += 1
+    end
+    
+    println()
+    if success_count == total_count
+        printstyled("✅ Reset complete! All MCPRepl files removed.\n", color = :green, bold = true)
+        println()
+        println("Run MCPRepl.setup() to configure again.")
+    else
+        printstyled("⚠️  Reset completed with some errors ($success_count/$total_count successful)\n", color = :yellow, bold = true)
+    end
+    println()
+    
+    return success_count == total_count
 end

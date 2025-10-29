@@ -4,6 +4,9 @@
 
 using Printf
 
+# Load ASCII art from art.jl
+include("art.jl")
+
 # Terminal control codes
 const CLEAR_SCREEN = "\e[2J"
 const MOVE_CURSOR_HOME = "\e[H"
@@ -136,79 +139,67 @@ const DRAGON_MOUTH_OPEN = raw"""
 
 const FLAMES = ["🔥", "💥", "⚡", "💀", "☠️", "⚠️"]
 
-const WIZARD_ASCII = raw"""
-                                                     .        *       .   *
-                                             *        .       *         .
-                                         .        .-^^^-.       .
-                                         /\      /  * *  \     /\
-                                        /__\    /_________\   /__\
-                                    _/____\    \  ___  /   /____\_
-                                 /  .--. \    |/ _ \|    / .--.  \
-                                /  /    \ \   | (_) |   / /    \  \
-                             /  / /\   \ \  |\___/|  / /   /\ \  \
-                            /__/ /  \___\_\ |\   /| /_/___/  \_\__\
-                             \  /  .-""-.  / | '-' | \  .-""-.  \  /
-                                \/  /  ()  \ \ |  |  | / /  ()  \  \/
-                                 | |   /\   | | |  |  | |   /\   | |
-                                 | |  (  )  | | |  |  | |  (  )  | |
-                                 | |   \/   | | |  |  | |   \/   | |
-                             __| |_________| |_|__|_| |_________| |__
-                        .-'   /  .-..-.   \  .--.  /   .-..-.  \   '-.
-                    .'     /  /  /  \   \ |__| /   /  /  \  \      '.
-                 /      /__/__/____\   \____/   /____\__\__\       \
-                /       \  .--------.   .--.   .--------.  /        \
-             /         \ '--------'  (____)  '--------' /          \
-            ;           \    ···      (____)     ···   /            ;
-            |            \ .  o  .   .(____).   .  o . /            |
-            |             '--------- .  \__/  . --------'            |
-            |                .  .   (    --    )   .  .              |
-            |                 ·  ·   '-.____.-'    ·  ·              |
-            |                     .     |  |     .                   |
-            |                    /|\    |  |    /|\                  |
-            |                   / | \   |  |   / | \                 |
-            |                  /  |  \  |  |  /  |  \                |
-            |                 /___|___\_|__|_/___|___\               |
-             \                 .  .  .  |  |  .  .  .               /
-                \                   b      |       b                  /
-                 \                  Bb     |      Bb                 /
-                    \                dBBBb   |    dBBBb               /
-                     '------------------------------------------------'
-
-                      ✨ THE SECURITY WIZARD MATERIALIZES ✨
-"""
-
 const WIZARD_COLORS = [33, 39, 45, 51, 87, 123, 159, 105, 69]  # Teal/blue/purple gradient
 
+# ============================================================================
+# Butterfly Theme - Gentle & Supportive Edition 🦋
+# ============================================================================
+
+const BUTTERFLY_ASCII = raw"""
+                    ⋆｡°✩ 
+              ✧･ﾟ: *✧･ﾟ:*    *:･ﾟ✧*:･ﾟ✧
+           ✧      ⋆｡°✩        ⋆｡°✩      ✧
+        ･ﾟ✧   ╱|、         ╱|、   ✧･ﾟ
+           (˚ˎ 。7        (˚ˎ 。7
+         ✧  |、˜〵         |、˜〵  ✧
+            じしˍ,)ノ      じしˍ,)ノ
+       ✧                              ✧
+          ⋆｡°✩    You've got this!   ⋆｡°✩
+               ･ﾟ✧*:･ﾟ✧
+                                        
+                    _   _
+                   (')_(')
+                  ( =^·^= )
+                  (")_(")_/  ✨
+                              
+             🦋  Together we'll make    🦋
+                this workspace secure!
+                                        
+                  ⋆｡°✩       ⋆｡°✩
+                     ✧･ﾟ: *✧･ﾟ:*
+"""
+
+const BUTTERFLY_COLORS = [219, 183, 147, 111, 75, 39, 75, 111, 147, 183]  # Pink/purple gradient
+const PASTEL_COLORS = [219, 225, 189, 195, 159, 123, 87]  # Soft pastels
+const MOTIVATIONAL_PHRASES = [
+    "🌸 You're doing great!",
+    "✨ Every step makes you stronger!",
+    "🦋 Security is a journey, not a destination",
+    "💫 You're learning and growing!",
+    "🌺 Progress, not perfection!",
+    "⭐ You've got this!",
+]
+# pad all motivational phrases to same length
+max_phrase_length = maximum(length.(MOTIVATIONAL_PHRASES))
+for i in eachindex(MOTIVATIONAL_PHRASES)
+    MOTIVATIONAL_PHRASES[i] = rpad(MOTIVATIONAL_PHRASES[i], max_phrase_length)
+end
 """
     get_wizard_art() -> String
 
-Prefer external ASCII art from `src/wiz` if present; fall back to built-in
-WIZARD_ASCII. This lets users drop in custom art without recompiling.
+Load wizard ASCII art from art.jl (wiz variable).
 """
 function get_wizard_art()
-    # Try repo-local path (works when running from project root) and module path
-    candidates = String[
-        joinpath(pwd(), "src", "wiz"),
-        joinpath(@__DIR__, "wiz"),
-    ]
-    for path in candidates
-        if isfile(path)
-            try
-                return read(path, String)
-            catch
-                # ignore and try next candidate
-            end
-        end
-    end
-    return WIZARD_ASCII
+    return wiz
 end
 
 """
-    wizard_entrance_animation()
+    wizard_entrance_animation(; gentle::Bool=false)
 
 Center and render the epic wizard with a subtle shimmering aura.
+If gentle=true, adds a butterfly companion next to the wizard.
 """
-function wizard_entrance_animation()
+function wizard_entrance_animation(; gentle::Bool=false)
     rows, cols = get_terminal_size()
     clear_screen()
     sleep(0.15)
@@ -226,10 +217,31 @@ function wizard_entrance_animation()
         print("\e[38;5;$(color)m" * line * "\e[0m")
     end
 
+    # Add butterfly companion in gentle mode
+    if gentle
+        # Use b3 which has nice small butterflies
+        butterfly_art = raw"""
+   _ " _ 
+  (_\|/_)
+   (/|\) 
+"""
+        butterfly_lines = split(butterfly_art, '\n')
+        # Position butterfly to the right of wizard
+        butterfly_col = start_col + art_width + 5
+        butterfly_row = start_row + div(art_height, 3)
+        
+        for (i, line) in enumerate(butterfly_lines)
+            move_cursor(butterfly_row + i - 1, butterfly_col)
+            # Use pastel colors for butterfly
+            color = PASTEL_COLORS[mod1(i, length(PASTEL_COLORS))]
+            print("\e[38;5;$(color)m" * line * "\e[0m")
+        end
+    end
+
     flush(stdout)
 
     # Twinkles around the wizard for ~2 seconds
-    local twinkles = ["✧", "✨", "⋆"]
+    local twinkles = gentle ? ["✧", "✨", "⋆", "🦋"] : ["✧", "✨", "⋆"]
     # Calculate iterations: ~2 seconds with 0.03s sleep = ~66 iterations
     # Using 15 twinkles gives us coverage, so we'll do multiple passes
     for pass in 1:4  # 4 passes * 15 twinkles * 0.03s ≈ 1.8 seconds
@@ -512,6 +524,133 @@ function flash_warning(times::Int = 3)
 end
 
 """
+    gentle_butterfly_animation()
+
+A calming, supportive butterfly animation with motivational messages.
+Uses butterflies from art.jl (b1, b2, b3).
+"""
+function gentle_butterfly_animation()
+    hide_cursor()
+    rows, cols = get_terminal_size()
+    
+    # Soft fade-in
+    clear_screen()
+    sleep(0.3)
+    
+    # Display multiple butterflies from art.jl
+    butterfly_arts = [b1, b2, b3]
+    all_butterflies = []
+    
+    # Position butterflies across the screen
+    for (idx, butterfly_art) in enumerate(butterfly_arts)
+        lines = split(butterfly_art, '\n')
+        art_height = length(lines)
+        art_width = maximum(length.(lines))
+        
+        # Spread butterflies horizontally
+        start_row = max(1, div(rows - art_height, 2) + rand(-5:5))
+        start_col = div(cols * idx, length(butterfly_arts) + 1) - div(art_width, 2)
+        
+        push!(all_butterflies, (lines, start_row, start_col, art_height, art_width))
+    end
+    
+    # Gentle fade-in with gradient
+    for alpha = 1:length(BUTTERFLY_COLORS)
+        clear_screen()
+        print("\e[0m")
+        
+        # Draw all butterflies
+        for (lines, start_row, start_col, art_height, art_width) in all_butterflies
+            for (i, line) in enumerate(lines)
+                if i <= alpha * div(art_height, length(BUTTERFLY_COLORS))
+                    move_cursor(start_row + i - 1, max(1, start_col))
+                    color = BUTTERFLY_COLORS[mod1(i, length(BUTTERFLY_COLORS))]
+                    print("\e[38;5;$(color)m" * line * "\e[0m")
+                end
+            end
+        end
+        
+        flush(stdout)
+        sleep(0.15)
+    end
+    
+    # Calculate average position for message
+    avg_row = div(rows, 2)
+    
+    # Sparkles and small butterflies floating around
+    sparkles = ["✨", "⭐", "✧", "⋆", "˚", "°", "·"]
+    small_butterflies = ["🦋", "🌸", "🌺", "🌼", "💮", "🌷"]
+    
+    for wave = 1:4
+        # Show motivational phrase
+        phrase = MOTIVATIONAL_PHRASES[mod1(wave, length(MOTIVATIONAL_PHRASES))]
+        phrase_row = min(rows - 2, avg_row + 15)
+        phrase_col = max(1, div(cols - length(phrase), 2))
+        move_cursor(phrase_row, phrase_col)
+        printstyled(phrase, color = :magenta, bold = true)
+        
+        # Gentle sparkles and small butterflies
+        for _ = 1:20
+            r = rand(1:rows)
+            c = rand(1:cols-2)
+            
+            # Avoid drawing over the large butterfly art
+            skip = false
+            for (_, start_row, start_col, art_height, art_width) in all_butterflies
+                if r >= start_row - 2 && r <= start_row + art_height + 2 &&
+                   c >= start_col - 5 && c <= start_col + art_width + 5
+                    skip = true
+                    break
+                end
+            end
+            
+            if !skip
+                move_cursor(r, c)
+                if rand() > 0.5
+                    print("\e[38;5;$(rand(PASTEL_COLORS))m" * rand(sparkles) * "\e[0m")
+                else
+                    print(rand(small_butterflies))
+                end
+            end
+            
+            flush(stdout)
+            sleep(0.04)
+        end
+        
+        sleep(0.5)
+    end
+    
+    # Final calm state
+    sleep(0.5)
+    clear_screen()
+    print("\e[0m")
+    show_cursor()
+end
+
+"""
+    supportive_message_box(title::String, messages::Vector{String})
+
+Display a gentle, supportive message box.
+"""
+function supportive_message_box(title::String, messages::Vector{String})
+    println()
+    printstyled("╔═══════════════════════════════════════════════════════════════════╗\n", color = :light_magenta)
+    printstyled("║  ", color = :light_magenta)
+    printstyled("$title", color = :cyan, bold = true)
+    padding = 65 - length(title)
+    print(" " ^ (padding-2))
+    printstyled("║\n", color = :light_magenta)
+    printstyled("╚═══════════════════════════════════════════════════════════════════╝\n", color = :light_magenta)
+    println()
+    
+    for msg in messages
+        printstyled("  💫 ", color = :light_yellow)
+        println(msg)
+    end
+    println()
+end
+
+"""
     animate_text(text::String, delay::Float64=0.02)
 
 Print text with a typing animation effect.
@@ -526,12 +665,12 @@ function animate_text(text::String, delay::Float64 = 0.02)
 end
 
 """
-    security_setup_wizard(workspace_dir::String=pwd(); force::Bool=false) -> SecurityConfig
+    security_setup_wizard(workspace_dir::String=pwd(); force::Bool=false, gentle::Bool=false) -> SecurityConfig
 
-Launch the EPIC security setup wizard with animated dragon!
-Force explicit acknowledgment of security risks before generating configuration.
+Launch the security setup wizard with either dramatic dragon theme or gentle butterfly theme.
+Set `gentle=true` for a supportive, calm experience without scary dragons.
 """
-function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = false)
+function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = false, gentle::Bool = false)
     # Check if config already exists
     existing_config = load_security_config(workspace_dir)
     if existing_config !== nothing && !force
@@ -548,192 +687,213 @@ function security_setup_wizard(workspace_dir::String = pwd(); force::Bool = fals
         println()
     end
 
-    # EPIC DRAGON ENTRANCE
-    clear_screen()
-    sleep(0.3)
-    
-    # Animate the dragon breathing fire
-    breathing_dragon_animation()
-    
-    sleep(0.5)
-
-    # Flash warnings with increasing intensity
-    flash_warning(3)
-
-    # Clean transition - aggressively clear everything
-    sleep(0.3)
-    
-    # Multiple clears to ensure everything is gone
-    for _ = 1:3
+    if gentle
+        # GENTLE BUTTERFLY ENTRANCE
         clear_screen()
-        print("\e[0m")  # Reset all terminal attributes
-        sleep(0.05)
-    end
-    
-    move_cursor(1, 1)
-    sleep(0.2)
-    
-    # Add top padding and start drawing box from clean position
-    println("\n")
-    print("\e[0m")  # Extra reset before drawing box
-    printstyled(
-        "╔═══════════════════════════════════════════════════════════════════╗\n",
-        color = :yellow,
-        bold = true,
-    )
-    printstyled(
-        "║                                                                   ║\n",
-        color = :yellow,
-        bold = true,
-    )
-    printstyled(
-        "║    YOU ARE CONFIGURING A REMOTE CODE EXECUTION SERVER             ║\n",
-        color = :red,
-        bold = true,
-    )
-    printstyled(
-        "║                                                                   ║\n",
-        color = :yellow,
-        bold = true,
-    )
-    printstyled(
-        "║  This server will execute ANY code sent to it by authenticated    ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║  clients. While MCPRepl includes security features, it is still   ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║  fundamentally a powerful and potentially dangerous tool.         ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║                                                                   ║\n",
-        color = :yellow,
-        bold = true,
-    )
-    printstyled(
-        "║  YOU MUST:                                                        ║\n",
-        color = :cyan,
-        bold = true,
-    )
-    printstyled(
-        "║    • Keep API keys secret and secure                              ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║    • Never commit .mcprepl/ directory to version control          ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║    • Only allow trusted IPs in production environments            ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║    • Understand that API keys grant FULL code execution rights    ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║    • Take responsibility for any code executed through this       ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║      server and understand the security implications              ║\n",
-        color = :white,
-    )
-    printstyled(
-        "║                                                                   ║\n",
-        color = :yellow,
-        bold = true,
-    )
-    printstyled(
-        "╚═══════════════════════════════════════════════════════════════════╝\n",
-        color = :yellow,
-        bold = true,
-    )
-    println()
-
-    # Force explicit acknowledgment with character-by-character input
-    printstyled(
-        "Hold SPACE to continue (or type 'I UNDERSTAND THE RISKS'): ",
-        color = :red,
-        bold = true,
-    )
-    
-    target_text = "I UNDERSTAND THE RISKS"
-    typed_text = ""
-    space_count = 0
-    
-    # Enable raw mode to read characters one by one
-    try
-        Base.Libc.systemsleep(0.01)
-        ccall(:jl_tty_set_mode, Int32, (Ptr{Cvoid}, Int32), stdin.handle, 1)
+        sleep(0.3)
         
-        while true
-            if eof(stdin)
-                break
-            end
+        # Show butterflies and motivation
+        gentle_butterfly_animation()
+        
+        sleep(0.5)
+        
+        # Supportive security information
+        supportive_message_box(
+            "🌸 Let's Set Up Your Workspace Security! 🌸",
+            [
+                "We're going to configure some security settings together.",
+                "This will help keep your workspace safe and sound.",
+                "Don't worry - I'll guide you through each step!",
+                "",
+                "Security is important because this tool can run code.",
+                "We'll set up protection so only you can use it.",
+                "Think of it like putting a lock on your door. 🔐",
+            ]
+        )
+    else
+        # EPIC DRAGON ENTRANCE
+        clear_screen()
+        sleep(0.3)
+        
+        # Animate the dragon breathing fire
+        breathing_dragon_animation()
+        
+        sleep(0.5)
+
+        # Flash warnings with increasing intensity
+        flash_warning(3)
+
+        # Clean transition - aggressively clear everything
+        sleep(0.3)
+        
+        # Multiple clears to ensure everything is gone
+        for _ = 1:3
+            clear_screen()
+            print("\e[0m")  # Reset all terminal attributes
+            sleep(0.05)
+        end
+        
+        move_cursor(1, 1)
+        sleep(0.2)
+        
+        # Add top padding and start drawing box from clean position
+        println("\n")
+        print("\e[0m")  # Extra reset before drawing box
+        printstyled(
+            "╔═══════════════════════════════════════════════════════════════════╗\n",
+            color = :yellow,
+            bold = true,
+        )
+        printstyled(
+            "║                                                                   ║\n",
+            color = :yellow,
+            bold = true,
+        )
+        printstyled(
+            "║    YOU ARE CONFIGURING A REMOTE CODE EXECUTION SERVER             ║\n",
+            color = :red,
+            bold = true,
+        )
+        printstyled(
+            "║                                                                   ║\n",
+            color = :yellow,
+            bold = true,
+        )
+        printstyled(
+            "║  This server will execute ANY code sent to it by authenticated    ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║  clients. While MCPRepl includes security features, it is still   ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║  fundamentally a powerful and potentially dangerous tool.         ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║                                                                   ║\n",
+            color = :yellow,
+            bold = true,
+        )
+        printstyled(
+            "║  YOU MUST:                                                        ║\n",
+            color = :cyan,
+            bold = true,
+        )
+        printstyled(
+            "║    • Keep API keys secret and secure                              ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║    • Never commit .mcprepl/ directory to version control          ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║    • Only allow trusted IPs in production environments            ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║    • Understand that API keys grant FULL code execution rights    ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║    • Take responsibility for any code executed through this       ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║      server and understand the security implications              ║\n",
+            color = :white,
+        )
+        printstyled(
+            "║                                                                   ║\n",
+            color = :yellow,
+            bold = true,
+        )
+        printstyled(
+            "╚═══════════════════════════════════════════════════════════════════╝\n",
+            color = :yellow,
+            bold = true,
+        )
+        println()
+
+        # Force explicit acknowledgment with character-by-character input
+        printstyled(
+            "Hold SPACE to continue (or type 'I UNDERSTAND THE RISKS'): ",
+            color = :red,
+            bold = true,
+        )
+        
+        target_text = "I UNDERSTAND THE RISKS"
+        typed_text = ""
+        space_count = 0
+        
+        # Enable raw mode to read characters one by one
+        try
+            ccall(:jl_tty_set_mode, Int32, (Ptr{Cvoid}, Int32), stdin.handle, 1)
             
-            c = read(stdin, Char)
-            
-            if c == ' '
-                space_count += 1
-                # Auto-type the message as they hold space
-                if space_count <= length(target_text)
-                    print(target_text[space_count])
-                    typed_text *= string(target_text[space_count])
-                    flush(stdout)
-                end
-                
-                if space_count >= length(target_text)
+            while typed_text != target_text
+                if eof(stdin)
                     break
                 end
-            elseif c == '\r' || c == '\n'
-                break
-            elseif c == '\x7f' || c == '\b'  # Backspace
-                if !isempty(typed_text)
-                    typed_text = typed_text[1:end-1]
-                    space_count = max(0, space_count - 1)
-                    print("\b \b")
+                
+                char = read(stdin, Char)
+                
+                if char == ' '
+                    space_count += 1
+                    # Auto-type the message as they hold space
+                    if space_count <= length(target_text)
+                        print(target_text[space_count])
+                        typed_text *= string(target_text[space_count])
+                        flush(stdout)
+                    end
+                    
+                    if space_count >= length(target_text)
+                        break
+                    end
+                elseif char == '\r' || char == '\n'
+                    break
+                elseif char == '\x7f' || char == '\b'
+                    if !isempty(typed_text)
+                        typed_text = typed_text[1:end-1]
+                        space_count = max(0, space_count - 1)
+                        print("\b \b")
+                        flush(stdout)
+                    end
+                else
+                    # Accept any printable character for manual typing
+                    typed_text *= char
+                    print(char)
                     flush(stdout)
                 end
-            else
-                print(c)
-                typed_text *= string(c)
-                flush(stdout)
             end
+        finally
+            ccall(:jl_tty_set_mode, Int32, (Ptr{Cvoid}, Int32), stdin.handle, 0)
         end
-    finally
-        # Restore normal mode
-        ccall(:jl_tty_set_mode, Int32, (Ptr{Cvoid}, Int32), stdin.handle, 0)
-    end
-    
-    println()
-
-    if typed_text != target_text
+        
         println()
-        printstyled("❌ Setup cancelled. Safety first! 🛡️\n", color = :green, bold = true)
+
+        if typed_text != target_text
+            error("Security setup cancelled by user")
+        end
+
         println()
-        error("Security setup cancelled by user")
-    end
-
-    println()
-    printstyled("✅ Acknowledgment accepted. Proceeding with setup...\n", color = :green)
-    println()
-    sleep(0.8)
+        printstyled("✅ Acknowledgment accepted. Proceeding with setup...\n", color = :green)
+        println()
+        sleep(0.8)
+        
+        # The Wizard appears!
+        wizard_entrance_animation(gentle=gentle)
+        println()
+        sleep(0.6)
+        
+        printstyled("The wizard speaks: ", color = :magenta, bold = true)
+        sleep(0.5)
+        animate_text("\"Let us configure your realm's defenses...\"", 0.04)
+        println()
+        sleep(0.8)
+    end  # End of if gentle / else dragon theme
     
-    # The Wizard appears!
-    wizard_entrance_animation()
-    println()
-    sleep(0.6)
-    
-    printstyled("The wizard speaks: ", color = :magenta, bold = true)
-    sleep(0.5)
-    animate_text("\"Let us configure your realm's defenses...\"", 0.04)
-    println()
-    sleep(0.8)
-
     # Choose security mode
     printstyled("🔐 Choose Security Mode\n", color = :cyan, bold = true)
     println()
@@ -999,4 +1159,17 @@ function quick_setup(mode::Symbol = :strict, port::Int = 3000, workspace_dir::St
     else
         error("Failed to save security configuration")
     end
+end
+
+"""
+    gentle_setup(mode::Symbol=:strict, port::Int=3000, workspace_dir::String=pwd()) -> SecurityConfig
+
+Gentle version of security setup with butterflies instead of dragons! 🦋
+Perfect for users who prefer a supportive, calm experience.
+
+Uses the same security configuration options as the regular setup,
+but with a kinder, more encouraging presentation.
+"""
+function gentle_setup(mode::Symbol = :strict, port::Int = 3000, workspace_dir::String = pwd())
+    return security_setup_wizard(workspace_dir; force = false, gentle = true)
 end

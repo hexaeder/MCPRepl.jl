@@ -75,8 +75,16 @@ On first run, MCPRepl will guide you through security setup:
 
 ```julia
 julia> using MCPRepl
-julia> MCPRepl.setup()  # Interactive setup wizard
+julia> MCPRepl.setup()  # Interactive setup wizard (dragon theme 🐉)
+
+Prefer the gentle butterfly experience? Call setup with the keyword argument:
+
+```julia
+julia> MCPRepl.setup(; gentle=true)  # Gentle butterfly theme 🦋
 ```
+**Prefer a gentler experience?** Use the butterfly theme instead:
+
+Both wizards configure the same security options, just with different visual styles!
 
 Or use quick setup for automation:
 
@@ -124,7 +132,26 @@ MCPRepl.deny_ip("192.168.1.100")
 
 # Change security mode
 MCPRepl.set_security_mode(:relaxed)
+
+# Reset configuration and start fresh
+MCPRepl.reset()  # Removes all generated files
 ```
+
+### Resetting Configuration
+
+If you need to start fresh or completely remove MCPRepl configuration:
+
+```julia
+MCPRepl.reset()
+```
+
+This will remove:
+- `.mcprepl/` directory (security config and API keys)
+- `.julia-startup.jl` script
+- VS Code Julia startup configuration
+- MCP server entries from `.vscode/mcp.json`
+
+After resetting, you can run `MCPRepl.setup()` again to reconfigure.
 
 ### Security Best Practices
 
