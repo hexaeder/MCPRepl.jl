@@ -15,6 +15,7 @@ include("MCPServer.jl")
 include("setup.jl")
 include("vscode.jl")
 include("lsp.jl")
+include("Generate.jl")
 
 # ============================================================================
 # VS Code Response Storage for Bidirectional Communication
@@ -2374,5 +2375,6 @@ export start!, stop!, setup, test_server, reset
 export setup_security, security_status, generate_key, revoke_key
 export allow_ip, deny_ip, set_security_mode, quick_setup, gentle_setup
 export call_tool, list_tools
+export Generate  # Project template generator module
 
 end #module
