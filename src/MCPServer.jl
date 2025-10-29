@@ -7,7 +7,8 @@ import ..MCPRepl:
 
 # Tool definition structure
 struct MCPTool
-    name::String
+    id::Symbol                    # Internal identifier (:exec_repl)
+    name::String                  # JSON-RPC name ("exec_repl")
     description::String
     parameters::Dict{String,Any}
     handler::Function
@@ -17,12 +18,14 @@ end
 struct MCPServer
     port::Int
     server::HTTP.Server
-    tools::Dict{String,MCPTool}
+    tools::Dict{Symbol,MCPTool}           # Symbol-keyed registry
+    name_to_id::Dict{String,Symbol}       # String→Symbol lookup for JSON-RPC
 end
 
 # Create request handler with access to tools
 function create_handler(
-    tools::Dict{String,MCPTool},
+    tools::Dict{Symbol,MCPTool},
+    name_to_id::Dict{String,Symbol},
     port::Int,
     security_config::Union{SecurityConfig,Nothing} = nothing,
 )
@@ -286,9 +289,11 @@ function create_handler(
 
             # Handle tool calls
             if request["method"] == "tools/call"
-                tool_name = request["params"]["name"]
-                if haskey(tools, tool_name)
-                    tool = tools[tool_name]
+                tool_name_str = request["params"]["name"]
+                tool_id = get(name_to_id, tool_name_str, nothing)
+                
+                if tool_id !== nothing && haskey(tools, tool_id)
+                    tool = tools[tool_id]
                     args = get(request["params"], "arguments", Dict())
 
                     # Non-streaming mode (streaming handled in hybrid_handler)
@@ -313,7 +318,7 @@ function create_handler(
                         "id" => request["id"],
                         "error" => Dict(
                             "code" => -32602,
-                            "message" => "Tool not found: $tool_name",
+                            "message" => "Tool not found: $tool_name_str",
                         ),
                     )
                     return HTTP.Response(
@@ -389,7 +394,10 @@ function start_mcp_server(
     verbose::Bool = true,
     security_config::Union{SecurityConfig,Nothing} = nothing,
 )
-    tools_dict = Dict(tool.name => tool for tool in tools)
+    # Build symbol-keyed registry
+    tools_dict = Dict{Symbol,MCPTool}(tool.id => tool for tool in tools)
+    # Build string→symbol mapping for JSON-RPC
+    name_to_id = Dict{String,Symbol}(tool.name => tool.id for tool in tools)
 
     # Create a hybrid handler that supports both regular and streaming responses
     function hybrid_handler(http::HTTP.Stream)
@@ -502,8 +510,10 @@ function start_mcp_server(
             # hybrid_handler only handles streaming; everything else goes to create_handler
             is_streaming_call = false
             if request["method"] == "tools/call"
-                tool_name = request["params"]["name"]
-                if haskey(tools_dict, tool_name)
+                tool_name_str = request["params"]["name"]
+                tool_id = get(name_to_id, tool_name_str, nothing)
+                
+                if tool_id !== nothing && haskey(tools_dict, tool_id)
                     args = get(request["params"], "arguments", Dict())
 
                     # Check Accept header for text/event-stream support
@@ -522,7 +532,7 @@ function start_mcp_server(
 
             # Handle streaming tools/call inline
             if is_streaming_call
-                tool = tools_dict[tool_name]
+                tool = tools_dict[tool_id]
                 args = get(request["params"], "arguments", Dict())
 
                 # Set up SSE headers for streaming response
@@ -599,7 +609,7 @@ function start_mcp_server(
             # - VS Code response endpoint
             # - initialize, tools/list, and non-streaming tools/call
             req_with_body = HTTP.Request(req.method, req.target, req.headers, body)
-            handler = create_handler(tools_dict, port, security_config)
+            handler = create_handler(tools_dict, name_to_id, port, security_config)
             response = handler(req_with_body)
 
             HTTP.setstatus(http, response.status)
@@ -679,7 +689,7 @@ function start_mcp_server(
         println("MCP Server running on port $port with $(length(tools)) tools")
     end
 
-    return MCPServer(port, server, tools_dict)
+    return MCPServer(port, server, tools_dict, name_to_id)
 end
 
 function stop_mcp_server(server::MCPServer)

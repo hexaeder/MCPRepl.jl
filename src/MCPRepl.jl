@@ -18,6 +18,73 @@ include("lsp.jl")
 include("Generate.jl")
 
 # ============================================================================
+# Tool Definition Macros
+# ============================================================================
+
+"""
+    @mcp_tool id description params handler
+
+Define an MCP tool with symbol-based identification.
+
+# Arguments
+- `id`: Symbol literal (e.g., :exec_repl) - becomes both internal ID and string name
+- `description`: String describing the tool
+- `params`: Parameters schema Dict
+- `handler`: Function taking (args) or (args, stream_channel)
+
+# Examples
+```julia
+tool = @mcp_tool :exec_repl "Execute Julia code" Dict(
+    "type" => "object",
+    "properties" => Dict("expression" => Dict("type" => "string")),
+    "required" => ["expression"]
+) (args, stream_channel=nothing) -> begin
+    execute_repllike(get(args, "expression", ""); stream_channel=stream_channel)
+end
+```
+"""
+macro mcp_tool(id, description, params, handler)
+    if !(id isa QuoteNode || (id isa Expr && id.head == :quote))
+        error("@mcp_tool requires a symbol literal for id, got: $id")
+    end
+    
+    # Extract the symbol from QuoteNode
+    id_sym = id isa QuoteNode ? id.value : id.args[1]
+    name_str = string(id_sym)
+    
+    return esc(quote
+        MCPTool(
+            $(QuoteNode(id_sym)),    # :exec_repl
+            $name_str,                # "exec_repl"
+            $description,
+            $params,
+            $handler
+        )
+    end)
+end
+
+"""
+    text_parameter(name, description; required=true)
+
+Helper to create a simple string parameter schema.
+"""
+function text_parameter(name::String, description::String; required::Bool=true)
+    schema = Dict(
+        "type" => "object",
+        "properties" => Dict(
+            name => Dict(
+                "type" => "string",
+                "description" => description
+            )
+        )
+    )
+    if required
+        schema["required"] = [name]
+    end
+    return schema
+end
+
+# ============================================================================
 # VS Code Response Storage for Bidirectional Communication
 # ============================================================================
 
@@ -615,11 +682,11 @@ function start!(;
         println()
     end
 
-    usage_instructions_tool = MCPTool(
-        "usage_instructions",
-        "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents.",
-        Dict("type" => "object", "properties" => Dict(), "required" => []),
-        args -> begin
+    usage_instructions_tool = @mcp_tool :usage_instructions "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents." Dict(
+        "type" => "object",
+        "properties" => Dict(),
+        "required" => []
+    ) (args -> begin
             try
                 workflow_path = joinpath(
                     dirname(dirname(@__FILE__)),
@@ -2291,45 +2358,41 @@ function set_security_mode(mode::Symbol)
 end
 
 """
-    call_tool(tool_name::String, args::Dict)
+    call_tool(tool_id::Union{Symbol,String}, args::Dict)
 
 Call an MCP tool directly from the REPL without hanging.
 
 This helper function handles the two-parameter signature that most tools expect
 (args and stream_channel), making it easier to call tools programmatically.
 
+**Symbol-first API**: Pass symbols (e.g., `:exec_repl`) for type safety.
+String names are still supported for backward compatibility.
+
 # Examples
 ```julia
-# Execute REPL code
+# Symbol-based (recommended)
+MCPRepl.call_tool(:exec_repl, Dict("expression" => "2 + 2"))
+MCPRepl.call_tool(:investigate_environment, Dict())
+MCPRepl.call_tool(:search_methods, Dict("query" => "println"))
+
+# String-based (deprecated, for compatibility)
 MCPRepl.call_tool("exec_repl", Dict("expression" => "2 + 2"))
-
-# Get environment information
-MCPRepl.call_tool("investigate_environment", Dict())
-
-# Search for methods
-MCPRepl.call_tool("search_methods", Dict("query" => "println"))
-
-# Expand a macro
-MCPRepl.call_tool("macro_expand", Dict("expression" => "@time sleep(0.1)"))
-
-# Execute a VS Code command
-MCPRepl.call_tool("execute_vscode_command", Dict("command" => "workbench.action.files.saveAll"))
 ```
 
 # Available Tools
 Call `list_tools()` to see all available tools and their descriptions.
 """
-function call_tool(tool_name::String, args::Dict)
+function call_tool(tool_id::Symbol, args::Dict)
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
 
     server = SERVER[]
-    if !haskey(server.tools, tool_name)
-        error("Tool '$tool_name' not found. Call list_tools() to see available tools.")
+    if !haskey(server.tools, tool_id)
+        error("Tool :$tool_id not found. Call list_tools() to see available tools.")
     end
 
-    tool = server.tools[tool_name]
+    tool = server.tools[tool_id]
 
     # Try calling with both parameters first (for streaming support)
     # If that fails, try with just args (for simpler handlers)
@@ -2343,6 +2406,13 @@ function call_tool(tool_name::String, args::Dict)
             rethrow(e)
         end
     end
+end
+
+# String-based overload for backward compatibility (deprecated)
+function call_tool(tool_name::String, args::Dict)
+    @warn "String-based tool names are deprecated. Use :$(Symbol(tool_name)) instead." maxlog=1
+    tool_id = Symbol(tool_name)
+    return call_tool(tool_id, args)
 end
 
 """
