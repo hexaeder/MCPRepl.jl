@@ -417,12 +417,15 @@ function create_claude_env_settings(
     port::Int,
     api_key::Union{String,Nothing} = nothing,
 )
-    println("🔐 Creating .claude/settings.json...")
+    println("🔐 Creating .claude/settings.local.json...")
 
     claude_dir = joinpath(project_path, ".claude")
     mkpath(claude_dir)
 
-    settings = Dict("env" => Dict{String,String}())
+    settings = Dict(
+        "env" => Dict{String,String}(),
+        "enabledMcpjsonServers" => ["julia-repl"]
+    )
     
     if api_key !== nothing
         settings["env"]["JULIA_MCP_API_KEY"] = api_key
@@ -431,7 +434,7 @@ function create_claude_env_settings(
     # Always add the port
     settings["env"]["JULIA_MCP_PORT"] = string(port)
 
-    settings_path = joinpath(claude_dir, "settings.json")
+    settings_path = joinpath(claude_dir, "settings.local.json")
     write(settings_path, JSON.json(settings, 2))
     
     return true
@@ -611,10 +614,10 @@ $project_name/
 $(has_api_key ? """
 ### Environment Setup
 
-Your API key is in `.env` and `.claude/settings.json` (both git-ignored).
+Your API key is in `.env` and `.claude/settings.local.json` (both git-ignored).
 
 - **VS Code**: Auto-loads `.env`
-- **Claude Desktop**: Auto-loads `.claude/settings.json`  
+- **Claude Desktop**: Auto-loads `.claude/settings.local.json`  
 - **Other tools**: Set `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` manually
 
 To view your key: `cat .env`
@@ -639,7 +642,7 @@ MCPRepl.setup()
 **For AI agents**: See [AGENTS.md](AGENTS.md) for detailed guidelines.
 
 **VS Code**: Open project, start Julia REPL$(has_api_key ? " (`.env` auto-loaded)" : "")  
-**Claude Desktop**: Config in `.mcp.json`$(has_api_key ? " (`.claude/settings.json` auto-loaded)" : "")  
+**Claude Desktop**: Config in `.mcp.json`$(has_api_key ? " (`.claude/settings.local.json` auto-loaded)" : "")  
 **Gemini**: Configured in `~/.gemini/settings.json`$(has_api_key ? " (`.env` auto-loaded)" : "")
 
 ## Troubleshooting
@@ -923,16 +926,16 @@ use environment variables `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` for configura
 
 - **Security**: API keys are not stored in version-controlled config files
 - **Portability**: Different projects can use different ports/keys
-- **Convenience**: Automatically loaded from `.env` and `.claude/settings.json`
+- **Convenience**: Automatically loaded from `.env` and `.claude/settings.local.json`
 - **Safety**: Config files can be safely committed to git
 
 The actual API key and port are stored in:
 - `.mcprepl/security.json` (master config, git-ignored)
 - `.env` (auto-loaded by most tools, git-ignored)
-- `.claude/settings.json` (auto-loaded by Claude Desktop, git-ignored)
+- `.claude/settings.local.json` (auto-loaded by Claude Desktop, git-ignored)
 
 **For AI Agents**: If authentication fails:
-1. Check that `.env` or `.claude/settings.json` exists with correct values
+1. Check that `.env` or `.claude/settings.local.json` exists with correct values
 2. Verify environment variables are loaded (`JULIA_MCP_API_KEY` and `JULIA_MCP_PORT`)
 3. Confirm the values match those in `.mcprepl/security.json`
 3. Remind users to restart their terminal/IDE after setting environment variables
