@@ -25,6 +25,31 @@ function execute_repllike(str)
             If you need to use a third-party 'activate' function, add '# overwrite no-activate-rule' at the end of your command.
         """
     end
+    if contains(str, "Pkg.add(")
+        return """
+            ERROR: Using Pkg.add to install packages is not allowed.
+            You should assume all necessary packages are already installed in the environment.
+            If you need another package, prompt the user!
+        """
+    end
+    # eval using/import to suppress interactive ask for instllation
+    if contains(str, r"(^|\n)using\s") || contains(str, r"(^|\n)import\s")
+        # Replace each import/using statement with @eval prefix
+        str = replace(str, r"(^|\n)(using\s[^\n]*)" => s"\1@eval \2")
+        str = replace(str, r"(^|\n)(import\s[^\n]*)" => s"\1@eval \2")
+    end
+
+
+    # alternative approach to @eval on using/import?
+    # old_stdin = stdin
+    # redirect_stdin(devnull)
+    # try
+    #     using Optim
+    # catch e
+    #     rethrow(e)
+    # finally
+    #     redirect_stdin(old_stdin)
+    # end
 
     repl = Base.active_repl
     # expr = Meta.parse(str)
@@ -39,7 +64,7 @@ function execute_repllike(str)
     captured_output = Pipe()
     response = redirect_stdout(captured_output) do
         redirect_stderr(captured_output) do
-            r = REPL.eval_with_backend(expr, backend)
+            r = REPL.eval_on_backend(expr, backend)
             close(Base.pipe_writer(captured_output))
             r
         end
