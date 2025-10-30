@@ -529,7 +529,7 @@ function create_gemini_config_template(
     port::Int,
     api_key::Union{String,Nothing} = nothing,
 )
-    println("💎 Creating Gemini config template...")
+    println("💎 Creating Gemini config...")
 
     config_template = if api_key === nothing
         """
@@ -556,10 +556,17 @@ function create_gemini_config_template(
 """
     end
 
+    # Write to both locations: project template and user's .gemini directory
     template_path = joinpath(project_path, "gemini-settings.json")
     write(template_path, config_template)
-
-    println("   ℹ️  Copy this to ~/.gemini/settings.json to use with Gemini")
+    
+    # Also write to ~/.gemini/settings.json
+    gemini_dir = joinpath(homedir(), ".gemini")
+    mkpath(gemini_dir)
+    gemini_config_path = joinpath(gemini_dir, "settings.json")
+    write(gemini_config_path, config_template)
+    
+    println("   ✓ Written to ~/.gemini/settings.json")
     return true
 end
 
@@ -581,7 +588,7 @@ A Julia project with AI agent integration via MCPRepl.
 
 ```bash
 cd $project_name
-julia --project=.
+./repl
 ```
 
 The MCP server will start automatically when Julia launches!
@@ -590,194 +597,58 @@ The MCP server will start automatically when Julia launches!
 
 ```
 $project_name/
-├── src/
-│   └── $project_name.jl          # Main module
-├── test/
-│   └── runtests.jl                # Test suite
-├── .mcprepl/
-│   └── security.json              # Security configuration
-├── .vscode/
-│   ├── mcp.json                   # VS Code MCP config
-│   └── settings.json              # VS Code settings
-├── .julia-startup.jl              # Auto-starts MCP server
-├── Project.toml                   # Package manifest
-├── AGENTS.md                      # Guide for AI agents
-└── README.md                      # This file
+├── src/                # Source code
+├── test/               # Test suite
+├── .mcprepl/           # Security configuration (git-ignored)
+├── .vscode/            # VS Code MCP config
+└── AGENTS.md           # AI agent guidelines
 ```
 
-## Security Configuration
+## Security
 
-**Security Mode**: `$mode`
-**Port**: `$port`
-$(has_api_key ? "**API Key**: `$(first(api_keys))`" : "**Authentication**: None (localhost only)")
+**Mode**: `$mode` | **Port**: `$port`$(has_api_key ? " | **API Key**: See `.env`" : " | **Auth**: None (localhost only)")
 
 $(has_api_key ? """
-### Environment Configuration
+### Environment Setup
 
-The project includes a `.env` file and `.claude/settings.json` with the API key and port.
-These files are git-ignored for security.
+Your API key is in `.env` and `.claude/settings.json` (both git-ignored).
 
-- **VS Code**: Automatically loads `.env` 
-- **Claude Desktop**: Automatically loads `.claude/settings.json`
-- **Other tools**: Load `.env` or set `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` manually
+- **VS Code**: Auto-loads `.env`
+- **Claude Desktop**: Auto-loads `.claude/settings.json`  
+- **Other tools**: Set `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` manually
 
-#### Manual Environment Setup (if needed)
+To view your key: `cat .env`
 
-If your tool doesn't auto-load `.env`, add to your `~/.zshrc`, `~/.bashrc`, or `~/.profile`:
-
-```bash
-export JULIA_MCP_API_KEY="$(first(api_keys))"
-export JULIA_MCP_PORT="$port"
-```
-
-Then reload your shell:
-
-```bash
-source ~/.zshrc  # or ~/.bashrc
-```
-
-#### On Windows:
-
-PowerShell:
-
-```powershell
-[System.Environment]::SetEnvironmentVariable('JULIA_MCP_API_KEY', '$(first(api_keys))', 'User')
-[System.Environment]::SetEnvironmentVariable('JULIA_MCP_PORT', '$port', 'User')
-```
-
-#### Verification
-
-Verify the environment variables are set:
-
-```bash
-# macOS/Linux
-echo \$JULIA_MCP_API_KEY
-echo \$JULIA_MCP_PORT
-
-# Windows PowerShell
-echo \$env:JULIA_MCP_API_KEY
-echo \$env:JULIA_MCP_PORT
-```
-
-**Security Note**: The API key is stored in `.mcprepl/security.json`, `.env`, and `.claude/settings.json` (all git-ignored).
-The MCP config files (`.vscode/mcp.json`, `claude-mcp-config.json`, `gemini-settings.json`) 
-reference the environment variable, making them safe to commit to version control.
-""" : "")
-
-### Security Modes
-
-- **:lax** - Localhost only, no API key (development)
-- **:relaxed** - API key required, any IP (testing)
-- **:strict** - API key + IP allowlist (production)
-
-To change security settings, edit `.mcprepl/security.json` or run:
+To change security mode:
 
 ```julia
 using MCPRepl
-MCPRepl.setup()  # Interactive wizard
+MCPRepl.setup()
 ```
+""" : """
+To change security mode:
+
+```julia
+using MCPRepl
+MCPRepl.setup()
+```
+""")
 
 ## AI Agent Integration
 
-$(has_api_key ? "**Important**: Ensure environment variables are set (see `.env` file or set `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` manually).\n\n" : "")### VS Code Copilot
+**For AI agents**: See [AGENTS.md](AGENTS.md) for detailed guidelines.
 
-Configuration is already set up in `.vscode/mcp.json`. Just:
-
-1. Open this project in VS Code
-2. $(has_api_key ? "Ensure environment variables are loaded from `.env`\n3. " : "")Start Julia REPL$(has_api_key ? "\n4. AI agents can now interact with your REPL!" : "\n3. AI agents can now interact with your REPL!")
-
-### Claude Desktop
-
-$(if has_api_key
-    """
-Configuration is in `claude-mcp-config.json`. Environment variables are automatically loaded from `.env` by Claude Desktop.
-
-Alternatively, to add via CLI:
-
-```bash
-claude mcp add julia-repl http://localhost:\${JULIA_MCP_PORT} \\
-  --transport http \\
-  --header "Authorization: Bearer \${JULIA_MCP_API_KEY}"
-```
-"""
-else
-    """
-```bash
-claude mcp add julia-repl http://localhost:\${JULIA_MCP_PORT} --transport http
-```
-
-Environment variables are automatically loaded from `.env`.
-"""
-end)
-
-### Gemini
-
-Copy `gemini-settings.json` to `~/.gemini/settings.json`$(has_api_key ? "\n\nEnvironment variables are automatically loaded from `.env`." : "")
-
-## Usage
-
-### Running Tests
-
-```julia
-julia> using Pkg
-julia> Pkg.test()
-```
-
-Or from the command line:
-
-```bash
-julia --project=. -e 'using Pkg; Pkg.test()'
-```
-
-### Adding Dependencies
-
-```julia
-julia> using Pkg
-julia> Pkg.add("PackageName")
-```
-
-### Working with AI Agents
-
-See [AGENTS.md](AGENTS.md) for detailed guidelines on how AI agents should interact with this project.
-
-## Development
-
-The project uses:
-
-- **MCPRepl.jl** - Exposes REPL to AI agents via MCP protocol
-- **Revise.jl** (optional) - Hot reloading of code changes
-
-Install Revise for better development experience:
-
-```julia
-julia> using Pkg
-julia> Pkg.add("Revise")
-```
+**VS Code**: Open project, start Julia REPL$(has_api_key ? " (`.env` auto-loaded)" : "")  
+**Claude Desktop**: Config in `.mcp.json`$(has_api_key ? " (`.claude/settings.json` auto-loaded)" : "")  
+**Gemini**: Configured in `~/.gemini/settings.json`$(has_api_key ? " (`.env` auto-loaded)" : "")
 
 ## Troubleshooting
 
-### Server won't start
+**Port in use?** Override with: `JULIA_MCP_PORT=3001 julia --project=.`
 
-Check that port $port is available:
+**Auth fails?** Check API key: `cat .env`
 
-```bash
-lsof -i :$port  # macOS/Linux
-netstat -ano | findstr :$port  # Windows
-```
-
-Override port with environment variable:
-
-```bash
-JULIA_MCP_PORT=3001 julia --project=.
-```
-
-### Permission denied
-
-On Unix systems, ports < 1024 require root. Use port ≥ 1024.
-
-### API key authentication fails
-
-Verify the API key in `.mcprepl/security.json` matches your client configuration.
+**Server won't start?** Restart Julia or check port: `lsof -i :$port`
 
 ## License
 
