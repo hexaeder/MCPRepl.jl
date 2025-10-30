@@ -281,6 +281,11 @@ function install_startup_script(; emoticon::String = "🐉")
     return Generate.create_startup_script(dirname(startup_path), port, emoticon)
 end
 
+function install_repl_script()
+    """Install the repl launcher script in the current workspace"""
+    return Generate.create_repl_script(pwd())
+end
+
 function configure_vscode_julia_args()
     settings = read_vscode_settings()
     startup_path = get_startup_script_path()
@@ -378,6 +383,13 @@ function prompt_and_setup_vscode_startup(; gentle::Bool = false)
                 println("   ❌ Failed to create .julia-startup.jl")
                 success = false
             end
+        end
+        
+        # Also install the repl launcher script
+        if install_repl_script()
+            println("   ✅ Created repl launcher script")
+        else
+            println("   ⚠️  Failed to create repl launcher script (optional)")
         end
 
         # Configure VS Code settings if needed

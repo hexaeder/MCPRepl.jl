@@ -23,8 +23,8 @@ import ..MCPRepl
 
 export generate
 # Export file generation functions for use by setup.jl
-export create_security_config, create_startup_script, create_vscode_config
-export create_vscode_settings, create_claude_config_template
+export create_security_config, create_startup_script, create_repl_script
+export create_vscode_config, create_vscode_settings, create_claude_config_template
 export create_gemini_config_template, create_gitignore
 # Export the VS Code commands constant for testing
 export VSCODE_ALLOWED_COMMANDS
@@ -223,6 +223,7 @@ function generate(
     end
 
     create_startup_script(project_path, port, emoticon)
+    create_repl_script(project_path)
     create_vscode_config(project_path, port, api_key)
     create_vscode_settings(project_path)
     create_claude_config_template(project_path, port, api_key)
@@ -241,7 +242,7 @@ function generate(
         println("\e[38;5;214m🔒[0. Set MCPREPL_API_KEY environment variable if needed]🔒\e[0m")
     end
     println("   1. cd $project_path")
-    println("   2. julia --project=. --load=.julia-startup.jl")
+    println("   2. ./repl          # or: julia --project=. --load=.julia-startup.jl")
     println("   3. The MCP server will start automatically!")
     println()
     println("🤖 For AI agents, see AGENTS.md in the project directory")
@@ -352,6 +353,57 @@ end
 
     startup_path = joinpath(project_path, ".julia-startup.jl")
     write(startup_path, startup_content)
+    return true
+end
+
+function create_repl_script(project_path::String)
+    println("🚀 Creating repl launcher script...")
+
+    repl_content = """#!/usr/bin/env bash
+
+# Start Julia REPL with MCPRepl project and auto-load startup script
+# This script sets up the environment and starts the REPL ready for MCP development
+
+# Get the directory where this script is located
+SCRIPT_DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+
+# Export API key from security config if it exists
+CONFIG_FILE="\$SCRIPT_DIR/.mcprepl/security.json"
+if [ -f "\$CONFIG_FILE" ]; then
+    # Extract first API key from security.json using basic tools
+    API_KEY=\$(grep -o '"api_keys"[[:space:]]*:[[:space:]]*\\[[[:space:]]*"[^"]*"' "\$CONFIG_FILE" | grep -o '"[^"]*"\$' | tr -d '"')
+    if [ -n "\$API_KEY" ]; then
+        export JULIA_MCP_API_KEY="\$API_KEY"
+        echo "✓ Exported JULIA_MCP_API_KEY from \$CONFIG_FILE"
+    fi
+    
+    # Extract port if available
+    PORT=\$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9]*' "\$CONFIG_FILE" | grep -o '[0-9]*\$')
+    if [ -n "\$PORT" ]; then
+        export JULIA_MCP_PORT="\$PORT"
+        echo "✓ Exported JULIA_MCP_PORT=\$PORT"
+    fi
+fi
+
+# Start Julia with the project and load the startup script
+echo "Starting Julia REPL with MCPRepl project..."
+echo ""
+
+exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\$@"
+"""
+
+    repl_path = joinpath(project_path, "repl")
+    write(repl_path, repl_content)
+    
+    # Make it executable on Unix-like systems
+    if !Sys.iswindows()
+        try
+            chmod(repl_path, 0o755)
+        catch
+            # Silently fail if chmod isn't available
+        end
+    end
+    
     return true
 end
 
