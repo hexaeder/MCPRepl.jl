@@ -2430,11 +2430,36 @@ function list_tools()
     return tools_info
 end
 
-# Export public API
+"""
+    tool_help(tool_id::Symbol)
+Get detailed help/documentation for a specific MCP tool.
+"""
+function tool_help(tool_id::Symbol)
+    if SERVER[] === nothing
+        error("MCP server is not running. Start it with MCPRepl.start!()")
+    end
+
+    server = SERVER[]
+    if !haskey(server.tools, tool_id)
+        error("Tool :$tool_id not found. Call list_tools() to see available tools.")
+    end
+
+    tool = server.tools[tool_id]
+
+    println("\n📖 Help for MCP Tool :$tool_id")
+    println("="^70)
+    println()
+    println(tool.description)
+    println()
+
+    return tool
+end
+
+# Export public API functions
 export start!, stop!, setup, test_server, reset
 export setup_security, security_status, generate_key, revoke_key
 export allow_ip, deny_ip, set_security_mode, quick_setup, gentle_setup
-export call_tool, list_tools
+export call_tool, list_tools, tool_help
 export Generate  # Project template generator module
 
 end #module
