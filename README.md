@@ -19,11 +19,11 @@ This package is not registered in the official Julia General registry due to the
 You can add the package using the Julia package manager:
 
 ```julia
-pkg> add https://github.com/your-username/MCPRepl.jl
+pkg> add https://github.com/hexaeder/MCPRepl.jl
 ```
 or
 ```julia
-pkg> dev https://github.com/your-username/MCPRepl.jl
+pkg> dev https://github.com/hexaeder/MCPRepl.jl
 ```
 
 ## Usage
