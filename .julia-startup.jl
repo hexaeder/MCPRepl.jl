@@ -1,7 +1,6 @@
 using Pkg
 Pkg.activate(".")
 import Base.Threads
-using MCPRepl
 
 # Load Revise for hot reloading (optional but recommended)
 try
@@ -10,6 +9,7 @@ try
 catch e
     @info "ℹ Revise not loaded (optional - install with: Pkg.add(\"Revise\"))"
 end
+using MCPRepl
 
 # Start MCP REPL server for VS Code Copilot integration
 try
