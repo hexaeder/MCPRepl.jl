@@ -25,7 +25,8 @@ export generate
 # Export file generation functions for use by setup.jl
 export create_security_config, create_startup_script, create_repl_script
 export create_vscode_config, create_vscode_settings, create_claude_config_template
-export create_gemini_config_template, create_gitignore
+export create_gemini_config_template, create_gitignore, create_env_file
+export create_claude_env_settings
 # Export the VS Code commands constant for testing
 export VSCODE_ALLOWED_COMMANDS
 
@@ -224,6 +225,8 @@ function generate(
 
     create_startup_script(project_path, port, emoticon)
     create_repl_script(project_path)
+    create_env_file(project_path, port, api_key)
+    create_claude_env_settings(project_path, port, api_key)
     create_vscode_config(project_path, port, api_key)
     create_vscode_settings(project_path)
     create_claude_config_template(project_path, port, api_key)
@@ -238,9 +241,6 @@ function generate(
     println("✅ Project generated successfully!")
     println()
     println("📍 Next steps:")
-    if security_mode != :lax
-        println("\e[38;5;214m🔒[0. Set MCPREPL_API_KEY environment variable if needed]🔒\e[0m")
-    end
     println("   1. cd $project_path")
     println("   2. ./repl          # or: julia --project=. --load=.julia-startup.jl")
     println("   3. The MCP server will start automatically!")
@@ -358,34 +358,17 @@ end
 
 function create_repl_script(project_path::String)
     println("🚀 Creating repl launcher script...")
-
     repl_content = """#!/usr/bin/env bash
 
 # Start Julia REPL with MCPRepl project and auto-load startup script
-# This script sets up the environment and starts the REPL ready for MCP development
+# This script launches Julia in the project and loads the recommended startup
+# script. Environment configuration is expected to be stored in project
+# configuration (.mcprepl/security.json) or a project .env file managed by
+# the project tools — the launcher intentionally does not alter environment
+# variables.
 
-# Get the directory where this script is located
 SCRIPT_DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
 
-# Export API key from security config if it exists
-CONFIG_FILE="\$SCRIPT_DIR/.mcprepl/security.json"
-if [ -f "\$CONFIG_FILE" ]; then
-    # Extract first API key from security.json using basic tools
-    API_KEY=\$(grep -o '"api_keys"[[:space:]]*:[[:space:]]*\\[[[:space:]]*"[^"]*"' "\$CONFIG_FILE" | grep -o '"[^"]*"\$' | tr -d '"')
-    if [ -n "\$API_KEY" ]; then
-        export JULIA_MCP_API_KEY="\$API_KEY"
-        echo "✓ Exported JULIA_MCP_API_KEY from \$CONFIG_FILE"
-    fi
-    
-    # Extract port if available
-    PORT=\$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9]*' "\$CONFIG_FILE" | grep -o '[0-9]*\$')
-    if [ -n "\$PORT" ]; then
-        export JULIA_MCP_PORT="\$PORT"
-        echo "✓ Exported JULIA_MCP_PORT=\$PORT"
-    fi
-fi
-
-# Start Julia with the project and load the startup script
 echo "Starting Julia REPL with MCPRepl project..."
 echo ""
 
@@ -407,6 +390,53 @@ exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\$@
     return true
 end
 
+function create_env_file(
+    project_path::String,
+    port::Int,
+    api_key::Union{String,Nothing} = nothing,
+)
+    println("🔐 Creating .env file...")
+
+    env_content = "# MCPRepl Environment Configuration\n"
+    env_content *= "# This file contains sensitive information - DO NOT COMMIT\n\n"
+    
+    if api_key !== nothing
+        env_content *= "JULIA_MCP_API_KEY=$api_key\n"
+    end
+    
+    env_content *= "JULIA_MCP_PORT=$port\n"
+
+    env_path = joinpath(project_path, ".env")
+    write(env_path, env_content)
+    
+    return true
+end
+
+function create_claude_env_settings(
+    project_path::String,
+    port::Int,
+    api_key::Union{String,Nothing} = nothing,
+)
+    println("🔐 Creating .claude/settings.json...")
+
+    claude_dir = joinpath(project_path, ".claude")
+    mkpath(claude_dir)
+
+    settings = Dict("env" => Dict{String,String}())
+    
+    if api_key !== nothing
+        settings["env"]["JULIA_MCP_API_KEY"] = api_key
+    end
+    
+    # Always add the port
+    settings["env"]["JULIA_MCP_PORT"] = string(port)
+
+    settings_path = joinpath(claude_dir, "settings.json")
+    write(settings_path, JSON.json(settings, 2))
+    
+    return true
+end
+
 function create_vscode_config(
     project_path::String,
     port::Int,
@@ -417,12 +447,17 @@ function create_vscode_config(
     vscode_dir = joinpath(project_path, ".vscode")
     mkpath(vscode_dir)
 
-    # Build server config
-    server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
+    # Build server config with environment variable for port
+    server_config = Dict{String,Any}(
+        "type" => "http",
+        "url" => "http://localhost:\${env:JULIA_MCP_PORT}"
+    )
 
     # Add Authorization header with environment variable if api_key is provided
     if api_key !== nothing
-        server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer \${env:MCPREPL_API_KEY}")
+        server_config["headers"] = Dict{String,Any}(
+            "Authorization" => "Bearer \${env:JULIA_MCP_API_KEY}"
+        )
     end
 
     mcp_config = Dict("servers" => Dict("julia-repl" => server_config), "inputs" => [])
@@ -462,7 +497,7 @@ function create_claude_config_template(
   "mcpServers": {
     "julia-repl": {
       "type": "http",
-      "url": "http://localhost:$port"
+      "url": "http://localhost:\${JULIA_MCP_PORT}"
     }
   }
 }
@@ -473,9 +508,9 @@ function create_claude_config_template(
   "mcpServers": {
     "julia-repl": {
       "type": "http",
-      "url": "http://localhost:$port",
+      "url": "http://localhost:\${JULIA_MCP_PORT}",
       "headers": {
-        "Authorization": "Bearer \${MCPREPL_API_KEY}"
+        "Authorization": "Bearer \${JULIA_MCP_API_KEY}"
       }
     }
   }
@@ -486,15 +521,6 @@ function create_claude_config_template(
     template_path = joinpath(project_path, ".mcp.json")
     write(template_path, config_template)
 
-    # println("   ℹ️  To use with Claude Desktop, run:")
-    # if api_key === nothing
-    #     println("      claude mcp add julia-repl http://localhost:$port --transport http")
-    # else
-    #     println(
-    #         "      claude mcp add julia-repl http://localhost:$port --transport http \\",
-    #     )
-    #     println("        --header \"Authorization: Bearer \${MCPREPL_API_KEY}\"")
-    # end
     return true
 end
 
@@ -510,7 +536,7 @@ function create_gemini_config_template(
 {
   "mcpServers": {
     "julia-repl": {
-      "url": "http://localhost:$port"
+      "url": "http://localhost:\${JULIA_MCP_PORT}"
     }
   }
 }
@@ -520,9 +546,9 @@ function create_gemini_config_template(
 {
   "mcpServers": {
     "julia-repl": {
-      "url": "http://localhost:$port",
+      "url": "http://localhost:\${JULIA_MCP_PORT}",
       "headers": {
-        "Authorization": "Bearer \${MCPREPL_API_KEY}"
+        "Authorization": "Bearer \${JULIA_MCP_API_KEY}"
       }
     }
   }
@@ -586,17 +612,22 @@ $project_name/
 $(has_api_key ? "**API Key**: `$(first(api_keys))`" : "**Authentication**: None (localhost only)")
 
 $(has_api_key ? """
-### ⚠️  Required: Set Environment Variable
+### Environment Configuration
 
-The MCP configuration files use the `MCPREPL_API_KEY` environment variable for authentication.
-**You must set this environment variable** to the API key shown above.
+The project includes a `.env` file and `.claude/settings.json` with the API key and port.
+These files are git-ignored for security.
 
-#### On macOS/Linux:
+- **VS Code**: Automatically loads `.env` 
+- **Claude Desktop**: Automatically loads `.claude/settings.json`
+- **Other tools**: Load `.env` or set `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` manually
 
-Add to your `~/.zshrc`, `~/.bashrc`, or `~/.profile`:
+#### Manual Environment Setup (if needed)
+
+If your tool doesn't auto-load `.env`, add to your `~/.zshrc`, `~/.bashrc`, or `~/.profile`:
 
 ```bash
-export MCPREPL_API_KEY="$(first(api_keys))"
+export JULIA_MCP_API_KEY="$(first(api_keys))"
+export JULIA_MCP_PORT="$port"
 ```
 
 Then reload your shell:
@@ -610,24 +641,25 @@ source ~/.zshrc  # or ~/.bashrc
 PowerShell:
 
 ```powershell
-[System.Environment]::SetEnvironmentVariable('MCPREPL_API_KEY', '$(first(api_keys))', 'User')
+[System.Environment]::SetEnvironmentVariable('JULIA_MCP_API_KEY', '$(first(api_keys))', 'User')
+[System.Environment]::SetEnvironmentVariable('JULIA_MCP_PORT', '$port', 'User')
 ```
-
-Or set via System Properties → Environment Variables.
 
 #### Verification
 
-Verify the environment variable is set:
+Verify the environment variables are set:
 
 ```bash
 # macOS/Linux
-echo \$MCPREPL_API_KEY
+echo \$JULIA_MCP_API_KEY
+echo \$JULIA_MCP_PORT
 
 # Windows PowerShell
-echo \$env:MCPREPL_API_KEY
+echo \$env:JULIA_MCP_API_KEY
+echo \$env:JULIA_MCP_PORT
 ```
 
-**Security Note**: The API key is stored in `.mcprepl/security.json` (git-ignored).
+**Security Note**: The API key is stored in `.mcprepl/security.json`, `.env`, and `.claude/settings.json` (all git-ignored).
 The MCP config files (`.vscode/mcp.json`, `claude-mcp-config.json`, `gemini-settings.json`) 
 reference the environment variable, making them safe to commit to version control.
 """ : "")
@@ -647,38 +679,40 @@ MCPRepl.setup()  # Interactive wizard
 
 ## AI Agent Integration
 
-$(has_api_key ? "**Important**: Ensure you've set the `MCPREPL_API_KEY` environment variable (see Security Configuration above).\n\n" : "")### VS Code Copilot
+$(has_api_key ? "**Important**: Ensure environment variables are set (see `.env` file or set `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` manually).\n\n" : "")### VS Code Copilot
 
 Configuration is already set up in `.vscode/mcp.json`. Just:
 
 1. Open this project in VS Code
-2. $(has_api_key ? "Ensure `MCPREPL_API_KEY` environment variable is set\n3. " : "")Start Julia REPL$(has_api_key ? "\n4. AI agents can now interact with your REPL!" : "\n3. AI agents can now interact with your REPL!")
+2. $(has_api_key ? "Ensure environment variables are loaded from `.env`\n3. " : "")Start Julia REPL$(has_api_key ? "\n4. AI agents can now interact with your REPL!" : "\n3. AI agents can now interact with your REPL!")
 
 ### Claude Desktop
 
 $(if has_api_key
     """
-Configuration is in `claude-mcp-config.json`. To add:
+Configuration is in `claude-mcp-config.json`. Environment variables are automatically loaded from `.env` by Claude Desktop.
+
+Alternatively, to add via CLI:
 
 ```bash
-claude mcp add julia-repl http://localhost:$port \\
+claude mcp add julia-repl http://localhost:\${JULIA_MCP_PORT} \\
   --transport http \\
-  --header "Authorization: Bearer \${MCPREPL_API_KEY}"
+  --header "Authorization: Bearer \${JULIA_MCP_API_KEY}"
 ```
-
-The `\${MCPREPL_API_KEY}` will be substituted by Claude from your environment variable.
 """
 else
     """
 ```bash
-claude mcp add julia-repl http://localhost:$port --transport http
+claude mcp add julia-repl http://localhost:\${JULIA_MCP_PORT} --transport http
 ```
+
+Environment variables are automatically loaded from `.env`.
 """
 end)
 
 ### Gemini
 
-Copy `gemini-settings.json` to `~/.gemini/settings.json`$(has_api_key ? "\n\nEnsure the `MCPREPL_API_KEY` environment variable is set before starting Gemini." : "")
+Copy `gemini-settings.json` to `~/.gemini/settings.json`$(has_api_key ? "\n\nEnvironment variables are automatically loaded from `.env`." : "")
 
 ## Usage
 
@@ -1011,20 +1045,25 @@ This project uses MCPRepl's security system:
 - Don't expose sensitive data in REPL output
 - Be aware that REPL output is visible to the user
 
-### Environment Variable Authentication
+### Environment Variable Configuration
 
 MCP client configuration files (`.vscode/mcp.json`, `claude-mcp-config.json`, `gemini-settings.json`) 
-use the `MCPREPL_API_KEY` environment variable for authentication. This provides:
+use environment variables `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` for configuration. This provides:
 
-- **Security**: API keys are not stored in version-controlled files
-- **Convenience**: One place to update the key across all clients
+- **Security**: API keys are not stored in version-controlled config files
+- **Portability**: Different projects can use different ports/keys
+- **Convenience**: Automatically loaded from `.env` and `.claude/settings.json`
 - **Safety**: Config files can be safely committed to git
 
-The actual API key is stored in `.mcprepl/security.json` (which is git-ignored).
+The actual API key and port are stored in:
+- `.mcprepl/security.json` (master config, git-ignored)
+- `.env` (auto-loaded by most tools, git-ignored)
+- `.claude/settings.json` (auto-loaded by Claude Desktop, git-ignored)
 
 **For AI Agents**: If authentication fails:
-1. Verify the user has set the `MCPREPL_API_KEY` environment variable
-2. Check that the value matches the key in `.mcprepl/security.json`
+1. Check that `.env` or `.claude/settings.json` exists with correct values
+2. Verify environment variables are loaded (`JULIA_MCP_API_KEY` and `JULIA_MCP_PORT`)
+3. Confirm the values match those in `.mcprepl/security.json`
 3. Remind users to restart their terminal/IDE after setting environment variables
 
 ## Troubleshooting
@@ -1084,6 +1123,10 @@ function create_gitignore(project_path::String)
 # MCPRepl - security config contains API keys
 .mcprepl/
 .julia-startup.jl
+
+# Environment variables - contains API keys and ports
+.env
+.claude/
 
 # VS Code - but keep MCP config files (they use env vars)
 .vscode/*

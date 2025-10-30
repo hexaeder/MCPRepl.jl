@@ -1013,7 +1013,7 @@ function security_setup_wizard(
         printstyled("  }\n\n", color = :white)
 
         println("  Or set the environment variable:")
-        printstyled("    export MCPREPL_API_KEY=\"$api_key\"\n\n", color = :yellow)
+        printstyled("    export JULIA_MCP_API_KEY=\"$api_key\"\n\n", color = :yellow)
 
         print("Press Enter after you've saved the key...")
         readline()

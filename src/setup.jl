@@ -286,6 +286,27 @@ function install_repl_script()
     return Generate.create_repl_script(pwd())
 end
 
+function install_env_file()
+    """Create a project `.env` file from the security configuration."""
+    security_config = load_security_config()
+    port = security_config !== nothing ? security_config.port : 3000
+    api_key = nothing
+    if security_config !== nothing && !isempty(security_config.api_keys)
+        api_key = first(security_config.api_keys)
+    end
+    return Generate.create_env_file(pwd(), port, api_key)
+end
+
+function install_claude_settings()
+    """Create .claude/settings.json with environment variables for Claude."""
+    security_config = load_security_config()
+    api_key = nothing
+    if security_config !== nothing && !isempty(security_config.api_keys)
+        api_key = first(security_config.api_keys)
+    end
+    return Generate.create_claude_env_settings(pwd(), api_key)
+end
+
 function configure_vscode_julia_args()
     settings = read_vscode_settings()
     startup_path = get_startup_script_path()
@@ -390,6 +411,20 @@ function prompt_and_setup_vscode_startup(; gentle::Bool = false)
             println("   ✅ Created repl launcher script")
         else
             println("   ⚠️  Failed to create repl launcher script (optional)")
+        end
+
+        # Create project .env file from security config
+        if install_env_file()
+            println("   ✅ Created .env file")
+        else
+            println("   ⚠️  Failed to create .env file (optional)")
+        end
+
+        # Create Claude settings file (.claude/settings.json)
+        if install_claude_settings()
+            println("   ✅ Created .claude/settings.json for Claude")
+        else
+            println("   ⚠️  Failed to create .claude/settings.json (optional)")
         end
 
         # Configure VS Code settings if needed

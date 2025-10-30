@@ -2278,7 +2278,7 @@ function test_server(
             headers = Dict{String,String}("Content-Type" => "application/json")
 
             # Prefer explicit env var when present
-            env_key = get(ENV, "MCPREPL_API_KEY", "")
+            env_key = get(ENV, "JULIA_MCP_API_KEY", "")
 
             # Load workspace security config (if available)
             security_config = try
