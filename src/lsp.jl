@@ -181,6 +181,11 @@ function build_vscode_command_args(method::String, params::Dict)
         pos = params["position"]
         push!(args, pos)
     end
+    
+    # Special handling for rename - newName is the third parameter
+    if method == "textDocument/rename" && haskey(params, "newName")
+        push!(args, params["newName"])
+    end
 
     # Special handling for workspace/symbol
     if method == "workspace/symbol" && haskey(params, "query")
@@ -199,16 +204,21 @@ function execute_vscode_command_with_result(command::String, args::Vector, timeo
     # Generate unique request ID for tracking
     request_id = string(rand(UInt64), base = 16)
 
+    # Generate a single-use nonce for this specific request
+    nonce = generate_nonce()
+    store_nonce(request_id, nonce)
+
     # Get current MCP server port
     server_port = SERVER[] !== nothing ? SERVER[].port : 3000
 
-    # Build the VS Code URI with request_id for response tracking
+    # Build the VS Code URI with request_id and nonce
     args_json = isempty(args) ? nothing : JSON.json(args)
     uri = build_vscode_uri(
         command;
         args = args_json === nothing ? nothing : HTTP.URIs.escapeuri(args_json),
         request_id = request_id,
         mcp_port = server_port,
+        nonce = nonce,
     )
 
     # Trigger the command
@@ -407,8 +417,7 @@ end
 Create MCP tools for LSP operations that can be added to the server.
 """
 function create_lsp_tools()
-    goto_definition_tool = MCPTool(
-        "lsp_goto_definition",
+    goto_definition_tool = @mcp_tool(:lsp_goto_definition,
         """Jump to the definition of a symbol using Julia LSP.
 
         Uses the Julia Language Server to find where a function, type, or variable
@@ -476,12 +485,10 @@ function create_lsp_tools()
             catch e
                 return "Error finding definition: $e"
             end
-        end,
+        end
     )
 
-    find_references_tool = MCPTool(
-        "lsp_find_references",
-        """Find all references to a symbol using Julia LSP.
+    find_references_tool = @mcp_tool(:lsp_find_references,         """Find all references to a symbol using Julia LSP.
 
         Uses the Julia Language Server to find where a function, type, or variable
         is used throughout the codebase.
@@ -555,12 +562,10 @@ function create_lsp_tools()
             catch e
                 return "Error finding references: $e"
             end
-        end,
+        end
     )
 
-    document_symbols_tool = MCPTool(
-        "lsp_document_symbols",
-        """List all symbols (functions, types, etc.) in a file using Julia LSP.
+    document_symbols_tool = @mcp_tool(:lsp_document_symbols,         """List all symbols (functions, types, etc.) in a file using Julia LSP.
 
         Uses the Julia Language Server to get a structured list of all symbols
         defined in a file, similar to the outline view in VS Code.
@@ -612,12 +617,10 @@ function create_lsp_tools()
             catch e
                 return "Error listing symbols: $e"
             end
-        end,
+        end
     )
 
-    workspace_symbols_tool = MCPTool(
-        "lsp_workspace_symbols",
-        """Search for symbols across the entire workspace using Julia LSP.
+    workspace_symbols_tool = @mcp_tool(:lsp_workspace_symbols,         """Search for symbols across the entire workspace using Julia LSP.
 
         Uses the Julia Language Server to search for functions, types, and other
         symbols by name across all files in the workspace.
@@ -666,13 +669,11 @@ function create_lsp_tools()
             catch e
                 return "Error searching symbols: $e"
             end
-        end,
+        end
     )
 
     # Rename symbol tool
-    rename_tool = MCPTool(
-        "lsp_rename",
-        """Rename a symbol across the entire workspace using Julia LSP.
+    rename_tool = @mcp_tool(:lsp_rename,         """Rename a symbol across the entire workspace using Julia LSP.
 
         Uses the Julia Language Server to safely rename a function, variable, or type
         everywhere it's used. Returns a WorkspaceEdit showing all changes that would be made.
@@ -751,13 +752,11 @@ function create_lsp_tools()
             catch e
                 return "Error renaming symbol: $e"
             end
-        end,
+        end
     )
 
     # Code actions tool
-    code_actions_tool = MCPTool(
-        "lsp_code_actions",
-        """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
+    code_actions_tool = @mcp_tool(:lsp_code_actions,         """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
 
         Uses the Julia Language Server to get available fixes and refactorings for errors,
         warnings, or code at a specific location. Similar to clicking the lightbulb in VS Code.
@@ -861,158 +860,7 @@ function create_lsp_tools()
             catch e
                 return "Error getting code actions: $e"
             end
-        end,
-    )
-
-    # Format document tool
-    format_document_tool = MCPTool(
-        "lsp_format_document",
-        """Format an entire Julia document using the Julia LSP formatter.
-
-        Uses the Julia Language Server to format code according to style guidelines.
-
-        # Arguments
-        - `file_path`: Absolute path to the file (required)
-
-        # Returns
-        Formatted code or confirmation message.
-
-        # Examples
-        - Format file: `{"file_path": "/path/to/file.jl"}`
-        """,
-        Dict(
-            "type" => "object",
-            "properties" => Dict(
-                "file_path" => Dict(
-                    "type" => "string",
-                    "description" => "Absolute path to the file",
-                ),
-            ),
-            "required" => ["file_path"],
-        ),
-        function (args)
-            try
-                file_path = get(args, "file_path", "")
-
-                if isempty(file_path)
-                    return "Error: file_path is required"
-                end
-
-                if !isfile(file_path)
-                    return "Error: File not found: $file_path"
-                end
-
-                uri = file_uri(file_path)
-
-                result = execute_vscode_command_with_result(
-                    "vscode.executeFormatDocumentProvider",
-                    [uri],
-                    15.0,  # Formatting can take longer
-                )
-
-                if haskey(result, "error")
-                    return "Error: $(result["error"])"
-                end
-
-                edits = get(result, "result", nothing)
-                return format_text_edits(edits, "Format document")
-
-            catch e
-                return "Error formatting document: $e"
-            end
-        end,
-    )
-
-    # Format range tool
-    format_range_tool = MCPTool(
-        "lsp_format_range",
-        """Format a specific range of code in a Julia document using the Julia LSP formatter.
-
-        Uses the Julia Language Server to format only the specified lines.
-
-        # Arguments
-        - `file_path`: Absolute path to the file (required)
-        - `start_line`: Start line number, 1-indexed (required)
-        - `start_column`: Start column number, 1-indexed (required)
-        - `end_line`: End line number, 1-indexed (required)
-        - `end_column`: End column number, 1-indexed (required)
-
-        # Returns
-        Formatted code for the range or confirmation message.
-
-        # Examples
-        - Format lines 10-20: `{"file_path": "/path/to/file.jl", "start_line": 10, "start_column": 1, "end_line": 20, "end_column": 1}`
-        """,
-        Dict(
-            "type" => "object",
-            "properties" => Dict(
-                "file_path" => Dict(
-                    "type" => "string",
-                    "description" => "Absolute path to the file",
-                ),
-                "start_line" => Dict(
-                    "type" => "integer",
-                    "description" => "Start line number (1-indexed)",
-                ),
-                "start_column" => Dict(
-                    "type" => "integer",
-                    "description" => "Start column number (1-indexed)",
-                ),
-                "end_line" => Dict(
-                    "type" => "integer",
-                    "description" => "End line number (1-indexed)",
-                ),
-                "end_column" => Dict(
-                    "type" => "integer",
-                    "description" => "End column number (1-indexed)",
-                ),
-            ),
-            "required" =>
-                ["file_path", "start_line", "start_column", "end_line", "end_column"],
-        ),
-        function (args)
-            try
-                file_path = get(args, "file_path", "")
-                start_line = get(args, "start_line", 1)
-                start_column = get(args, "start_column", 1)
-                end_line = get(args, "end_line", start_line)
-                end_column = get(args, "end_column", start_column)
-
-                if isempty(file_path)
-                    return "Error: file_path is required"
-                end
-
-                if !isfile(file_path)
-                    return "Error: File not found: $file_path"
-                end
-
-                uri = file_uri(file_path)
-                range = Dict(
-                    "start" => Dict(
-                        "line" => start_line - 1,
-                        "character" => start_column - 1,
-                    ),
-                    "end" =>
-                        Dict("line" => end_line - 1, "character" => end_column - 1),
-                )
-
-                result = execute_vscode_command_with_result(
-                    "vscode.executeFormatRangeProvider",
-                    [uri, range],
-                    15.0,
-                )
-
-                if haskey(result, "error")
-                    return "Error: $(result["error"])"
-                end
-
-                edits = get(result, "result", nothing)
-                return format_text_edits(edits, "Format range")
-
-            catch e
-                return "Error formatting range: $e"
-            end
-        end,
+        end
     )
 
     return [
@@ -1022,8 +870,6 @@ function create_lsp_tools()
         workspace_symbols_tool,
         rename_tool,
         code_actions_tool,
-        format_document_tool,
-        format_range_tool,
     ]
 end
 
@@ -1035,32 +881,209 @@ end
     format_workspace_edit(edit) -> String
 
 Format a workspace edit showing all file changes.
+Handles multiple formats:
+1. Standard LSP: changes dict with uri keys
+2. Standard LSP: documentChanges array
+3. VS Code custom: nested array format
 """
 function format_workspace_edit(edit)
-    if edit === nothing || (edit isa Dict && isempty(edit))
+    if edit === nothing
+        return "No rename edits available. The symbol may not be renameable."
+    end
+    
+    # Handle empty array - means no edits (symbol can't be renamed)
+    if edit isa Vector && isempty(edit)
+        return "No rename edits available. The symbol may not be renameable (e.g., module names, keywords, built-in types)."
+    end
+    
+    # Handle VS Code custom format: [[uri_dict, [edits]]]
+    if edit isa Vector && !isempty(edit)
+        # Check if it's the nested array format from VS Code
+        first_elem = first(edit)
+        if first_elem isa Vector && length(first_elem) >= 2
+            # VS Code format: [[uri_dict, [edits]]]
+            return format_vscode_rename_result(edit)
+        elseif first_elem isa Vector && length(first_elem) < 2
+            # Malformed VS Code format - not enough elements
+            return "No rename edits available. The symbol may not be renameable."
+        end
+        # If first element is a Dict, it might be standard LSP format
+        if first_elem isa Dict
+            edit = first_elem
+        else
+            # Unknown format
+            return "Unexpected workspace edit format. The symbol may not be renameable."
+        end
+    end
+
+    if !(edit isa Dict)
+        return "No rename edits available. Unexpected format: $(typeof(edit))"
+    end
+    
+    if isempty(edit)
         return "No edits to apply"
     end
 
-    changes = get(edit, "changes", Dict())
-    if isempty(changes)
+    # Try to get changes - might be under "changes" or "documentChanges"
+    changes = get(edit, "changes", nothing)
+    
+    if changes === nothing || (changes isa Dict && isempty(changes))
+        # Try documentChanges format
+        doc_changes = get(edit, "documentChanges", nothing)
+        if doc_changes !== nothing && !isempty(doc_changes)
+            return format_document_changes(doc_changes)
+        end
         return "No file changes"
+    end
+    
+    if !(changes isa Dict)
+        return "Unexpected changes format: $(typeof(changes))"
     end
 
     result = "Workspace edit would modify $(length(changes)) file(s):\n"
     for (uri, text_edits) in changes
         file_path = uri_to_path(uri)
+        
+        if !(text_edits isa Vector)
+            continue
+        end
+        
         result *= "\n📄 $file_path: $(length(text_edits)) edit(s)\n"
         for (i, text_edit) in enumerate(text_edits)
+            if !(text_edit isa Dict)
+                continue
+            end
+            
             range = get(text_edit, "range", nothing)
             new_text = get(text_edit, "newText", "")
-            if range !== nothing
-                start = get(range, "start", Dict())
-                line = get(start, "line", 0) + 1
-                result *= "  $i. Line $line: \"$new_text\"\n"
+            if range !== nothing && range isa Dict
+                start = get(range, "start", nothing)
+                if start !== nothing && start isa Dict
+                    line = get(start, "line", 0) + 1
+                    result *= "  $i. Line $line: \"$new_text\"\n"
+                end
             end
         end
     end
 
+    return result
+end
+
+"""
+    format_vscode_rename_result(edit_array) -> String
+
+Format VS Code custom rename result format with nested arrays.
+"""
+function format_vscode_rename_result(edit_array)
+    if !(edit_array isa Vector) || isempty(edit_array)
+        return "No edits to apply"
+    end
+
+    result = "Workspace edit would modify file(s):\n"
+
+    for item in edit_array
+        if !(item isa Vector) || length(item) < 2
+            result *= "  [Skipped item: $(typeof(item)), length=$(item isa Vector ? length(item) : "N/A")]\n"
+            continue
+        end
+        
+        # First element is the URI info
+        uri_info = item[1]
+        # Second element is the edits array
+        edits = item[2]
+        
+        # Extract file path from URI info
+        file_path = "unknown"
+        if uri_info isa Dict
+            # Try different URI fields
+            if haskey(uri_info, "fsPath")
+                file_path = uri_info["fsPath"]
+            elseif haskey(uri_info, "path")
+                file_path = uri_info["path"]
+            elseif haskey(uri_info, "external")
+                file_path = uri_to_path(uri_info["external"])
+            end
+        end
+        
+        if !(edits isa Vector)
+            continue
+        end
+        
+        result *= "\n📄 $file_path: $(length(edits)) edit(s)\n"
+        
+        for (i, text_edit) in enumerate(edits)
+            if !(text_edit isa Dict)
+                continue
+            end
+            
+            range = get(text_edit, "range", nothing)
+            new_text = get(text_edit, "newText", "")
+            
+            if range isa Vector && length(range) >= 2
+                # Range is [start_dict, end_dict]
+                start = range[1]
+                if start isa Dict
+                    line = get(start, "line", 0) + 1
+                    char = get(start, "character", 0)
+                    result *= "  $i. Line $line, Col $char: \"$new_text\"\n"
+                end
+            elseif range isa Dict
+                # Standard format
+                start = get(range, "start", nothing)
+                if start !== nothing && start isa Dict
+                    line = get(start, "line", 0) + 1
+                    char = get(start, "character", 0)
+                    result *= "  $i. Line $line, Col $char: \"$new_text\"\n"
+                end
+            end
+        end
+    end
+    
+    return result
+end
+
+"""
+    format_document_changes(doc_changes) -> String
+
+Format documentChanges array from WorkspaceEdit.
+"""
+function format_document_changes(doc_changes)
+    if !(doc_changes isa Vector) || isempty(doc_changes)
+        return "No document changes"
+    end
+    
+    result = "Workspace edit would modify $(length(doc_changes)) document(s):\n"
+    for (i, change) in enumerate(doc_changes)
+        if !(change isa Dict)
+            continue
+        end
+        
+        text_doc = get(change, "textDocument", nothing)
+        edits = get(change, "edits", [])
+        
+        if text_doc !== nothing && text_doc isa Dict
+            uri = get(text_doc, "uri", "unknown")
+            file_path = uri_to_path(uri)
+            result *= "\n📄 $file_path: $(length(edits)) edit(s)\n"
+            
+            for (j, edit) in enumerate(edits)
+                if !(edit isa Dict)
+                    continue
+                end
+                
+                range = get(edit, "range", nothing)
+                new_text = get(edit, "newText", "")
+                if range !== nothing && range isa Dict
+                    start = get(range, "start", nothing)
+                    if start !== nothing && start isa Dict
+                        line = get(start, "line", 0) + 1
+                        result *= "  $j. Line $line: \"$new_text\"\n"
+                    end
+                end
+            end
+        end
+    end
+    
     return result
 end
 
@@ -1231,41 +1254,6 @@ function format_signature_help(sig_help)
 
     if active_param !== nothing
         result *= "\nActive parameter: $active_param\n"
-    end
-
-    return result
-end
-
-"""
-    format_text_edits(edits, operation::String) -> String
-
-Format text edits for display.
-"""
-function format_text_edits(edits, operation::String)
-    if edits === nothing || (edits isa Vector && isempty(edits))
-        return "No edits from $operation"
-    end
-
-    if !(edits isa Vector)
-        edits = [edits]
-    end
-
-    result = "$operation would make $(length(edits)) edit(s):\n"
-    for (i, edit) in enumerate(edits)
-        range = get(edit, "range", nothing)
-        new_text = get(edit, "newText", "")
-
-        if range !== nothing
-            start = get(range, "start", Dict())
-            end_pos = get(range, "end", Dict())
-            start_line = get(start, "line", 0) + 1
-            end_line = get(end_pos, "line", 0) + 1
-
-            lines = split(new_text, '\n')
-            preview =
-                length(lines) > 1 ? "$(lines[1])... ($(length(lines)) lines)" : new_text
-            result *= "  $i. Lines $start_line-$end_line: $preview\n"
-        end
     end
 
     return result

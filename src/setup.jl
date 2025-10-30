@@ -98,7 +98,7 @@ function add_vscode_mcp_server(transport_type::String)
     return Generate.create_vscode_config(
         pwd(),
         security_config.port,
-        security_config.mode == :lax ? nothing : first(security_config.api_keys, nothing),
+        security_config.mode == :lax ? nothing : isempty(security_config.api_keys) ? nothing : first(security_config.api_keys),
     )
 end
 

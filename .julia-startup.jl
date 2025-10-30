@@ -1,7 +1,6 @@
 using Pkg
 Pkg.activate(".")
 import Base.Threads
-using MCPRepl
 
 # Load Revise for hot reloading (optional but recommended)
 try
@@ -10,6 +9,7 @@ try
 catch e
     @info "ℹ Revise not loaded (optional - install with: Pkg.add(\"Revise\"))"
 end
+using MCPRepl
 
 # Start MCP REPL server for VS Code Copilot integration
 try
@@ -29,7 +29,7 @@ try
                 # Refresh the prompt to ensure clean display after test completes
                 if isdefined(Base, :active_repl)
                     try
-                        println()  # Add clean newline
+                        println();println()  # Add clean newline
                         REPL.LineEdit.refresh_line(Base.active_repl.mistate)
                     catch
                         # Ignore if REPL isn't ready yet

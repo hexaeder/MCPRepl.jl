@@ -6,40 +6,25 @@ using JSON
 using Dates
 
 # Create test tools
-time_tool = MCPTool(
-    "get_time",
-    "Get current time in specified format",
-    MCPRepl.text_parameter(
-        "format",
-        "DateTime format string (e.g., 'yyyy-mm-dd HH:MM:SS')",
-    ),
-    args -> Dates.format(now(), get(args, "format", "yyyy-mm-dd HH:MM:SS")),
-)
+time_tool = @mcp_tool :get_time "Get current time in specified format" MCPRepl.text_parameter(
+    "format",
+    "DateTime format string (e.g., 'yyyy-mm-dd HH:MM:SS')",
+) args -> Dates.format(now(), get(args, "format", "yyyy-mm-dd HH:MM:SS"))
 
-reverse_tool = MCPTool(
-    "reverse_text",
-    "Reverse the input text",
-    MCPRepl.text_parameter("text", "Text to reverse"),
-    args -> reverse(get(args, "text", "")),
-)
+reverse_tool = @mcp_tool :reverse_text "Reverse the input text" MCPRepl.text_parameter("text", "Text to reverse") args -> reverse(get(args, "text", ""))
 
-calc_tool = MCPTool(
-    "calculate",
-    "Evaluate a simple Julia expression",
-    MCPRepl.text_parameter(
-        "expression",
-        "Julia expression to evaluate (e.g., '2 + 3 * 4')",
-    ),
-    function (args)
-        try
-            expr = Meta.parse(get(args, "expression", "0"))
-            result = eval(expr)
-            string(result)
-        catch e
-            "Error: $e"
-        end
-    end,
-)
+calc_tool = @mcp_tool :calculate "Evaluate a simple Julia expression" MCPRepl.text_parameter(
+    "expression",
+    "Julia expression to evaluate (e.g., '2 + 3 * 4')",
+) function (args)
+    try
+        expr = Meta.parse(get(args, "expression", "0"))
+        result = eval(expr)
+        string(result)
+    catch e
+        "Error: $e"
+    end
+end
 
 tools = [time_tool, reverse_tool, calc_tool]
 
@@ -50,9 +35,9 @@ tools = [time_tool, reverse_tool, calc_tool]
 
     @test server.port == test_port
     @test length(server.tools) == 3
-    @test haskey(server.tools, "get_time")
-    @test haskey(server.tools, "reverse_text")
-    @test haskey(server.tools, "calculate")
+    @test haskey(server.tools, :get_time)
+    @test haskey(server.tools, :reverse_text)
+    @test haskey(server.tools, :calculate)
 
     # Give server time to start
     sleep(0.1)
@@ -212,28 +197,23 @@ end
 
 @testset "SSE Streaming" begin
     # Create a simple streaming tool for testing
-    stream_tool = MCPTool(
-        "stream_test",
-        "Test tool that supports streaming",
-        Dict("type" => "object", "properties" => Dict(), "required" => []),
-        (args, stream_channel = nothing) -> begin
-            if stream_channel !== nothing
-                # Send progress notification
-                put!(
-                    stream_channel,
-                    JSON.json(
-                        Dict(
-                            "jsonrpc" => "2.0",
-                            "method" => "notifications/progress",
-                            "params" =>
-                                Dict("progress" => 50, "message" => "Half done"),
-                        ),
+    stream_tool = @mcp_tool :stream_test "Test tool that supports streaming" Dict("type" => "object", "properties" => Dict(), "required" => []) (args, stream_channel = nothing) -> begin
+        if stream_channel !== nothing
+            # Send progress notification
+            put!(
+                stream_channel,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "method" => "notifications/progress",
+                        "params" =>
+                            Dict("progress" => 50, "message" => "Half done"),
                     ),
-                )
-            end
-            return "Streaming test completed"
-        end,
-    )
+                ),
+            )
+        end
+        return "Streaming test completed"
+    end
 
     test_port = 13005
     server = MCPRepl.start_mcp_server([stream_tool], test_port)
