@@ -16,6 +16,7 @@ using Pkg
 using JSON
 using SHA
 using Dates
+using Suppressor
 
 # Import the parent module to access its functions
 import ..MCPRepl
@@ -176,8 +177,17 @@ function generate(
         @warn "Port $port may require special permissions or is out of range. Recommended: 3000-9999"
     end
 
+
     # Create project directory
     project_path = joinpath(path, project_name)
+    # Projects should generally not include the .jl suffix in the name, but the directory should
+
+    if !endswith(project_path, ".jl")
+        project_path = project_path * ".jl"
+    end
+    if endswith(project_name, ".jl")
+        project_name = replace(project_name, r"\.jl$" => "")
+    end
     if isdir(project_path)
         error("Project directory already exists: $project_path")
     end
@@ -193,7 +203,7 @@ function generate(
     original_dir = pwd()
     try
         cd(path)
-        Pkg.generate(project_name)
+        @suppress Pkg.generate(project_path)
     finally
         cd(original_dir)
     end
@@ -227,8 +237,11 @@ function generate(
     println("✅ Project generated successfully!")
     println()
     println("📍 Next steps:")
-    println("   1. cd $project_name")
-    println("   2. julia --project=.")
+    if security_mode != :lax
+        println("\e[38;5;214m🔒[0. Set MCPREPL_API_KEY environment variable if needed]🔒\e[0m")
+    end
+    println("   1. cd $project_path")
+    println("   2. julia --project=. --load=.julia-startup.jl")
     println("   3. The MCP server will start automatically!")
     println()
     println("🤖 For AI agents, see AGENTS.md in the project directory")
@@ -294,7 +307,6 @@ function create_startup_script(project_path::String, port::Int, emoticon::String
 using Pkg
 Pkg.activate(".")
 import Base.Threads
-using MCPRepl
 
 # Load Revise for hot reloading (optional but recommended)
 try
@@ -303,7 +315,7 @@ try
 catch e
     @info "ℹ Revise not loaded (optional - install with: Pkg.add(\\"Revise\\"))"
 end
-
+using MCPRepl
 # Start MCP REPL server for AI agent integration
 try
     if Threads.threadid() == 1
@@ -356,20 +368,15 @@ function create_vscode_config(
     # Build server config
     server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
 
-    # Add Authorization header if api_key is provided
+    # Add Authorization header with environment variable if api_key is provided
     if api_key !== nothing
-        server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer $api_key")
+        server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer \${env:MCPREPL_API_KEY}")
     end
 
     mcp_config = Dict("servers" => Dict("julia-repl" => server_config), "inputs" => [])
 
     mcp_path = joinpath(vscode_dir, "mcp.json")
     write(mcp_path, JSON.json(mcp_config, 2))
-
-    # Set restrictive permissions if contains auth
-    if haskey(server_config, "headers") && !Sys.iswindows()
-        chmod(mcp_path, 0o600)
-    end
 
     return true
 end
@@ -400,7 +407,7 @@ function create_claude_config_template(
     config_template = if api_key === nothing
         """
 {
-  "servers": {
+  "mcpServers": {
     "julia-repl": {
       "type": "http",
       "url": "http://localhost:$port"
@@ -411,12 +418,12 @@ function create_claude_config_template(
     else
         """
 {
-  "servers": {
+  "mcpServers": {
     "julia-repl": {
       "type": "http",
       "url": "http://localhost:$port",
       "headers": {
-        "Authorization": "Bearer $api_key"
+        "Authorization": "Bearer \${MCPREPL_API_KEY}"
       }
     }
   }
@@ -424,18 +431,18 @@ function create_claude_config_template(
 """
     end
 
-    template_path = joinpath(project_path, "claude-mcp-config.json")
+    template_path = joinpath(project_path, ".mcp.json")
     write(template_path, config_template)
 
-    println("   ℹ️  To use with Claude Desktop, run:")
-    if api_key === nothing
-        println("      claude mcp add julia-repl http://localhost:$port --transport http")
-    else
-        println(
-            "      claude mcp add julia-repl http://localhost:$port --transport http \\",
-        )
-        println("        --header \"Authorization: Bearer $api_key\"")
-    end
+    # println("   ℹ️  To use with Claude Desktop, run:")
+    # if api_key === nothing
+    #     println("      claude mcp add julia-repl http://localhost:$port --transport http")
+    # else
+    #     println(
+    #         "      claude mcp add julia-repl http://localhost:$port --transport http \\",
+    #     )
+    #     println("        --header \"Authorization: Bearer \${MCPREPL_API_KEY}\"")
+    # end
     return true
 end
 
@@ -446,7 +453,8 @@ function create_gemini_config_template(
 )
     println("💎 Creating Gemini config template...")
 
-    config_template = """
+    config_template = if api_key === nothing
+        """
 {
   "mcpServers": {
     "julia-repl": {
@@ -455,6 +463,20 @@ function create_gemini_config_template(
   }
 }
 """
+    else
+        """
+{
+  "mcpServers": {
+    "julia-repl": {
+      "url": "http://localhost:$port",
+      "headers": {
+        "Authorization": "Bearer \${MCPREPL_API_KEY}"
+      }
+    }
+  }
+}
+"""
+    end
 
     template_path = joinpath(project_path, "gemini-settings.json")
     write(template_path, config_template)
@@ -509,7 +531,54 @@ $project_name/
 
 **Security Mode**: `$mode`
 **Port**: `$port`
-$(has_api_key ? "**API Key**: `$(first(api_keys))`\n\n⚠️  **Keep your API key secure!** Do not commit it to version control." : "**Authentication**: None (localhost only)")
+$(has_api_key ? "**API Key**: `$(first(api_keys))`" : "**Authentication**: None (localhost only)")
+
+$(has_api_key ? """
+### ⚠️  Required: Set Environment Variable
+
+The MCP configuration files use the `MCPREPL_API_KEY` environment variable for authentication.
+**You must set this environment variable** to the API key shown above.
+
+#### On macOS/Linux:
+
+Add to your `~/.zshrc`, `~/.bashrc`, or `~/.profile`:
+
+```bash
+export MCPREPL_API_KEY="$(first(api_keys))"
+```
+
+Then reload your shell:
+
+```bash
+source ~/.zshrc  # or ~/.bashrc
+```
+
+#### On Windows:
+
+PowerShell:
+
+```powershell
+[System.Environment]::SetEnvironmentVariable('MCPREPL_API_KEY', '$(first(api_keys))', 'User')
+```
+
+Or set via System Properties → Environment Variables.
+
+#### Verification
+
+Verify the environment variable is set:
+
+```bash
+# macOS/Linux
+echo \$MCPREPL_API_KEY
+
+# Windows PowerShell
+echo \$env:MCPREPL_API_KEY
+```
+
+**Security Note**: The API key is stored in `.mcprepl/security.json` (git-ignored).
+The MCP config files (`.vscode/mcp.json`, `claude-mcp-config.json`, `gemini-settings.json`) 
+reference the environment variable, making them safe to commit to version control.
+""" : "")
 
 ### Security Modes
 
@@ -526,23 +595,26 @@ MCPRepl.setup()  # Interactive wizard
 
 ## AI Agent Integration
 
-### VS Code Copilot
+$(has_api_key ? "**Important**: Ensure you've set the `MCPREPL_API_KEY` environment variable (see Security Configuration above).\n\n" : "")### VS Code Copilot
 
 Configuration is already set up in `.vscode/mcp.json`. Just:
 
 1. Open this project in VS Code
-2. Start Julia REPL
-3. AI agents can now interact with your REPL!
+2. $(has_api_key ? "Ensure `MCPREPL_API_KEY` environment variable is set\n3. " : "")Start Julia REPL$(has_api_key ? "\n4. AI agents can now interact with your REPL!" : "\n3. AI agents can now interact with your REPL!")
 
 ### Claude Desktop
 
 $(if has_api_key
     """
+Configuration is in `claude-mcp-config.json`. To add:
+
 ```bash
 claude mcp add julia-repl http://localhost:$port \\
   --transport http \\
-  --header "Authorization: Bearer $(first(api_keys))"
+  --header "Authorization: Bearer \${MCPREPL_API_KEY}"
 ```
+
+The `\${MCPREPL_API_KEY}` will be substituted by Claude from your environment variable.
 """
 else
     """
@@ -554,7 +626,7 @@ end)
 
 ### Gemini
 
-Copy `gemini-settings.json` to `~/.gemini/settings.json`
+Copy `gemini-settings.json` to `~/.gemini/settings.json`$(has_api_key ? "\n\nEnsure the `MCPREPL_API_KEY` environment variable is set before starting Gemini." : "")
 
 ## Usage
 
@@ -887,6 +959,22 @@ This project uses MCPRepl's security system:
 - Don't expose sensitive data in REPL output
 - Be aware that REPL output is visible to the user
 
+### Environment Variable Authentication
+
+MCP client configuration files (`.vscode/mcp.json`, `claude-mcp-config.json`, `gemini-settings.json`) 
+use the `MCPREPL_API_KEY` environment variable for authentication. This provides:
+
+- **Security**: API keys are not stored in version-controlled files
+- **Convenience**: One place to update the key across all clients
+- **Safety**: Config files can be safely committed to git
+
+The actual API key is stored in `.mcprepl/security.json` (which is git-ignored).
+
+**For AI Agents**: If authentication fails:
+1. Verify the user has set the `MCPREPL_API_KEY` environment variable
+2. Check that the value matches the key in `.mcprepl/security.json`
+3. Remind users to restart their terminal/IDE after setting environment variables
+
 ## Troubleshooting
 
 ### REPL seems stuck
@@ -941,14 +1029,18 @@ function create_gitignore(project_path::String)
 /docs/build/
 /docs/site/
 
-# MCPRepl
+# MCPRepl - security config contains API keys
 .mcprepl/
 .julia-startup.jl
 
-# VS Code
-.vscode/
+# VS Code - but keep MCP config files (they use env vars)
+.vscode/*
 !.vscode/settings.json
 !.vscode/mcp.json
+
+# MCP client configs (safe to commit - they use env vars)
+# claude-mcp-config.json
+# gemini-settings.json
 
 # OS
 .DS_Store
@@ -976,30 +1068,30 @@ function _add_mcprepl_dependency(project_path::String)
     original_dir = pwd()
     try
         cd(project_path)
-        Pkg.activate(".")
+        @suppress Pkg.activate(".")
 
         # Add MCPRepl (handles both registered and unregistered cases)
         try
-            Pkg.add("MCPRepl")
+            @suppress Pkg.add("MCPRepl")
         catch
             # If not registered, add from GitHub
-            Pkg.add(url = "https://github.com/kahliburke/MCPRepl.jl")
+            @suppress Pkg.add(url = "https://github.com/kahliburke/MCPRepl.jl")
         end
 
         # Add recommended development tools
         println("   Adding recommended development packages...")
         try
-            Pkg.add("Revise")  # For hot reloading
+            @suppress Pkg.add("Revise")  # For hot reloading
         catch e
             @warn "Could not add Revise" exception = e
         end
 
         # Return to original environment
-        Pkg.activate()
-    finally
-        cd(original_dir)
+        @suppress Pkg.activate()
+        finally
+            cd(original_dir)
+        end
     end
-end
 
 function _enhance_test_file(project_path::String, project_name::String)
     println("🧪 Enhancing test file...")
