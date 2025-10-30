@@ -281,7 +281,6 @@ function execute_repllike(
     end
 
     repl = Base.active_repl
-    # expr = Meta.parse(str)
     expr = Base.parse_input_line(str)
     backend = repl.backendref
 
@@ -290,7 +289,6 @@ function execute_repllike(
     # Only print the agent prompt if not silent
     if !silent
         printstyled("\nagent> ", color = :red, bold = :true)
-        # If description provided, show that instead of raw code
         if description !== nothing
             println(description)
         else
@@ -298,137 +296,138 @@ function execute_repllike(
         end
     end
 
-    # If streaming is enabled, send progress updates through the channel
-    if stream_channel !== nothing
-        # Streaming mode - use separate REPL backend with line-by-line output forwarding
-
-        # Send initial "started" event
-        start_event = Dict(
-            "jsonrpc" => "2.0",
-            "method" => "notifications/progress",
-            "params" => Dict("progress" => 0, "message" => "Execution started..."),
-        )
-        put!(stream_channel, JSON.json(start_event))
-
-        # Save original streams
-        orig_stdout = stdout
-        orig_stderr = stderr
-
-        # Create pipes for redirection
-        stdout_reader, stdout_writer = redirect_stdout()
-        stderr_reader, stderr_writer = redirect_stderr()
-
-        # Buffers for final capture
-        stdout_buf = IOBuffer()
-        stderr_buf = IOBuffer()
-
-        # Helper to process and forward output line by line
-        function forward_output(reader, original_stream, buffer, stream_name)
-            line_buffer = IOBuffer()
-
-            try
-                while isopen(reader)
-                    # Read available data
-                    data = readavailable(reader)
-                    if !isempty(data)
-                        # Write to original stream (real-time display)
-                        write(original_stream, data)
-                        flush(original_stream)
-
-                        # Write to capture buffer
-                        write(buffer, data)
-
-                        # Process line by line for SSE streaming
-                        write(line_buffer, data)
-
-                        # Extract complete lines
-                        seekstart(line_buffer)
-                        while !eof(line_buffer)
-                            line = readline(line_buffer; keep = true)
-                            if endswith(line, '\n')
-                                # Complete line - send via SSE
-                                try
-                                    output_event = Dict(
-                                        "jsonrpc" => "2.0",
-                                        "method" => "notifications/message",
-                                        "params" => Dict(
-                                            "level" => stream_name,
-                                            "message" => line,
-                                        ),
-                                    )
-                                    put!(stream_channel, JSON.json(output_event))
-                                catch e
-                                    @warn "SSE streaming error" exception = e
-                                end
-                            else
-                                # Incomplete line - save back to buffer
-                                new_buffer = IOBuffer()
-                                write(new_buffer, line)
-                                line_buffer = new_buffer
-                                break
-                            end
-                        end
-                    end
-                    sleep(0.001) # Small yield
+    # Use pipes for capturing output (simpler approach)
+    orig_stdout = stdout
+    orig_stderr = stderr
+    
+    # redirect_stdout/stderr return (reader, writer) pipe pair
+    stdout_read, stdout_write = redirect_stdout()
+    stderr_read, stderr_write = redirect_stderr()
+    
+    # Capture output in background task
+    stdout_content = String[]
+    stderr_content = String[]
+    
+    stdout_task = @async begin
+        try
+            while !eof(stdout_read)
+                line = readline(stdout_read; keep=true)
+                push!(stdout_content, line)
+                # Show real-time output unless silent mode
+                if !silent
+                    write(orig_stdout, line)
+                    flush(orig_stdout)
                 end
-
-                # Flush any remaining partial line
-                remaining = String(take!(line_buffer))
-                if !isempty(remaining)
+                # Stream to AI agent in real-time
+                if stream_channel !== nothing && !isempty(line)
                     try
                         output_event = Dict(
                             "jsonrpc" => "2.0",
                             "method" => "notifications/message",
-                            "params" =>
-                                Dict("level" => stream_name, "message" => remaining),
+                            "params" => Dict("level" => "info", "message" => line),
                         )
                         put!(stream_channel, JSON.json(output_event))
                     catch e
-                        @warn "SSE streaming error on final flush" exception = e
+                        @debug "Error streaming stdout" exception=e
                     end
                 end
-            catch e
-                if !isa(e, EOFError)
-                    @warn "Output forwarding error for $stream_name" exception = e
-                end
+            end
+        catch e
+            if !isa(e, EOFError)
+                @debug "stdout read error" exception=e
             end
         end
+    end
 
-        # Start async tasks to forward output
-        stdout_task = @async forward_output(stdout_reader, orig_stdout, stdout_buf, "info")
-        stderr_task = @async forward_output(stderr_reader, orig_stderr, stderr_buf, "error")
-
-        # Evaluate using the backend
-        response = try
-            REPL.eval_on_backend(expr, backend)
+    stderr_task = @async begin
+        try
+            while !eof(stderr_read)
+                line = readline(stderr_read; keep=true)
+                push!(stderr_content, line)
+                # Show real-time output unless silent mode
+                if !silent
+                    write(orig_stderr, line)
+                    flush(orig_stderr)
+                end
+                # Stream to AI agent in real-time
+                if stream_channel !== nothing && !isempty(line)
+                    try
+                        output_event = Dict(
+                            "jsonrpc" => "2.0",
+                            "method" => "notifications/message",
+                            "params" => Dict("level" => "warning", "message" => line),
+                        )
+                        put!(stream_channel, JSON.json(output_event))
+                    catch e
+                        @debug "Error streaming stderr" exception=e
+                    end
+                end
+            end
         catch e
-            error_event = Dict(
-                "jsonrpc" => "2.0",
-                "method" => "notifications/progress",
-                "params" => Dict("progress" => 100, "message" => "Error: $e"),
-            )
-            put!(stream_channel, JSON.json(error_event))
-            e
-        finally
-            # Restore stdout/stderr
-            redirect_stdout(orig_stdout)
-            redirect_stderr(orig_stderr)
-
-            # Close readers to stop tasks
-            close(stdout_reader)
-            close(stderr_reader)
-
-            # Wait for forwarding tasks to finish
-            sleep(0.1)
-            wait(stdout_task)
-            wait(stderr_task)
+            if !isa(e, EOFError)
+                @debug "stderr read error" exception=e
+            end
         end
-
-        # Get captured content
-        captured_content = String(take!(stdout_buf))
-        stderr_content = String(take!(stderr_buf))
-        if !isempty(stderr_content)
-            captured_content = captured_content * "\n" * stderr_content
+    end
+    
+    # Evaluate the expression
+    response = try
+        result_pair = REPL.eval_on_backend(expr, backend)
+        result_pair.first  # Extract result from Pair{Any, Bool}
+    catch e
+        e
+    finally
+        # Restore streams and clean up pipes
+        redirect_stdout(orig_stdout)
+        redirect_stderr(orig_stderr)
+        
+        # Close write ends to signal EOF
+        close(stdout_write)
+        close(stderr_write)
+        
+        # Wait for readers to finish
+        wait(stdout_task)
+        wait(stderr_task)
+        
+        # Close read ends
+        close(stdout_read)
+        close(stderr_read)
+    end
+    
+    # Get captured output
+    captured_content = join(stdout_content) * join(stderr_content)
+    
+    # Note: Output was already displayed in real-time by the async tasks
+    # No need to print captured_content again unless silent mode
+    
+    # Format the result for display
+    result_str = if !REPL.ends_with_semicolon(str)
+        io_buf = IOBuffer()
+        show(io_buf, MIME("text/plain"), response)
+        String(take!(io_buf))
+    else
+        ""
+    end
+    
+    # Refresh REPL if not silent
+    if !silent
+        if !isempty(result_str)
+            println(result_str)
+        end
+        REPL.prepare_next(repl)
+        REPL.LineEdit.refresh_line(repl.mistate)
+    end
+    
+    # If streaming, send completion notification and result
+    if stream_channel !== nothing
+        # Send result if not suppressed by semicolon
+        if !isempty(result_str)
+            result_event = Dict(
+                "jsonrpc" => "2.0",
+                "method" => "notifications/message",
+                "params" => Dict("level" => "info", "message" => result_str),
+            )
+            put!(stream_channel, JSON.json(result_event))
         end
 
         # Send completion notification
@@ -438,54 +437,10 @@ function execute_repllike(
             "params" => Dict("progress" => 100, "message" => "Execution complete"),
         )
         put!(stream_channel, JSON.json(complete_event))
-    else
-        # Non-streaming mode (original behavior)
-        captured_output = Pipe()
-
-        # Always use direct evaluation to avoid deadlock when called from REPL
-        # The backend task approach causes issues when tools are called interactively
-        response = redirect_stdout(captured_output) do
-            redirect_stderr(captured_output) do
-                try
-                    r = Core.eval(Main, expr)
-                    close(Base.pipe_writer(captured_output))
-                    r
-                catch e
-                    close(Base.pipe_writer(captured_output))
-                    # Rethrow to handle error properly
-                    rethrow(e)
-                end
-            end
-        end
-
-        captured_content = read(captured_output, String)
-
-        # Only reshow output if not silent
-        if !silent
-            print(captured_content)
-        end
-        
-        # Format the result for display
-        result_str = if !REPL.ends_with_semicolon(str)
-            # Show the result value
-            io_buf = IOBuffer()
-            show(io_buf, MIME("text/plain"), response)
-            String(take!(io_buf))
-        else
-            ""
-        end
-        
-        # Refresh REPL if not silent
-        if !silent
-            if !isempty(result_str)
-                println(result_str)
-            end
-            REPL.prepare_next(repl)
-            REPL.LineEdit.refresh_line(repl.mistate)
-        end
-
-        return captured_content * result_str
     end
+    
+    # Return the complete output
+    return captured_content * result_str
 end
 
 SERVER = Ref{Union{Nothing,MCPServer}}(nothing)
