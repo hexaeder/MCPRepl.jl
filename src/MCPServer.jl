@@ -105,6 +105,26 @@ function create_handler(
                 end
             end
 
+            # Handle AGENTS.md well-known documentation (before JSON parsing)
+            # Serve AGENTS.md from project root if it exists
+            if req.target == "/.well-known/agents.md" || req.target == "/agents.md"
+                agents_path = joinpath(pwd(), "AGENTS.md")
+                if isfile(agents_path)
+                    agents_content = read(agents_path, String)
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "text/markdown; charset=utf-8"],
+                        agents_content,
+                    )
+                else
+                    return HTTP.Response(
+                        404,
+                        ["Content-Type" => "text/plain"],
+                        "AGENTS.md not found in project root",
+                    )
+                end
+            end
+
             # Handle OAuth well-known metadata requests first (before JSON parsing)
             # Only advertise OAuth if security is configured (not in lax mode)
             if req.target == "/.well-known/oauth-authorization-server"

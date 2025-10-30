@@ -154,11 +154,10 @@ using JSON
             MCPRepl.save_security_config(security_config, test_dir)
             
             # Create simple test tool
-            test_tool = MCPRepl.MCPTool(
-                "test_echo",
+            test_tool = MCPRepl.@mcp_tool(:test_echo,
                 "Echo back input",
                 MCPRepl.text_parameter("message", "Message to echo"),
-                args -> get(args, "message", ""),
+                args -> get(args, "message", "")
             )
             
             # Start server with security

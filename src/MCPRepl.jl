@@ -9,13 +9,7 @@ using Random
 using SHA
 using Dates
 
-include("security.jl")
-include("security_wizard.jl")
-include("MCPServer.jl")
-include("setup.jl")
-include("vscode.jl")
-include("lsp.jl")
-include("Generate.jl")
+export @mcp_tool
 
 # ============================================================================
 # Tool Definition Macros
@@ -53,7 +47,7 @@ macro mcp_tool(id, description, params, handler)
     name_str = string(id_sym)
     
     return esc(quote
-        MCPTool(
+        $MCPRepl.MCPTool(
             $(QuoteNode(id_sym)),    # :exec_repl
             $name_str,                # "exec_repl"
             $description,
@@ -63,26 +57,13 @@ macro mcp_tool(id, description, params, handler)
     end)
 end
 
-"""
-    text_parameter(name, description; required=true)
-
-Helper to create a simple string parameter schema.
-"""
-function text_parameter(name::String, description::String; required::Bool=true)
-    schema = Dict(
-        "type" => "object",
-        "properties" => Dict(
-            name => Dict(
-                "type" => "string",
-                "description" => description
-            )
-        )
-    )
-    if required
-        schema["required"] = [name]
-    end
-    return schema
-end
+include("security.jl")
+include("security_wizard.jl")
+include("MCPServer.jl")
+include("setup.jl")
+include("vscode.jl")
+include("lsp.jl")
+include("Generate.jl")
 
 # ============================================================================
 # VS Code Response Storage for Bidirectional Communication
@@ -829,12 +810,11 @@ function start!(;
             catch e
                 return "Error reading usage instructions: $e"
             end
-        end,
+        end
     )
 
-    repl_tool = MCPTool(
-        "exec_repl",
-        """
+    repl_tool = @mcp_tool(:exec_repl,
+                """
         Execute Julia code in a shared, persistent REPL session to avoid startup latency.
 
         **PREREQUISITE**: Before using this tool, you MUST first call the `usage_instructions` tool to understand proper Julia REPL workflow, best practices, and etiquette for shared REPL usage.
@@ -879,12 +859,11 @@ function start!(;
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
             end
-        end,
+        end
     )
 
-    restart_repl_tool = MCPTool(
-        "restart_repl",
-        """Restart the Julia REPL and return immediately.
+    restart_repl_tool = @mcp_tool(:restart_repl,
+                """Restart the Julia REPL and return immediately.
 
         **Workflow for AI Agents:**
         1. Call this tool to trigger the restart
@@ -916,12 +895,11 @@ function start!(;
             catch e
                 return "Error initiating REPL restart: $e"
             end
-        end,
+        end
     )
 
-    whitespace_tool = MCPTool(
-        "remove-trailing-whitespace",
-        """Remove trailing whitespace from all lines in a file.
+    whitespace_tool = @mcp_tool(:remove_trailing_whitespace,
+                """Remove trailing whitespace from all lines in a file.
 
         This tool should be called to clean up any trailing spaces that AI agents tend to leave in files after editing.
 
@@ -957,12 +935,11 @@ function start!(;
             catch e
                 return "Error removing trailing whitespace: $e"
             end
-        end,
+        end
     )
 
-    vscode_command_tool = MCPTool(
-        "execute_vscode_command",
-        """Execute any VS Code command via the Remote Control extension.
+    vscode_command_tool = @mcp_tool(:execute_vscode_command,
+                """Execute any VS Code command via the Remote Control extension.
 
         This tool can trigger any VS Code command that has been allowlisted in the extension configuration.
         Useful for automating editor operations like saving files, running tasks, managing windows, etc.
@@ -1083,12 +1060,11 @@ function start!(;
             catch e
                 return "Error executing VS Code command: $e. Make sure the VS Code Remote Control extension is installed via MCPRepl.setup()"
             end
-        end,
+        end
     )
 
-    investigate_tool = MCPTool(
-        "investigate_environment",
-        """Investigate the current Julia environment including pwd, active project, packages, and development packages with their paths.
+    investigate_tool = @mcp_tool(:investigate_environment,
+                """Investigate the current Julia environment including pwd, active project, packages, and development packages with their paths.
 
         This tool provides comprehensive information about:
         - Current working directory
@@ -1109,12 +1085,11 @@ function start!(;
             catch e
                 "Error investigating environment: $e"
             end
-        end,
+        end
     )
 
-    search_methods_tool = MCPTool(
-        "search_methods",
-        """Search for all methods of a function or all methods matching a type signature.
+    search_methods_tool = @mcp_tool(:search_methods,
+                """Search for all methods of a function or all methods matching a type signature.
 
         This is essential for understanding Julia's multiple dispatch system and finding
         what methods are available for a function.
@@ -1154,12 +1129,11 @@ function start!(;
             catch e
                 "Error searching methods: \$e"
             end
-        end,
+        end
     )
 
-    macro_expand_tool = MCPTool(
-        "macro_expand",
-        """Expand a macro to see what code it generates.
+    macro_expand_tool = @mcp_tool(:macro_expand,
+                """Expand a macro to see what code it generates.
 
         This is invaluable for understanding what macros do and debugging macro-heavy code.
 
@@ -1188,12 +1162,11 @@ function start!(;
             catch e
                 "Error expanding macro: \$e"
             end
-        end,
+        end
     )
 
-    type_info_tool = MCPTool(
-        "type_info",
-        """Get comprehensive information about a Julia type.
+    type_info_tool = @mcp_tool(:type_info,
+                """Get comprehensive information about a Julia type.
 
         Provides details about:
         - Type hierarchy (supertypes and subtypes)
@@ -1261,12 +1234,11 @@ function start!(;
             catch e
                 "Error getting type info: \$e"
             end
-        end,
+        end
     )
 
-    profile_tool = MCPTool(
-        "profile_code",
-        """Profile Julia code to identify performance bottlenecks.
+    profile_tool = @mcp_tool(:profile_code,
+                """Profile Julia code to identify performance bottlenecks.
 
         Uses Julia's built-in Profile stdlib to analyze where time is spent in your code.
 
@@ -1305,12 +1277,11 @@ function start!(;
             catch e
                 "Error profiling code: \$e"
             end
-        end,
+        end
     )
 
-    list_names_tool = MCPTool(
-        "list_names",
-        """List all exported names in a module or package.
+    list_names_tool = @mcp_tool(:list_names,
+                """List all exported names in a module or package.
 
         Useful for discovering what functions, types, and constants are available
         in a module without reading documentation.
@@ -1359,12 +1330,11 @@ function start!(;
             catch e
                 "Error listing names: \$e"
             end
-        end,
+        end
     )
 
-    code_lowered_tool = MCPTool(
-        "code_lowered",
-        """Show lowered (desugared) Julia code for a function.
+    code_lowered_tool = @mcp_tool(:code_lowered,
+                """Show lowered (desugared) Julia code for a function.
 
         This shows the intermediate representation after syntax desugaring but before
         type inference. Useful for understanding what Julia does with your code.
@@ -1408,12 +1378,11 @@ function start!(;
             catch e
                 "Error getting lowered code: \$e"
             end
-        end,
+        end
     )
 
-    code_typed_tool = MCPTool(
-        "code_typed",
-        """Show type-inferred Julia code for a function.
+    code_typed_tool = @mcp_tool(:code_typed,
+                """Show type-inferred Julia code for a function.
 
         This shows the code after type inference, which is crucial for understanding
         performance. Type-unstable code will show up here with Union or Any types.
@@ -1457,13 +1426,12 @@ function start!(;
             catch e
                 "Error getting typed code: \$e"
             end
-        end,
+        end
     )
 
     # Optional formatting tool (requires JuliaFormatter.jl)
-    format_tool = MCPTool(
-        "format_code",
-        """Format Julia code using JuliaFormatter.jl (optional).
+    format_tool = @mcp_tool(:format_code,
+                """Format Julia code using JuliaFormatter.jl (optional).
 
         Formats Julia source files or directories according to standard style guidelines.
         This tool requires JuliaFormatter.jl to be installed in your environment.
@@ -1545,13 +1513,12 @@ function start!(;
             catch e
                 "Error formatting code: $e"
             end
-        end,
+        end
     )
 
     # Optional linting tool (requires Aqua.jl)
-    lint_tool = MCPTool(
-        "lint_package",
-        """Run Aqua.jl quality assurance tests on a Julia package (optional).
+    lint_tool = @mcp_tool(:lint_package,
+                """Run Aqua.jl quality assurance tests on a Julia package (optional).
 
         Performs comprehensive package quality checks including:
         - Ambiguity detection in method signatures
@@ -1637,13 +1604,12 @@ function start!(;
             catch e
                 "Error running Aqua tests: $e"
             end
-        end,
+        end
     )
 
     # High-level debugging workflow tools
-    open_and_breakpoint_tool = MCPTool(
-        "open_file_and_set_breakpoint",
-        """Open a file in VS Code and set a breakpoint at a specific line.
+    open_and_breakpoint_tool = @mcp_tool(:open_file_and_set_breakpoint,
+                """Open a file in VS Code and set a breakpoint at a specific line.
 
         This is a convenience tool that combines file opening and breakpoint setting
         into a single operation, making it easier to set up debugging.
@@ -1717,12 +1683,11 @@ function start!(;
             catch e
                 return "Error: $e"
             end
-        end,
+        end
     )
 
-    start_debug_session_tool = MCPTool(
-        "start_debug_session",
-        """Start a debugging session in VS Code.
+    start_debug_session_tool = @mcp_tool(:start_debug_session,
+                """Start a debugging session in VS Code.
 
         Opens the debug view and starts debugging with the current configuration.
         Useful after setting breakpoints to begin stepping through code.
@@ -1747,12 +1712,11 @@ function start!(;
             catch e
                 return "Error starting debug session: $e"
             end
-        end,
+        end
     )
 
-    add_watch_expression_tool = MCPTool(
-        "add_watch_expression",
-        """Add a watch expression to monitor during debugging.
+    add_watch_expression_tool = @mcp_tool(:add_watch_expression,
+                """Add a watch expression to monitor during debugging.
 
         Watch expressions let you monitor the value of variables or expressions
         as you step through code during debugging.
@@ -1797,12 +1761,11 @@ function start!(;
             catch e
                 return "Error adding watch expression: $e"
             end
-        end,
+        end
     )
 
-    quick_file_open_tool = MCPTool(
-        "quick_open_file",
-        """Quickly open a file using VS Code's quick open (Cmd+P/Ctrl+P).
+    quick_file_open_tool = @mcp_tool(:quick_open_file,
+                """Quickly open a file using VS Code's quick open (Cmd+P/Ctrl+P).
 
         Opens the quick file picker, allowing navigation to files by name.
         This is faster than navigating through the file explorer for known files.
@@ -1820,12 +1783,11 @@ function start!(;
             catch e
                 return "Error opening quick open: $e"
             end
-        end,
+        end
     )
 
-    copy_debug_value_tool = MCPTool(
-        "copy_debug_value",
-        """Copy the value of a variable or expression during debugging to the clipboard.
+    copy_debug_value_tool = @mcp_tool(:copy_debug_value,
+                """Copy the value of a variable or expression during debugging to the clipboard.
 
         This tool allows AI agents to inspect variable values during a debug session.
         The value is copied to the clipboard and can then be read using shell commands.
@@ -1899,13 +1861,12 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error copying debug value: $e"
             end
-        end,
+        end
     )
 
     # Enhanced debugging tools using bidirectional communication
-    debug_step_over_tool = MCPTool(
-        "debug_step_over",
-        """Step over the current line in the debugger.
+    debug_step_over_tool = @mcp_tool(:debug_step_over,
+                """Step over the current line in the debugger.
 
         Executes the current line and moves to the next line without entering function calls.
         Must be in an active debug session (paused at a breakpoint).
@@ -1943,12 +1904,11 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error stepping over: $e"
             end
-        end,
+        end
     )
 
-    debug_step_into_tool = MCPTool(
-        "debug_step_into",
-        """Step into a function call in the debugger.
+    debug_step_into_tool = @mcp_tool(:debug_step_into,
+                """Step into a function call in the debugger.
 
         Enters the function on the current line to debug its internals.
         Must be in an active debug session (paused at a breakpoint).
@@ -1964,12 +1924,11 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error stepping into: $e"
             end
-        end,
+        end
     )
 
-    debug_step_out_tool = MCPTool(
-        "debug_step_out",
-        """Step out of the current function in the debugger.
+    debug_step_out_tool = @mcp_tool(:debug_step_out,
+                """Step out of the current function in the debugger.
 
         Continues execution until the current function returns to its caller.
         Must be in an active debug session (paused at a breakpoint).
@@ -1985,12 +1944,11 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error stepping out: $e"
             end
-        end,
+        end
     )
 
-    debug_continue_tool = MCPTool(
-        "debug_continue",
-        """Continue execution in the debugger.
+    debug_continue_tool = @mcp_tool(:debug_continue,
+                """Continue execution in the debugger.
 
         Resumes execution until the next breakpoint or program completion.
         Must be in an active debug session (paused at a breakpoint).
@@ -2006,12 +1964,11 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error continuing: $e"
             end
-        end,
+        end
     )
 
-    debug_stop_tool = MCPTool(
-        "debug_stop",
-        """Stop the current debug session.
+    debug_stop_tool = @mcp_tool(:debug_stop,
+                """Stop the current debug session.
 
         Terminates the active debug session and returns to normal execution.
 
@@ -2026,13 +1983,12 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error stopping debug session: $e"
             end
-        end,
+        end
     )
 
     # Package management tools
-    pkg_add_tool = MCPTool(
-        "pkg_add",
-        """Add one or more Julia packages to the current environment.
+    pkg_add_tool = @mcp_tool(:pkg_add,
+                """Add one or more Julia packages to the current environment.
 
         This is a convenience wrapper around Pkg.add() that provides better
         feedback and error handling for AI agents.
@@ -2073,12 +2029,11 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error adding packages: $e"
             end
-        end,
+        end
     )
 
-    pkg_rm_tool = MCPTool(
-        "pkg_rm",
-        """Remove one or more Julia packages from the current environment.
+    pkg_rm_tool = @mcp_tool(:pkg_rm,
+                """Remove one or more Julia packages from the current environment.
 
         # Arguments
         - `packages`: Array of package names to remove
@@ -2113,7 +2068,7 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
             catch e
                 return "Error removing packages: $e"
             end
-        end,
+        end
     )
 
     # Create LSP tools
@@ -2181,7 +2136,7 @@ function get_mainmode(repl)
             mode isa REPL.Prompt &&
                 mode.prompt isa Function &&
                 contains(mode.prompt(), "julia>")
-        end,
+        end
     )
 end
 
@@ -2382,7 +2337,7 @@ MCPRepl.call_tool("exec_repl", Dict("expression" => "2 + 2"))
 # Available Tools
 Call `list_tools()` to see all available tools and their descriptions.
 """
-function call_tool(tool_id::Symbol, args::Dict)
+function call_tool(tool_id::Symbol, args::Dict; timeout::Float64=30.0)
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
@@ -2394,25 +2349,50 @@ function call_tool(tool_id::Symbol, args::Dict)
 
     tool = server.tools[tool_id]
 
-    # Try calling with both parameters first (for streaming support)
-    # If that fails, try with just args (for simpler handlers)
-    try
-        return tool.handler(args, nothing)
-    catch e
-        if e isa MethodError
-            # Handler doesn't support streaming, call with just args
-            return tool.handler(args)
-        else
-            rethrow(e)
+    # Run the tool handler asynchronously to avoid blocking the REPL
+    # This is especially important when calling tools from within the same REPL session
+    task = @async begin
+        try
+            # Try calling with both parameters first (for streaming support)
+            # If that fails, try with just args (for simpler handlers)
+            result = try
+                tool.handler(args, nothing)
+            catch e
+                if e isa MethodError
+                    # Handler doesn't support streaming, call with just args
+                    tool.handler(args)
+                else
+                    rethrow(e)
+                end
+            end
+            return (result, nothing)
+        catch e
+            return (nothing, e)
         end
     end
+    
+    # Wait for the task with timeout
+    start_time = time()
+    while !istaskdone(task)
+        if time() - start_time > timeout
+            error("Tool execution timed out after $timeout seconds")
+        end
+        sleep(0.01)  # Small delay to avoid busy waiting
+    end
+    
+    result, exception = fetch(task)
+    if exception !== nothing
+        rethrow(exception)
+    end
+    
+    return result
 end
 
 # String-based overload for backward compatibility (deprecated)
-function call_tool(tool_name::String, args::Dict)
+function call_tool(tool_name::String, args::Dict; timeout::Float64=30.0)
     @warn "String-based tool names are deprecated. Use :$(Symbol(tool_name)) instead." maxlog=1
     tool_id = Symbol(tool_name)
-    return call_tool(tool_id, args)
+    return call_tool(tool_id, args; timeout=timeout)
 end
 
 """
@@ -2428,10 +2408,10 @@ function list_tools()
     end
 
     server = SERVER[]
-    tools_info = Dict{String,String}()
+    tools_info = Dict{Symbol,String}()
 
-    for (name, tool) in server.tools
-        tools_info[name] = tool.description
+    for (id, tool) in server.tools
+        tools_info[id] = tool.description
     end
 
     # Print formatted output
@@ -2446,10 +2426,6 @@ function list_tools()
         println("    ", first_line)
         println()
     end
-
-    println("Use MCPRepl.call_tool(\"tool_name\", Dict(...)) to call a tool")
-    println("Use @doc MCPRepl.call_tool for examples")
-    println()
 
     return tools_info
 end

@@ -407,8 +407,7 @@ end
 Create MCP tools for LSP operations that can be added to the server.
 """
 function create_lsp_tools()
-    goto_definition_tool = MCPTool(
-        "lsp_goto_definition",
+    goto_definition_tool = @mcp_tool(:lsp_goto_definition,
         """Jump to the definition of a symbol using Julia LSP.
 
         Uses the Julia Language Server to find where a function, type, or variable
@@ -476,12 +475,10 @@ function create_lsp_tools()
             catch e
                 return "Error finding definition: $e"
             end
-        end,
+        end
     )
 
-    find_references_tool = MCPTool(
-        "lsp_find_references",
-        """Find all references to a symbol using Julia LSP.
+    find_references_tool = @mcp_tool(:lsp_find_references,         """Find all references to a symbol using Julia LSP.
 
         Uses the Julia Language Server to find where a function, type, or variable
         is used throughout the codebase.
@@ -555,12 +552,10 @@ function create_lsp_tools()
             catch e
                 return "Error finding references: $e"
             end
-        end,
+        end
     )
 
-    document_symbols_tool = MCPTool(
-        "lsp_document_symbols",
-        """List all symbols (functions, types, etc.) in a file using Julia LSP.
+    document_symbols_tool = @mcp_tool(:lsp_document_symbols,         """List all symbols (functions, types, etc.) in a file using Julia LSP.
 
         Uses the Julia Language Server to get a structured list of all symbols
         defined in a file, similar to the outline view in VS Code.
@@ -612,12 +607,10 @@ function create_lsp_tools()
             catch e
                 return "Error listing symbols: $e"
             end
-        end,
+        end
     )
 
-    workspace_symbols_tool = MCPTool(
-        "lsp_workspace_symbols",
-        """Search for symbols across the entire workspace using Julia LSP.
+    workspace_symbols_tool = @mcp_tool(:lsp_workspace_symbols,         """Search for symbols across the entire workspace using Julia LSP.
 
         Uses the Julia Language Server to search for functions, types, and other
         symbols by name across all files in the workspace.
@@ -666,13 +659,11 @@ function create_lsp_tools()
             catch e
                 return "Error searching symbols: $e"
             end
-        end,
+        end
     )
 
     # Rename symbol tool
-    rename_tool = MCPTool(
-        "lsp_rename",
-        """Rename a symbol across the entire workspace using Julia LSP.
+    rename_tool = @mcp_tool(:lsp_rename,         """Rename a symbol across the entire workspace using Julia LSP.
 
         Uses the Julia Language Server to safely rename a function, variable, or type
         everywhere it's used. Returns a WorkspaceEdit showing all changes that would be made.
@@ -751,13 +742,11 @@ function create_lsp_tools()
             catch e
                 return "Error renaming symbol: $e"
             end
-        end,
+        end
     )
 
     # Code actions tool
-    code_actions_tool = MCPTool(
-        "lsp_code_actions",
-        """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
+    code_actions_tool = @mcp_tool(:lsp_code_actions,         """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
 
         Uses the Julia Language Server to get available fixes and refactorings for errors,
         warnings, or code at a specific location. Similar to clicking the lightbulb in VS Code.
@@ -861,13 +850,11 @@ function create_lsp_tools()
             catch e
                 return "Error getting code actions: $e"
             end
-        end,
+        end
     )
 
     # Format document tool
-    format_document_tool = MCPTool(
-        "lsp_format_document",
-        """Format an entire Julia document using the Julia LSP formatter.
+    format_document_tool = @mcp_tool(:lsp_format_document,         """Format an entire Julia document using the Julia LSP formatter.
 
         Uses the Julia Language Server to format code according to style guidelines.
 
@@ -920,13 +907,11 @@ function create_lsp_tools()
             catch e
                 return "Error formatting document: $e"
             end
-        end,
+        end
     )
 
     # Format range tool
-    format_range_tool = MCPTool(
-        "lsp_format_range",
-        """Format a specific range of code in a Julia document using the Julia LSP formatter.
+    format_range_tool = @mcp_tool(:lsp_format_range,         """Format a specific range of code in a Julia document using the Julia LSP formatter.
 
         Uses the Julia Language Server to format only the specified lines.
 
@@ -1012,7 +997,7 @@ function create_lsp_tools()
             catch e
                 return "Error formatting range: $e"
             end
-        end,
+        end
     )
 
     return [
