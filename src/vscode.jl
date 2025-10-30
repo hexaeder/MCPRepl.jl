@@ -193,8 +193,9 @@ function install_vscode_remote_control(
           timestamp: Date.now()
         });
         
-        // Try to read Authorization header from .vscode/mcp.json
+        // Try to read Authorization header and port from .vscode/mcp.json
         let authHeader = null;
+        let mcpConfigPort = null;
         try {
           const workspaceFolders = vscode.workspace.workspaceFolders;
           if (workspaceFolders && workspaceFolders.length > 0) {
@@ -203,14 +204,60 @@ function install_vscode_remote_control(
               const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf8'));
               if (mcpConfig.servers && mcpConfig.servers['julia-repl']) {
                 const juliaServer = mcpConfig.servers['julia-repl'];
+                
+                // Extract port from URL
+                if (juliaServer.url) {
+                  const urlMatch = juliaServer.url.match(/localhost:(\d+)/);
+                  if (urlMatch) {
+                    mcpConfigPort = parseInt(urlMatch[1], 10);
+                  }
+                }
+                
+                // Extract Authorization header
                 if (juliaServer.headers && juliaServer.headers.Authorization) {
                   authHeader = juliaServer.headers.Authorization;
+                  
+                  // Resolve VS Code environment variable syntax: ${env:VAR_NAME}
+                  const envVarMatch = authHeader.match(/\$\{env:([^}]+)\}/);
+                  if (envVarMatch) {
+                    const envVarName = envVarMatch[1];
+                    const envValue = process.env[envVarName];
+                    if (envValue) {
+                      authHeader = authHeader.replace(envVarMatch[0], envValue);
+                    } else {
+                      console.warn(`Environment variable ${envVarName} not found`);
+                      authHeader = null;
+                    }
+                  }
                 }
               }
             }
           }
         } catch (e) {
-          console.error('Could not read Authorization header from mcp.json:', e);
+          console.error('Could not read mcp.json:', e);
+        }
+        
+        // Use port from mcp.json if not provided via URI, or try .mcprepl/security.json
+        if (!port || port === 3000) {
+          if (mcpConfigPort) {
+            port = mcpConfigPort;
+          } else {
+            // Try to read from .mcprepl/security.json as last resort
+            try {
+              const workspaceFolders = vscode.workspace.workspaceFolders;
+              if (workspaceFolders && workspaceFolders.length > 0) {
+                const securityPath = path.join(workspaceFolders[0].uri.fsPath, '.mcprepl', 'security.json');
+                if (fs.existsSync(securityPath)) {
+                  const securityConfig = JSON.parse(fs.readFileSync(securityPath, 'utf8'));
+                  if (securityConfig.port) {
+                    port = securityConfig.port;
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('Could not read .mcprepl/security.json:', e);
+            }
+          }
         }
         
         const headers = {
