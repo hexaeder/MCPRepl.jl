@@ -199,17 +199,26 @@ function execute_vscode_command_with_result(command::String, args::Vector, timeo
     # Generate unique request ID for tracking
     request_id = string(rand(UInt64), base = 16)
 
+    # Generate a single-use nonce for this specific request
+    nonce = generate_nonce()
+    store_nonce(request_id, nonce)
+    
+    @info "LSP: Generated nonce for request" request_id nonce_length=length(nonce)
+
     # Get current MCP server port
     server_port = SERVER[] !== nothing ? SERVER[].port : 3000
 
-    # Build the VS Code URI with request_id for response tracking
+    # Build the VS Code URI with request_id and nonce
     args_json = isempty(args) ? nothing : JSON.json(args)
     uri = build_vscode_uri(
         command;
         args = args_json === nothing ? nothing : HTTP.URIs.escapeuri(args_json),
         request_id = request_id,
         mcp_port = server_port,
+        nonce = nonce,
     )
+    
+    @info "LSP: Built URI" uri_preview=uri[1:min(100, length(uri))] has_nonce=occursin("nonce=", uri)
 
     # Trigger the command
     trigger_vscode_uri(uri)

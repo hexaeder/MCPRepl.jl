@@ -31,39 +31,114 @@ function create_handler(
 )
     return function handle_request(req::HTTP.Request)
         # Security check - apply to ALL endpoints including vscode-response
+        nonce_validated = false  # Track if nonce auth succeeded
+        
         if security_config !== nothing
-            # Extract and validate API key
-            api_key = extract_api_key(req)
-            if api_key === nothing && security_config.mode != :lax
-                return HTTP.Response(
-                    401,
-                    ["Content-Type" => "application/json"],
-                    JSON.json(
-                        Dict(
-                            "error" => "Unauthorized: Missing API key in Authorization header",
+            # Special handling for vscode-response endpoint with nonce auth
+            if req.target == "/vscode-response" && req.method == "POST"
+                # Extract the nonce (Bearer token) from Authorization header
+                nonce = extract_api_key(req)
+                
+                # Parse request body to get request_id
+                body = String(req.body)
+                request_id = nothing
+                try
+                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    request_id = get(response_data, "request_id", nothing)
+                catch e
+                    # Will fail validation below if can't parse
+                end
+                
+                # Validate and consume nonce
+                if nonce !== nothing && request_id !== nothing
+                    if MCPRepl.validate_and_consume_nonce(string(request_id), String(nonce))
+                        # Nonce is valid and consumed
+                        # Skip all other security checks - nonce auth is sufficient
+                        nonce_validated = true
+                    else
+                        return HTTP.Response(
+                            401,
+                            ["Content-Type" => "application/json"],
+                            JSON.json(
+                                Dict(
+                                    "error" => "Unauthorized: Invalid or expired nonce",
+                                ),
+                            ),
+                        )
+                    end
+                elseif security_config.mode != :lax
+                    # No valid nonce, fall back to API key validation for vscode-response
+                    if nonce === nothing
+                        return HTTP.Response(
+                            401,
+                            ["Content-Type" => "application/json"],
+                            JSON.json(
+                                Dict(
+                                    "error" => "Unauthorized: Missing nonce or API key in Authorization header",
+                                ),
+                            ),
+                        )
+                    end
+
+                    if !validate_api_key(String(nonce), security_config)
+                        return HTTP.Response(
+                            401,
+                            ["Content-Type" => "application/json"],
+                            JSON.json(
+                                Dict(
+                                    "error" => "Unauthorized: Invalid API key",
+                                ),
+                            ),
+                        )
+                    end
+                    
+                    # If using API key (not nonce), still need to validate IP
+                    client_ip = get_client_ip(req)
+                    if !validate_ip(client_ip, security_config)
+                        return HTTP.Response(
+                            403,
+                            ["Content-Type" => "application/json"],
+                            JSON.json(
+                                Dict("error" => "Forbidden: IP address $client_ip not allowed"),
+                            ),
+                        )
+                    end
+                end
+            elseif !nonce_validated
+                # For non-vscode-response endpoints, use standard API key validation
+                # Extract and validate API key
+                api_key = extract_api_key(req)
+                if api_key === nothing && security_config.mode != :lax
+                    return HTTP.Response(
+                        401,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(
+                            Dict(
+                                "error" => "Unauthorized: Missing API key in Authorization header",
+                            ),
                         ),
-                    ),
-                )
-            end
+                    )
+                end
 
-            if !validate_api_key(String(something(api_key, "")), security_config)
-                return HTTP.Response(
-                    403,
-                    ["Content-Type" => "application/json"],
-                    JSON.json(Dict("error" => "Forbidden: Invalid API key")),
-                )
-            end
+                if !validate_api_key(String(something(api_key, "")), security_config)
+                    return HTTP.Response(
+                        403,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(Dict("error" => "Forbidden: Invalid API key")),
+                    )
+                end
 
-            # Validate IP address
-            client_ip = get_client_ip(req)
-            if !validate_ip(client_ip, security_config)
-                return HTTP.Response(
-                    403,
-                    ["Content-Type" => "application/json"],
-                    JSON.json(
-                        Dict("error" => "Forbidden: IP address $client_ip not allowed"),
-                    ),
-                )
+                # Validate IP address
+                client_ip = get_client_ip(req)
+                if !validate_ip(client_ip, security_config)
+                    return HTTP.Response(
+                        403,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(
+                            Dict("error" => "Forbidden: IP address $client_ip not allowed"),
+                        ),
+                    )
+                end
             end
         end
 
@@ -430,45 +505,104 @@ function start_mcp_server(
         body = String(read(http))
 
         # Security check - apply to ALL endpoints including vscode-response
+        nonce_validated = false  # Track if nonce auth succeeded
+        
         if security_config !== nothing
-            # Extract and validate API key
-            api_key = extract_api_key(req)
-            if api_key === nothing && security_config.mode != :lax
-                HTTP.setstatus(http, 401)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict(
-                            "error" => "Unauthorized: Missing API key in Authorization header",
+            # Special handling for vscode-response endpoint with nonce auth
+            if req.target == "/vscode-response" && req.method == "POST"
+                # Extract the nonce (Bearer token) from Authorization header
+                nonce = extract_api_key(req)
+                
+                # Parse request body to get request_id
+                request_id = nothing
+                try
+                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    request_id = get(response_data, "request_id", nothing)
+                catch e
+                    # Will fail validation below if can't parse
+                end
+                
+                # Validate and consume nonce
+                if nonce !== nothing && request_id !== nothing
+                    if MCPRepl.validate_and_consume_nonce(string(request_id), String(nonce))
+                        # Nonce is valid and consumed - skip all other security checks
+                        nonce_validated = true
+                    else
+                        # Nonce validation failed
+                        HTTP.setstatus(http, 401)
+                        HTTP.setheader(http, "Content-Type" => "application/json")
+                        HTTP.startwrite(http)
+                        write(http, JSON.json(Dict("error" => "Unauthorized: Invalid or expired nonce")))
+                        return nothing
+                    end
+                elseif security_config.mode != :lax
+                    # No valid nonce, fall back to API key validation for vscode-response
+                    if nonce === nothing
+                        HTTP.setstatus(http, 401)
+                        HTTP.setheader(http, "Content-Type" => "application/json")
+                        HTTP.startwrite(http)
+                        write(http, JSON.json(Dict("error" => "Unauthorized: Missing nonce or API key in Authorization header")))
+                        return nothing
+                    end
+
+                    if !validate_api_key(String(nonce), security_config)
+                        HTTP.setstatus(http, 401)
+                        HTTP.setheader(http, "Content-Type" => "application/json")
+                        HTTP.startwrite(http)
+                        write(http, JSON.json(Dict("error" => "Unauthorized: Invalid API key")))
+                        return nothing
+                    end
+                    
+                    # If using API key (not nonce), still need to validate IP
+                    client_ip = get_client_ip(req)
+                    if !validate_ip(client_ip, security_config)
+                        HTTP.setstatus(http, 403)
+                        HTTP.setheader(http, "Content-Type" => "application/json")
+                        HTTP.startwrite(http)
+                        write(http, JSON.json(Dict("error" => "Forbidden: IP address $client_ip not allowed")))
+                        return nothing
+                    end
+                end
+            elseif !nonce_validated
+                # For non-vscode-response endpoints, use standard API key validation
+                api_key = extract_api_key(req)
+                if api_key === nothing && security_config.mode != :lax
+                    HTTP.setstatus(http, 401)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "error" => "Unauthorized: Missing API key in Authorization header",
+                            ),
                         ),
-                    ),
-                )
-                return nothing
-            end
+                    )
+                    return nothing
+                end
 
-            if !validate_api_key(String(something(api_key, "")), security_config)
-                HTTP.setstatus(http, 403)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(http, JSON.json(Dict("error" => "Forbidden: Invalid API key")))
-                return nothing
-            end
+                if !validate_api_key(String(something(api_key, "")), security_config)
+                    HTTP.setstatus(http, 403)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON.json(Dict("error" => "Forbidden: Invalid API key")))
+                    return nothing
+                end
 
-            # Validate IP address
-            client_ip = get_client_ip(req)
-            if !validate_ip(client_ip, security_config)
-                HTTP.setstatus(http, 403)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict("error" => "Forbidden: IP address $client_ip not allowed"),
-                    ),
-                )
-                return nothing
+                # Validate IP address
+                client_ip = get_client_ip(req)
+                if !validate_ip(client_ip, security_config)
+                    HTTP.setstatus(http, 403)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(
+                        http,
+                        JSON.json(
+                            Dict("error" => "Forbidden: IP address $client_ip not allowed"),
+                        ),
+                    )
+                    return nothing
+                end
             end
         end
 

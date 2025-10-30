@@ -101,6 +101,7 @@ function install_vscode_remote_control(
         async handleUri(uri) {
           let requestId = null;
           let mcpPort = 3000;  // Default MCP server port
+          let nonce = null;    // Single-use nonce from URI
           
           try {
             const query = new URLSearchParams(uri.query || "");
@@ -108,6 +109,7 @@ function install_vscode_remote_control(
             const argsRaw = query.get('args');
             requestId = query.get('request_id');
             const portRaw = query.get('mcp_port');
+            nonce = query.get('nonce');  // Get nonce from URI
             
             if (portRaw) {
               mcpPort = parseInt(portRaw, 10);
@@ -126,7 +128,7 @@ function install_vscode_remote_control(
                 args = Array.isArray(parsed) ? parsed : [parsed];
               } catch (e) {
                 vscode.window.showErrorMessage('Remote Control: invalid args JSON: ' + e);
-                await sendResponse(mcpPort, requestId, null, 'Failed to parse args: ' + e);
+                await sendResponse(mcpPort, requestId, null, 'Failed to parse args: ' + e, nonce);
                 return;
               }
             }
@@ -138,7 +140,7 @@ function install_vscode_remote_control(
             if (!allowed.includes(cmd)) {
               const msg = 'Remote Control: command not allowed: ' + cmd;
               vscode.window.showErrorMessage(msg);
-              await sendResponse(mcpPort, requestId, null, msg);
+              await sendResponse(mcpPort, requestId, null, msg, nonce);
               return;
             }
 
@@ -148,7 +150,7 @@ function install_vscode_remote_control(
                 { modal: true }, 'Run'
               );
               if (ok !== 'Run') {
-                await sendResponse(mcpPort, requestId, null, 'User cancelled command');
+                await sendResponse(mcpPort, requestId, null, 'User cancelled command', nonce);
                 return;
               }
             }
@@ -165,11 +167,11 @@ function install_vscode_remote_control(
             const result = await vscode.commands.executeCommand(cmd, ...convertedArgs);
             
             // Send result back to MCP server if request_id was provided
-            await sendResponse(mcpPort, requestId, result, null);
+            await sendResponse(mcpPort, requestId, result, null, nonce);
             
           } catch (err) {
             vscode.window.showErrorMessage('Remote Control error: ' + err);
-            await sendResponse(mcpPort, requestId, null, String(err));
+            await sendResponse(mcpPort, requestId, null, String(err), nonce);
           }
         }
       };
@@ -177,9 +179,11 @@ function install_vscode_remote_control(
     }
 
     // Helper function to send response back to MCP server
-    async function sendResponse(port, requestId, result, error) {
+    async function sendResponse(port, requestId, result, error, nonceFromUri) {
       // Only send if requestId was provided (indicates caller wants response)
       if (!requestId) return;
+      
+      console.log(`[MCPRepl] sendResponse called: port=${port}, requestId=${requestId}, hasResult=${result !== null && result !== undefined}, hasError=${error !== null && error !== undefined}, hasNonce=${!!nonceFromUri}`);
       
       try {
         const http = require('http');
@@ -193,9 +197,19 @@ function install_vscode_remote_control(
           timestamp: Date.now()
         });
         
-        // Try to read Authorization header and port from .vscode/mcp.json
-        let authHeader = null;
+        // Try to read port from .vscode/mcp.json
         let mcpConfigPort = null;
+        let authHeader = null;
+        
+        // Use nonce from URI (single-use token for this specific request)
+        if (nonceFromUri) {
+          authHeader = `Bearer ${nonceFromUri}`;
+          console.log('[MCPRepl] Using nonce from URI (single-use token)');
+        } else {
+          console.warn('[MCPRepl] No nonce provided - this should not happen for bidirectional communication');
+        }
+        
+        // Try to read port from .vscode/mcp.json
         try {
           const workspaceFolders = vscode.workspace.workspaceFolders;
           if (workspaceFolders && workspaceFolders.length > 0) {
@@ -212,24 +226,6 @@ function install_vscode_remote_control(
                     mcpConfigPort = parseInt(urlMatch[1], 10);
                   }
                 }
-                
-                // Extract Authorization header
-                if (juliaServer.headers && juliaServer.headers.Authorization) {
-                  authHeader = juliaServer.headers.Authorization;
-                  
-                  // Resolve VS Code environment variable syntax: ${env:VAR_NAME}
-                  const envVarMatch = authHeader.match(/\$\{env:([^}]+)\}/);
-                  if (envVarMatch) {
-                    const envVarName = envVarMatch[1];
-                    const envValue = process.env[envVarName];
-                    if (envValue) {
-                      authHeader = authHeader.replace(envVarMatch[0], envValue);
-                    } else {
-                      console.warn(`Environment variable ${envVarName} not found`);
-                      authHeader = null;
-                    }
-                  }
-                }
               }
             }
           }
@@ -237,8 +233,10 @@ function install_vscode_remote_control(
           console.error('Could not read mcp.json:', e);
         }
         
-        // Use port from mcp.json if not provided via URI, or try .mcprepl/security.json
+        // Use port from URI if provided and valid (not default 3000)
+        // Otherwise fall back to config files
         if (!port || port === 3000) {
+          // Try mcp.json port first
           if (mcpConfigPort) {
             port = mcpConfigPort;
           } else {
@@ -259,6 +257,13 @@ function install_vscode_remote_control(
             }
           }
         }
+        // If port is still not set or is 3000, use the default
+        if (!port) {
+          port = 3000;
+        }
+        
+        console.log(`[MCPRepl] Sending response to http://localhost:${port}/vscode-response`);
+        console.log(`[MCPRepl] Auth header: ${authHeader ? 'present' : 'not set'}`);
         
         const headers = {
           'Content-Type': 'application/json',
@@ -284,13 +289,18 @@ function install_vscode_remote_control(
         });
         
         req.on('error', (err) => {
-          console.error('Failed to send response to MCP server:', err);
+          console.error('[MCPRepl] Failed to send response to MCP server:', err);
+        });
+        
+        req.on('response', (res) => {
+          console.log(`[MCPRepl] Response sent successfully, status: ${res.statusCode}`);
         });
         
         req.write(payload);
         req.end();
+        console.log('[MCPRepl] HTTP request sent');
       } catch (e) {
-        console.error('Error in sendResponse:', e);
+        console.error('[MCPRepl] Error in sendResponse:', e);
       }
     }
 
