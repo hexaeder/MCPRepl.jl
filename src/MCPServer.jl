@@ -107,7 +107,8 @@ function create_handler(
 
             # Handle AGENTS.md well-known documentation (before JSON parsing)
             # Serve AGENTS.md from project root if it exists
-            if req.target == "/.well-known/agents.md" || req.target == "/agents.md"
+            if req.target == "/.well-known/agents.md" || req.target == "/agents.md" ||
+                req.target == "/.well-known/AGENTS.md" || req.target == "/AGENTS.md"
                 agents_path = joinpath(pwd(), "AGENTS.md")
                 if isfile(agents_path)
                     agents_content = read(agents_path, String)
@@ -221,7 +222,8 @@ function create_handler(
                 end
             end
 
-            # Handle empty body (like GET requests)
+            # Handle empty body (like GET requests) - only for JSON-RPC endpoints
+            # Note: Static file endpoints (AGENTS.md, OAuth metadata) already handled above
             if isempty(body)
                 error_response = Dict(
                     "jsonrpc" => "2.0",
@@ -471,6 +473,26 @@ function start_mcp_server(
         end
 
         try
+            # Handle AGENTS.md endpoint (can have empty body for GET requests)
+            if req.target == "/.well-known/agents.md" || req.target == "/agents.md" ||
+                req.target == "/.well-known/AGENTS.md" || req.target == "/AGENTS.md"
+                agents_path = joinpath(pwd(), "AGENTS.md")
+                if isfile(agents_path)
+                    agents_content = read(agents_path, String)
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "text/markdown; charset=utf-8")
+                    HTTP.startwrite(http)
+                    write(http, agents_content)
+                    return nothing
+                else
+                    HTTP.setstatus(http, 404)
+                    HTTP.setheader(http, "Content-Type" => "text/plain")
+                    HTTP.startwrite(http)
+                    write(http, "AGENTS.md not found in project root")
+                    return nothing
+                end
+            end
+
             # Handle VS Code response endpoint FIRST (before any JSON parsing)
             if req.target == "/vscode-response" && req.method == "POST"
                 try
