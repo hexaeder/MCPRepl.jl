@@ -96,6 +96,106 @@ function install_vscode_remote_control(
     extjs = raw"""
     const vscode = require('vscode');
 
+    /**
+     * Convert arguments for a specific VS Code command.
+     * Uses command signature knowledge for precise type conversion.
+     */
+    function convertArgsForCommand(command, args) {
+      // Commands that expect (uri: Uri, position: Position)
+      const uriPositionCommands = [
+        'vscode.executeDefinitionProvider',
+        'vscode.executeTypeDefinitionProvider',
+        'vscode.executeImplementationProvider',
+        'vscode.executeReferenceProvider',
+        'vscode.executeHoverProvider',
+        'vscode.executeCompletionItemProvider',
+        'vscode.executeSignatureHelpProvider',
+        'vscode.executeDocumentHighlightProvider',
+        'vscode.prepareCallHierarchy',
+        'vscode.prepareTypeHierarchy'
+      ];
+      
+      // Commands that expect (uri: Uri, range: Range, ...)
+      const uriRangeCommands = [
+        'vscode.executeCodeActionProvider'
+      ];
+      
+      // Commands that expect (uri: Uri, position: Position, newName: string)
+      const renameCommand = 'vscode.executeDocumentRenameProvider';
+      
+      // Commands that expect just (uri: Uri)
+      const uriOnlyCommands = [
+        'vscode.executeDocumentSymbolProvider'
+      ];
+      
+      // Commands that expect (query: string)
+      const queryCommands = [
+        'vscode.executeWorkspaceSymbolProvider'
+      ];
+      
+      if (uriPositionCommands.includes(command)) {
+        // [uri_string, {line, character}] -> [Uri, Position]
+        if (!args[0] || !args[1] || typeof args[1].line !== 'number' || typeof args[1].character !== 'number') {
+          throw new Error(`Invalid arguments for ${command}: expected [uri_string, {line, character}]`);
+        }
+        return [
+          vscode.Uri.parse(args[0]),
+          new vscode.Position(args[1].line, args[1].character)
+        ];
+      }
+      
+      if (uriRangeCommands.includes(command)) {
+        // [uri_string, {start: {line, character}, end: {line, character}}, ...] -> [Uri, Range, ...]
+        if (!args[0] || !args[1] || !args[1].start || !args[1].end) {
+          throw new Error(`Invalid arguments for ${command}: expected [uri_string, {start, end}]`);
+        }
+        
+        const startPos = new vscode.Position(args[1].start.line, args[1].start.character);
+        const endPos = new vscode.Position(args[1].end.line, args[1].end.character);
+        const range = new vscode.Range(startPos, endPos);
+        
+        const converted = [
+          vscode.Uri.parse(args[0]),
+          range
+        ];
+        // Pass through any additional args (like kind filter for code actions)
+        if (args.length > 2) {
+          converted.push(...args.slice(2));
+        }
+        return converted;
+      }
+      
+      if (command === renameCommand) {
+        // [uri_string, {line, character}, newName] -> [Uri, Position, string]
+        if (!args[0] || !args[1] || typeof args[1].line !== 'number' || typeof args[1].character !== 'number' || !args[2]) {
+          throw new Error(`Invalid arguments for ${command}: expected [uri_string, {line, character}, newName]`);
+        }
+        return [
+          vscode.Uri.parse(args[0]),
+          new vscode.Position(args[1].line, args[1].character),
+          args[2]  // newName as string
+        ];
+      }
+      
+      if (uriOnlyCommands.includes(command)) {
+        // [uri_string] -> [Uri]
+        return [vscode.Uri.parse(args[0])];
+      }
+      
+      if (queryCommands.includes(command)) {
+        // [query_string] -> [query_string] (no conversion needed)
+        return args;
+      }
+      
+      // For non-LSP commands, just convert file:// strings to Uri objects
+      return args.map(arg => {
+        if (typeof arg === 'string' && arg.startsWith('file://')) {
+          return vscode.Uri.parse(arg);
+        }
+        return arg;
+      });
+    }
+
     function activate(context) {
       const handler = {
         async handleUri(uri) {
@@ -155,14 +255,22 @@ function install_vscode_remote_control(
               }
             }
 
-            // Convert file:// URI strings to vscode.Uri objects for LSP commands
-            const convertedArgs = args.map(arg => {
-              if (typeof arg === 'string' && arg.startsWith('file://')) {
-                return vscode.Uri.parse(arg);
-              }
-              return arg;
-            });
+            // Convert arguments based on the specific command being executed
+            // This is more reliable than generic property inspection
+            const convertedArgs = convertArgsForCommand(cmd, args);
 
+            // For LSP commands, ensure the document is open
+            if (cmd.startsWith('vscode.execute')) {
+              const uriArg = convertedArgs[0];
+              if (uriArg && uriArg.scheme === 'file') {
+                try {
+                  await vscode.workspace.openTextDocument(uriArg);
+                } catch (e) {
+                  // Silently continue if document can't be opened
+                }
+              }
+            }
+            
             // Execute command and capture result
             const result = await vscode.commands.executeCommand(cmd, ...convertedArgs);
             
@@ -183,8 +291,6 @@ function install_vscode_remote_control(
       // Only send if requestId was provided (indicates caller wants response)
       if (!requestId) return;
       
-      console.log(`[MCPRepl] sendResponse called: port=${port}, requestId=${requestId}, hasResult=${result !== null && result !== undefined}, hasError=${error !== null && error !== undefined}, hasNonce=${!!nonceFromUri}`);
-      
       try {
         const http = require('http');
         const fs = require('fs');
@@ -204,9 +310,6 @@ function install_vscode_remote_control(
         // Use nonce from URI (single-use token for this specific request)
         if (nonceFromUri) {
           authHeader = `Bearer ${nonceFromUri}`;
-          console.log('[MCPRepl] Using nonce from URI (single-use token)');
-        } else {
-          console.warn('[MCPRepl] No nonce provided - this should not happen for bidirectional communication');
         }
         
         // Try to read port from .vscode/mcp.json
@@ -288,19 +391,14 @@ function install_vscode_remote_control(
           res.on('data', () => {});
         });
         
-        req.on('error', (err) => {
-          console.error('[MCPRepl] Failed to send response to MCP server:', err);
-        });
-        
-        req.on('response', (res) => {
-          console.log(`[MCPRepl] Response sent successfully, status: ${res.statusCode}`);
+        req.on('error', () => {
+          // Silently fail - MCP server may not be running
         });
         
         req.write(payload);
         req.end();
-        console.log('[MCPRepl] HTTP request sent');
       } catch (e) {
-        console.error('[MCPRepl] Error in sendResponse:', e);
+        // Silently fail - this is optional communication
       }
     }
 

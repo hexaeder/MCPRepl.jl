@@ -1575,13 +1575,26 @@ function start!(;
 
                 code = """
                 using JuliaFormatter
-                result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
-                if result
-                    println("✅ Successfully formatted: $abs_path")
+                
+                # Read the file before formatting to detect changes
+                before_content = read("$abs_path", String)
+                
+                # Format the file
+                format_result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
+                
+                # Read after to see if changes were made
+                after_content = read("$abs_path", String)
+                changes_made = before_content != after_content
+                
+                if changes_made
+                    println("✅ File was reformatted: $abs_path")
+                elseif format_result
+                    println("ℹ️  File was already properly formatted: $abs_path")
                 else
-                    println("ℹ️  No changes needed or formatting failed")
+                    println("⚠️  Formatting completed but check for errors: $abs_path")
                 end
-                result
+                
+                changes_made || format_result
                 """
 
                 execute_repllike(code; description = "[Formatting code at: $abs_path]")
