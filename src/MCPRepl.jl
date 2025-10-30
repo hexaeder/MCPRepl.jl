@@ -368,11 +368,19 @@ function execute_repllike(
         # Non-streaming mode (original behavior)
         captured_output = Pipe()
 
+        # Always use direct evaluation to avoid deadlock when called from REPL
+        # The backend task approach causes issues when tools are called interactively
         response = redirect_stdout(captured_output) do
             redirect_stderr(captured_output) do
-                r = REPL.eval_on_backend(expr, backend)
-                close(Base.pipe_writer(captured_output))
-                r
+                try
+                    r = Core.eval(Main, expr)
+                    close(Base.pipe_writer(captured_output))
+                    r
+                catch e
+                    close(Base.pipe_writer(captured_output))
+                    # Rethrow to handle error properly
+                    rethrow(e)
+                end
             end
         end
 
@@ -382,35 +390,28 @@ function execute_repllike(
         if !silent
             print(captured_content)
         end
+        
+        # Format the result for display
+        result_str = if !REPL.ends_with_semicolon(str)
+            # Show the result value
+            io_buf = IOBuffer()
+            show(io_buf, MIME("text/plain"), response)
+            String(take!(io_buf))
+        else
+            ""
+        end
+        
+        # Refresh REPL if not silent
+        if !silent
+            if !isempty(result_str)
+                println(result_str)
+            end
+            REPL.prepare_next(repl)
+            REPL.LineEdit.refresh_line(repl.mistate)
+        end
+
+        return captured_content * result_str
     end
-
-    disp = IOBufferDisplay()
-
-    # generate printout, err goest to disp.err, val goes to "specialdisplay" disp
-    REPL.print_response(
-        disp.io,
-        response,
-        backend,
-        !REPL.ends_with_semicolon(str),
-        false,
-        disp,
-    )
-
-    # generate the printout again for the "normal" repl (only if not silent)
-    if !silent
-        REPL.print_response(repl, response, !REPL.ends_with_semicolon(str), repl.hascolor)
-    end
-
-    REPL.prepare_next(repl)
-
-    if !silent
-        REPL.LineEdit.refresh_line(repl.mistate)
-    end
-
-    # Combine captured output with display output
-    display_content = String(take!(disp.io))
-
-    return captured_content * display_content
 end
 
 SERVER = Ref{Union{Nothing,MCPServer}}(nothing)
@@ -1232,7 +1233,7 @@ function start!(;
                 """
                 execute_repllike(code; description = "[Getting type info for: $type_expr]")
             catch e
-                "Error getting type info: \$e"
+                "Error getting type info: $e"
             end
         end
     )
@@ -2337,7 +2338,7 @@ MCPRepl.call_tool("exec_repl", Dict("expression" => "2 + 2"))
 # Available Tools
 Call `list_tools()` to see all available tools and their descriptions.
 """
-function call_tool(tool_id::Symbol, args::Dict; timeout::Float64=30.0)
+function call_tool(tool_id::Symbol, args::Dict)
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
@@ -2349,50 +2350,36 @@ function call_tool(tool_id::Symbol, args::Dict; timeout::Float64=30.0)
 
     tool = server.tools[tool_id]
 
-    # Run the tool handler asynchronously to avoid blocking the REPL
-    # This is especially important when calling tools from within the same REPL session
-    task = @async begin
-        try
-            # Try calling with both parameters first (for streaming support)
-            # If that fails, try with just args (for simpler handlers)
-            result = try
-                tool.handler(args, nothing)
-            catch e
-                if e isa MethodError
-                    # Handler doesn't support streaming, call with just args
-                    tool.handler(args)
-                else
-                    rethrow(e)
-                end
-            end
-            return (result, nothing)
+    # Execute tool handler synchronously when called from REPL
+    # This avoids deadlock when tools call execute_repllike
+    try
+        # Try calling with just args first (most common case)
+        # If that fails with MethodError, try with streaming channel parameter
+        result = try
+            tool.handler(args)
         catch e
-            return (nothing, e)
+            if e isa MethodError && hasmethod(tool.handler, Tuple{typeof(args), typeof(nothing)})
+                # Handler supports streaming, call with both parameters
+                tool.handler(args, nothing)
+            else
+                rethrow(e)
+            end
         end
+        return result
+    catch e
+        rethrow(e)
     end
-    
-    # Wait for the task with timeout
-    start_time = time()
-    while !istaskdone(task)
-        if time() - start_time > timeout
-            error("Tool execution timed out after $timeout seconds")
-        end
-        sleep(0.01)  # Small delay to avoid busy waiting
-    end
-    
-    result, exception = fetch(task)
-    if exception !== nothing
-        rethrow(exception)
-    end
-    
-    return result
 end
 
 # String-based overload for backward compatibility (deprecated)
-function call_tool(tool_name::String, args::Dict; timeout::Float64=30.0)
+function call_tool(tool_name::String, args::Dict)
     @warn "String-based tool names are deprecated. Use :$(Symbol(tool_name)) instead." maxlog=1
     tool_id = Symbol(tool_name)
-    return call_tool(tool_id, args; timeout=timeout)
+    return call_tool(tool_id, args)
+end
+
+function call_tool(tool_id::Symbol, args::Pair{Symbol,String}...)
+    return call_tool(tool_id, Dict([String(k) => v for (k,v) in args]))
 end
 
 """
