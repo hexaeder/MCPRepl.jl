@@ -32,13 +32,13 @@ function create_handler(
     return function handle_request(req::HTTP.Request)
         # Security check - apply to ALL endpoints including vscode-response
         nonce_validated = false  # Track if nonce auth succeeded
-        
+
         if security_config !== nothing
             # Special handling for vscode-response endpoint with nonce auth
             if req.target == "/vscode-response" && req.method == "POST"
                 # Extract the nonce (Bearer token) from Authorization header
                 nonce = extract_api_key(req)
-                
+
                 # Parse request body to get request_id
                 body = String(req.body)
                 request_id = nothing
@@ -48,7 +48,7 @@ function create_handler(
                 catch e
                     # Will fail validation below if can't parse
                 end
-                
+
                 # Validate and consume nonce
                 if nonce !== nothing && request_id !== nothing
                     if MCPRepl.validate_and_consume_nonce(string(request_id), String(nonce))
@@ -60,9 +60,7 @@ function create_handler(
                             401,
                             ["Content-Type" => "application/json"],
                             JSON.json(
-                                Dict(
-                                    "error" => "Unauthorized: Invalid or expired nonce",
-                                ),
+                                Dict("error" => "Unauthorized: Invalid or expired nonce"),
                             ),
                         )
                     end
@@ -84,14 +82,10 @@ function create_handler(
                         return HTTP.Response(
                             401,
                             ["Content-Type" => "application/json"],
-                            JSON.json(
-                                Dict(
-                                    "error" => "Unauthorized: Invalid API key",
-                                ),
-                            ),
+                            JSON.json(Dict("error" => "Unauthorized: Invalid API key")),
                         )
                     end
-                    
+
                     # If using API key (not nonce), still need to validate IP
                     client_ip = get_client_ip(req)
                     if !validate_ip(client_ip, security_config)
@@ -99,7 +93,9 @@ function create_handler(
                             403,
                             ["Content-Type" => "application/json"],
                             JSON.json(
-                                Dict("error" => "Forbidden: IP address $client_ip not allowed"),
+                                Dict(
+                                    "error" => "Forbidden: IP address $client_ip not allowed",
+                                ),
                             ),
                         )
                     end
@@ -182,8 +178,10 @@ function create_handler(
 
             # Handle AGENTS.md well-known documentation (before JSON parsing)
             # Serve AGENTS.md from project root if it exists
-            if req.target == "/.well-known/agents.md" || req.target == "/agents.md" ||
-                req.target == "/.well-known/AGENTS.md" || req.target == "/AGENTS.md"
+            if req.target == "/.well-known/agents.md" ||
+               req.target == "/agents.md" ||
+               req.target == "/.well-known/AGENTS.md" ||
+               req.target == "/AGENTS.md"
                 agents_path = joinpath(pwd(), "AGENTS.md")
                 if isfile(agents_path)
                     agents_content = read(agents_path, String)
@@ -388,7 +386,7 @@ function create_handler(
             if request["method"] == "tools/call"
                 tool_name_str = request["params"]["name"]
                 tool_id = get(name_to_id, tool_name_str, nothing)
-                
+
                 if tool_id !== nothing && haskey(tools, tool_id)
                     tool = tools[tool_id]
                     args = get(request["params"], "arguments", Dict())
@@ -506,13 +504,13 @@ function start_mcp_server(
 
         # Security check - apply to ALL endpoints including vscode-response
         nonce_validated = false  # Track if nonce auth succeeded
-        
+
         if security_config !== nothing
             # Special handling for vscode-response endpoint with nonce auth
             if req.target == "/vscode-response" && req.method == "POST"
                 # Extract the nonce (Bearer token) from Authorization header
                 nonce = extract_api_key(req)
-                
+
                 # Parse request body to get request_id
                 request_id = nothing
                 try
@@ -521,7 +519,7 @@ function start_mcp_server(
                 catch e
                     # Will fail validation below if can't parse
                 end
-                
+
                 # Validate and consume nonce
                 if nonce !== nothing && request_id !== nothing
                     if MCPRepl.validate_and_consume_nonce(string(request_id), String(nonce))
@@ -532,7 +530,12 @@ function start_mcp_server(
                         HTTP.setstatus(http, 401)
                         HTTP.setheader(http, "Content-Type" => "application/json")
                         HTTP.startwrite(http)
-                        write(http, JSON.json(Dict("error" => "Unauthorized: Invalid or expired nonce")))
+                        write(
+                            http,
+                            JSON.json(
+                                Dict("error" => "Unauthorized: Invalid or expired nonce"),
+                            ),
+                        )
                         return nothing
                     end
                 elseif security_config.mode != :lax
@@ -541,7 +544,14 @@ function start_mcp_server(
                         HTTP.setstatus(http, 401)
                         HTTP.setheader(http, "Content-Type" => "application/json")
                         HTTP.startwrite(http)
-                        write(http, JSON.json(Dict("error" => "Unauthorized: Missing nonce or API key in Authorization header")))
+                        write(
+                            http,
+                            JSON.json(
+                                Dict(
+                                    "error" => "Unauthorized: Missing nonce or API key in Authorization header",
+                                ),
+                            ),
+                        )
                         return nothing
                     end
 
@@ -549,17 +559,27 @@ function start_mcp_server(
                         HTTP.setstatus(http, 401)
                         HTTP.setheader(http, "Content-Type" => "application/json")
                         HTTP.startwrite(http)
-                        write(http, JSON.json(Dict("error" => "Unauthorized: Invalid API key")))
+                        write(
+                            http,
+                            JSON.json(Dict("error" => "Unauthorized: Invalid API key")),
+                        )
                         return nothing
                     end
-                    
+
                     # If using API key (not nonce), still need to validate IP
                     client_ip = get_client_ip(req)
                     if !validate_ip(client_ip, security_config)
                         HTTP.setstatus(http, 403)
                         HTTP.setheader(http, "Content-Type" => "application/json")
                         HTTP.startwrite(http)
-                        write(http, JSON.json(Dict("error" => "Forbidden: IP address $client_ip not allowed")))
+                        write(
+                            http,
+                            JSON.json(
+                                Dict(
+                                    "error" => "Forbidden: IP address $client_ip not allowed",
+                                ),
+                            ),
+                        )
                         return nothing
                     end
                 end
@@ -608,8 +628,10 @@ function start_mcp_server(
 
         try
             # Handle AGENTS.md endpoint (can have empty body for GET requests)
-            if req.target == "/.well-known/agents.md" || req.target == "/agents.md" ||
-                req.target == "/.well-known/AGENTS.md" || req.target == "/AGENTS.md"
+            if req.target == "/.well-known/agents.md" ||
+               req.target == "/agents.md" ||
+               req.target == "/.well-known/AGENTS.md" ||
+               req.target == "/AGENTS.md"
                 agents_path = joinpath(pwd(), "AGENTS.md")
                 if isfile(agents_path)
                     agents_content = read(agents_path, String)
@@ -688,7 +710,7 @@ function start_mcp_server(
             if request["method"] == "tools/call"
                 tool_name_str = request["params"]["name"]
                 tool_id = get(name_to_id, tool_name_str, nothing)
-                
+
                 if tool_id !== nothing && haskey(tools_dict, tool_id)
                     args = get(request["params"], "arguments", Dict())
 

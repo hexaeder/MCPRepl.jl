@@ -98,7 +98,8 @@ function add_vscode_mcp_server(transport_type::String)
     return Generate.create_vscode_config(
         pwd(),
         security_config.port,
-        security_config.mode == :lax ? nothing : isempty(security_config.api_keys) ? nothing : first(security_config.api_keys),
+        security_config.mode == :lax ? nothing :
+        isempty(security_config.api_keys) ? nothing : first(security_config.api_keys),
     )
 end
 
@@ -405,7 +406,7 @@ function prompt_and_setup_vscode_startup(; gentle::Bool = false)
                 success = false
             end
         end
-        
+
         # Also install the repl launcher script
         if install_repl_script()
             println("   ✅ Created repl launcher script")

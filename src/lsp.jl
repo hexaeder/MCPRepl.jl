@@ -181,7 +181,7 @@ function build_vscode_command_args(method::String, params::Dict)
         pos = params["position"]
         push!(args, pos)
     end
-    
+
     # Special handling for rename - newName is the third parameter
     if method == "textDocument/rename" && haskey(params, "newName")
         push!(args, params["newName"])
@@ -417,7 +417,8 @@ end
 Create MCP tools for LSP operations that can be added to the server.
 """
 function create_lsp_tools()
-    goto_definition_tool = @mcp_tool(:lsp_goto_definition,
+    goto_definition_tool = @mcp_tool(
+        :lsp_goto_definition,
         """Jump to the definition of a symbol using Julia LSP.
 
         Uses the Julia Language Server to find where a function, type, or variable
@@ -488,23 +489,25 @@ function create_lsp_tools()
         end
     )
 
-    find_references_tool = @mcp_tool(:lsp_find_references,         """Find all references to a symbol using Julia LSP.
+    find_references_tool = @mcp_tool(
+        :lsp_find_references,
+        """Find all references to a symbol using Julia LSP.
 
-        Uses the Julia Language Server to find where a function, type, or variable
-        is used throughout the codebase.
+Uses the Julia Language Server to find where a function, type, or variable
+is used throughout the codebase.
 
-        # Arguments
-        - `file_path`: Absolute path to the file (required)
-        - `line`: Line number, 1-indexed (required)
-        - `column`: Column number, 1-indexed (required)
-        - `include_declaration`: Include the declaration in results (default: true)
+# Arguments
+- `file_path`: Absolute path to the file (required)
+- `line`: Line number, 1-indexed (required)
+- `column`: Column number, 1-indexed (required)
+- `include_declaration`: Include the declaration in results (default: true)
 
-        # Returns
-        List of file paths and positions where the symbol is referenced.
+# Returns
+List of file paths and positions where the symbol is referenced.
 
-        # Examples
-        - Find references: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
-        """,
+# Examples
+- Find references: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -565,20 +568,22 @@ function create_lsp_tools()
         end
     )
 
-    document_symbols_tool = @mcp_tool(:lsp_document_symbols,         """List all symbols (functions, types, etc.) in a file using Julia LSP.
+    document_symbols_tool = @mcp_tool(
+        :lsp_document_symbols,
+        """List all symbols (functions, types, etc.) in a file using Julia LSP.
 
-        Uses the Julia Language Server to get a structured list of all symbols
-        defined in a file, similar to the outline view in VS Code.
+Uses the Julia Language Server to get a structured list of all symbols
+defined in a file, similar to the outline view in VS Code.
 
-        # Arguments
-        - `file_path`: Absolute path to the file (required)
+# Arguments
+- `file_path`: Absolute path to the file (required)
 
-        # Returns
-        List of symbols with their types, names, and locations.
+# Returns
+List of symbols with their types, names, and locations.
 
-        # Examples
-        - List symbols: `{"file_path": "/path/to/file.jl"}`
-        """,
+# Examples
+- List symbols: `{"file_path": "/path/to/file.jl"}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -620,21 +625,23 @@ function create_lsp_tools()
         end
     )
 
-    workspace_symbols_tool = @mcp_tool(:lsp_workspace_symbols,         """Search for symbols across the entire workspace using Julia LSP.
+    workspace_symbols_tool = @mcp_tool(
+        :lsp_workspace_symbols,
+        """Search for symbols across the entire workspace using Julia LSP.
 
-        Uses the Julia Language Server to search for functions, types, and other
-        symbols by name across all files in the workspace.
+Uses the Julia Language Server to search for functions, types, and other
+symbols by name across all files in the workspace.
 
-        # Arguments
-        - `query`: Search query (can be partial name)
+# Arguments
+- `query`: Search query (can be partial name)
 
-        # Returns
-        List of matching symbols with their locations.
+# Returns
+List of matching symbols with their locations.
 
-        # Examples
-        - Search for "calculate": `{"query": "calculate"}`
-        - Search for types ending in "Error": `{"query": "Error"}`
-        """,
+# Examples
+- Search for "calculate": `{"query": "calculate"}`
+- Search for types ending in "Error": `{"query": "Error"}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -673,23 +680,25 @@ function create_lsp_tools()
     )
 
     # Rename symbol tool
-    rename_tool = @mcp_tool(:lsp_rename,         """Rename a symbol across the entire workspace using Julia LSP.
+    rename_tool = @mcp_tool(
+        :lsp_rename,
+        """Rename a symbol across the entire workspace using Julia LSP.
 
-        Uses the Julia Language Server to safely rename a function, variable, or type
-        everywhere it's used. Returns a WorkspaceEdit showing all changes that would be made.
+Uses the Julia Language Server to safely rename a function, variable, or type
+everywhere it's used. Returns a WorkspaceEdit showing all changes that would be made.
 
-        # Arguments
-        - `file_path`: Absolute path to the file containing the symbol (required)
-        - `line`: Line number where symbol is located, 1-indexed (required)
-        - `column`: Column number where symbol is located, 1-indexed (required)
-        - `new_name`: New name for the symbol (required)
+# Arguments
+- `file_path`: Absolute path to the file containing the symbol (required)
+- `line`: Line number where symbol is located, 1-indexed (required)
+- `column`: Column number where symbol is located, 1-indexed (required)
+- `new_name`: New name for the symbol (required)
 
-        # Returns
-        Description of all file changes that would be made (file paths and edit locations).
+# Returns
+Description of all file changes that would be made (file paths and edit locations).
 
-        # Examples
-        - Rename function: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10, "new_name": "calculate_result"}`
-        """,
+# Examples
+- Rename function: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10, "new_name": "calculate_result"}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -756,26 +765,28 @@ function create_lsp_tools()
     )
 
     # Code actions tool
-    code_actions_tool = @mcp_tool(:lsp_code_actions,         """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
+    code_actions_tool = @mcp_tool(
+        :lsp_code_actions,
+        """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
 
-        Uses the Julia Language Server to get available fixes and refactorings for errors,
-        warnings, or code at a specific location. Similar to clicking the lightbulb in VS Code.
+Uses the Julia Language Server to get available fixes and refactorings for errors,
+warnings, or code at a specific location. Similar to clicking the lightbulb in VS Code.
 
-        # Arguments
-        - `file_path`: Absolute path to the file (required)
-        - `start_line`: Start line number, 1-indexed (required)
-        - `start_column`: Start column number, 1-indexed (required)
-        - `end_line`: End line number, 1-indexed (optional, defaults to start_line)
-        - `end_column`: End column number, 1-indexed (optional, defaults to start_column)
-        - `kind`: Filter by action kind (optional): "quickfix", "refactor", "source", etc.
+# Arguments
+- `file_path`: Absolute path to the file (required)
+- `start_line`: Start line number, 1-indexed (required)
+- `start_column`: Start column number, 1-indexed (required)
+- `end_line`: End line number, 1-indexed (optional, defaults to start_line)
+- `end_column`: End column number, 1-indexed (optional, defaults to start_column)
+- `kind`: Filter by action kind (optional): "quickfix", "refactor", "source", etc.
 
-        # Returns
-        List of available code actions with their titles and kinds.
+# Returns
+List of available code actions with their titles and kinds.
 
-        # Examples
-        - Get all actions: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10}`
-        - Get only quick fixes: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10, "kind": "quickfix"}`
-        """,
+# Examples
+- Get all actions: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10}`
+- Get only quick fixes: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10, "kind": "quickfix"}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -890,12 +901,12 @@ function format_workspace_edit(edit)
     if edit === nothing
         return "No rename edits available. The symbol may not be renameable."
     end
-    
+
     # Handle empty array - means no edits (symbol can't be renamed)
     if edit isa Vector && isempty(edit)
         return "No rename edits available. The symbol may not be renameable (e.g., module names, keywords, built-in types)."
     end
-    
+
     # Handle VS Code custom format: [[uri_dict, [edits]]]
     if edit isa Vector && !isempty(edit)
         # Check if it's the nested array format from VS Code
@@ -919,14 +930,14 @@ function format_workspace_edit(edit)
     if !(edit isa Dict)
         return "No rename edits available. Unexpected format: $(typeof(edit))"
     end
-    
+
     if isempty(edit)
         return "No edits to apply"
     end
 
     # Try to get changes - might be under "changes" or "documentChanges"
     changes = get(edit, "changes", nothing)
-    
+
     if changes === nothing || (changes isa Dict && isempty(changes))
         # Try documentChanges format
         doc_changes = get(edit, "documentChanges", nothing)
@@ -935,7 +946,7 @@ function format_workspace_edit(edit)
         end
         return "No file changes"
     end
-    
+
     if !(changes isa Dict)
         return "Unexpected changes format: $(typeof(changes))"
     end
@@ -943,17 +954,17 @@ function format_workspace_edit(edit)
     result = "Workspace edit would modify $(length(changes)) file(s):\n"
     for (uri, text_edits) in changes
         file_path = uri_to_path(uri)
-        
+
         if !(text_edits isa Vector)
             continue
         end
-        
+
         result *= "\n📄 $file_path: $(length(text_edits)) edit(s)\n"
         for (i, text_edit) in enumerate(text_edits)
             if !(text_edit isa Dict)
                 continue
             end
-            
+
             range = get(text_edit, "range", nothing)
             new_text = get(text_edit, "newText", "")
             if range !== nothing && range isa Dict
@@ -986,12 +997,12 @@ function format_vscode_rename_result(edit_array)
             result *= "  [Skipped item: $(typeof(item)), length=$(item isa Vector ? length(item) : "N/A")]\n"
             continue
         end
-        
+
         # First element is the URI info
         uri_info = item[1]
         # Second element is the edits array
         edits = item[2]
-        
+
         # Extract file path from URI info
         file_path = "unknown"
         if uri_info isa Dict
@@ -1004,21 +1015,21 @@ function format_vscode_rename_result(edit_array)
                 file_path = uri_to_path(uri_info["external"])
             end
         end
-        
+
         if !(edits isa Vector)
             continue
         end
-        
+
         result *= "\n📄 $file_path: $(length(edits)) edit(s)\n"
-        
+
         for (i, text_edit) in enumerate(edits)
             if !(text_edit isa Dict)
                 continue
             end
-            
+
             range = get(text_edit, "range", nothing)
             new_text = get(text_edit, "newText", "")
-            
+
             if range isa Vector && length(range) >= 2
                 # Range is [start_dict, end_dict]
                 start = range[1]
@@ -1038,7 +1049,7 @@ function format_vscode_rename_result(edit_array)
             end
         end
     end
-    
+
     return result
 end
 
@@ -1051,26 +1062,26 @@ function format_document_changes(doc_changes)
     if !(doc_changes isa Vector) || isempty(doc_changes)
         return "No document changes"
     end
-    
+
     result = "Workspace edit would modify $(length(doc_changes)) document(s):\n"
     for (i, change) in enumerate(doc_changes)
         if !(change isa Dict)
             continue
         end
-        
+
         text_doc = get(change, "textDocument", nothing)
         edits = get(change, "edits", [])
-        
+
         if text_doc !== nothing && text_doc isa Dict
             uri = get(text_doc, "uri", "unknown")
             file_path = uri_to_path(uri)
             result *= "\n📄 $file_path: $(length(edits)) edit(s)\n"
-            
+
             for (j, edit) in enumerate(edits)
                 if !(edit isa Dict)
                     continue
                 end
-                
+
                 range = get(edit, "range", nothing)
                 new_text = get(edit, "newText", "")
                 if range !== nothing && range isa Dict
@@ -1083,7 +1094,7 @@ function format_document_changes(doc_changes)
             end
         end
     end
-    
+
     return result
 end
 

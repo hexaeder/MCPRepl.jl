@@ -4,11 +4,11 @@ using MCPRepl
 @testset "Generate Module" begin
     @testset "VSCODE_ALLOWED_COMMANDS" begin
         commands = MCPRepl.Generate.VSCODE_ALLOWED_COMMANDS
-        
+
         @testset "No duplicates" begin
             unique_commands = unique(commands)
             @test length(commands) == length(unique_commands)
-            
+
             if length(commands) != length(unique_commands)
                 # Find and report duplicates for debugging
                 seen = Set{String}()
@@ -23,25 +23,25 @@ using MCPRepl
                 @warn "Found duplicate commands" duplicates
             end
         end
-        
+
         @testset "All commands are strings" begin
             @test all(cmd -> isa(cmd, String), commands)
         end
-        
+
         @testset "No empty strings" begin
             @test all(cmd -> !isempty(cmd), commands)
         end
-        
+
         @testset "Commands follow VS Code naming convention" begin
             # All commands should contain at least one dot
             @test all(cmd -> contains(cmd, "."), commands)
         end
-        
+
         @testset "List is not empty" begin
             @test !isempty(commands)
             @test length(commands) > 0
         end
-        
+
         @testset "Commands are sorted (for maintainability)" begin
             # This is a recommendation, not a strict requirement
             # Sorting makes it easier to spot duplicates and maintain the list
@@ -51,11 +51,11 @@ using MCPRepl
             end
         end
     end
-    
+
     @testset "Function exports" begin
         # Verify that expected functions are exported
         exported_names = names(MCPRepl.Generate)
-        
+
         @test :generate in exported_names
         @test :create_security_config in exported_names
         @test :create_startup_script in exported_names

@@ -377,7 +377,7 @@ exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\$@
 
     repl_path = joinpath(project_path, "repl")
     write(repl_path, repl_content)
-    
+
     # Make it executable on Unix-like systems
     if !Sys.iswindows()
         try
@@ -386,7 +386,7 @@ exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\$@
             # Silently fail if chmod isn't available
         end
     end
-    
+
     return true
 end
 
@@ -399,16 +399,16 @@ function create_env_file(
 
     env_content = "# MCPRepl Environment Configuration\n"
     env_content *= "# This file contains sensitive information - DO NOT COMMIT\n\n"
-    
+
     if api_key !== nothing
         env_content *= "JULIA_MCP_API_KEY=$api_key\n"
     end
-    
+
     env_content *= "JULIA_MCP_PORT=$port\n"
 
     env_path = joinpath(project_path, ".env")
     write(env_path, env_content)
-    
+
     return true
 end
 
@@ -422,21 +422,19 @@ function create_claude_env_settings(
     claude_dir = joinpath(project_path, ".claude")
     mkpath(claude_dir)
 
-    settings = Dict(
-        "env" => Dict{String,String}(),
-        "enabledMcpjsonServers" => ["julia-repl"]
-    )
-    
+    settings =
+        Dict("env" => Dict{String,String}(), "enabledMcpjsonServers" => ["julia-repl"])
+
     if api_key !== nothing
         settings["env"]["JULIA_MCP_API_KEY"] = api_key
     end
-    
+
     # Always add the port
     settings["env"]["JULIA_MCP_PORT"] = string(port)
 
     settings_path = joinpath(claude_dir, "settings.local.json")
     write(settings_path, JSON.json(settings, 2))
-    
+
     return true
 end
 
@@ -453,16 +451,11 @@ function create_vscode_config(
     # Build server config with hardcoded values
     # NOTE: Claude Code does not support environment variable expansion in mcp.json
     # So we hardcode the values here and add the file to .gitignore
-    server_config = Dict{String,Any}(
-        "type" => "http",
-        "url" => "http://localhost:$port"
-    )
+    server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
 
     # Add Authorization header if api_key is provided
     if api_key !== nothing
-        server_config["headers"] = Dict{String,Any}(
-            "Authorization" => "Bearer $api_key"
-        )
+        server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer $api_key")
     end
 
     mcp_config = Dict("servers" => Dict("julia-repl" => server_config), "inputs" => [])
@@ -564,13 +557,13 @@ function create_gemini_config_template(
     # Write to both locations: project template and user's .gemini directory
     template_path = joinpath(project_path, "gemini-settings.json")
     write(template_path, config_template)
-    
+
     # Also write to ~/.gemini/settings.json
     gemini_dir = joinpath(homedir(), ".gemini")
     mkpath(gemini_dir)
     gemini_config_path = joinpath(gemini_dir, "settings.json")
     write(gemini_config_path, config_template)
-    
+
     println("   ✓ Written to ~/.gemini/settings.json")
     return true
 end
@@ -1056,10 +1049,10 @@ function _add_mcprepl_dependency(project_path::String)
 
         # Return to original environment
         @suppress Pkg.activate()
-        finally
-            cd(original_dir)
-        end
+    finally
+        cd(original_dir)
     end
+end
 
 function _enhance_test_file(project_path::String, project_name::String)
     println("🧪 Enhancing test file...")

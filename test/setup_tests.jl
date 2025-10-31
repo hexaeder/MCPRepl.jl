@@ -189,7 +189,7 @@ using JSON
 
                 # Test 2: Create security config first (install_startup_script reads from it)
                 MCPRepl.quick_setup(:lax, 3000, temp_dir)
-                
+
                 # Test 3: Install startup script
                 @test MCPRepl.install_startup_script() == true
                 @test isfile(startup_path)

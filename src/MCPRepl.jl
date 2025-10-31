@@ -41,20 +41,22 @@ macro mcp_tool(id, description, params, handler)
     if !(id isa QuoteNode || (id isa Expr && id.head == :quote))
         error("@mcp_tool requires a symbol literal for id, got: $id")
     end
-    
+
     # Extract the symbol from QuoteNode
     id_sym = id isa QuoteNode ? id.value : id.args[1]
     name_str = string(id_sym)
-    
-    return esc(quote
-        $MCPRepl.MCPTool(
-            $(QuoteNode(id_sym)),    # :exec_repl
-            $name_str,                # "exec_repl"
-            $description,
-            $params,
-            $handler
-        )
-    end)
+
+    return esc(
+        quote
+            $MCPRepl.MCPTool(
+                $(QuoteNode(id_sym)),    # :exec_repl
+                $name_str,                # "exec_repl"
+                $description,
+                $params,
+                $handler,
+            )
+        end,
+    )
 end
 
 include("security.jl")
@@ -182,11 +184,11 @@ function validate_and_consume_nonce(request_id::String, nonce::String)::Bool
         if stored === nothing
             return false
         end
-        
+
         stored_nonce, _ = stored
         # Delete immediately to prevent reuse
         delete!(VSCODE_NONCES, request_id)
-        
+
         return stored_nonce == nonce
     end
 end
@@ -299,19 +301,19 @@ function execute_repllike(
     # Use pipes for capturing output (simpler approach)
     orig_stdout = stdout
     orig_stderr = stderr
-    
+
     # redirect_stdout/stderr return (reader, writer) pipe pair
     stdout_read, stdout_write = redirect_stdout()
     stderr_read, stderr_write = redirect_stderr()
-    
+
     # Capture output in background task
     stdout_content = String[]
     stderr_content = String[]
-    
+
     stdout_task = @async begin
         try
             while !eof(stdout_read)
-                line = readline(stdout_read; keep=true)
+                line = readline(stdout_read; keep = true)
                 push!(stdout_content, line)
                 # Show real-time output unless silent mode
                 if !silent
@@ -342,7 +344,7 @@ function execute_repllike(
     stderr_task = @async begin
         try
             while !eof(stderr_read)
-                line = readline(stderr_read; keep=true)
+                line = readline(stderr_read; keep = true)
                 push!(stderr_content, line)
                 # Show real-time output unless silent mode
                 if !silent
@@ -369,7 +371,7 @@ function execute_repllike(
             end
         end
     end
-    
+
     # Evaluate the expression
     response = try
         result_pair = REPL.eval_on_backend(expr, backend)
@@ -380,26 +382,26 @@ function execute_repllike(
         # Restore streams and clean up pipes
         redirect_stdout(orig_stdout)
         redirect_stderr(orig_stderr)
-        
+
         # Close write ends to signal EOF
         close(stdout_write)
         close(stderr_write)
-        
+
         # Wait for readers to finish
         wait(stdout_task)
         wait(stderr_task)
-        
+
         # Close read ends
         close(stdout_read)
         close(stderr_read)
     end
-    
+
     # Get captured output
     captured_content = join(stdout_content) * join(stderr_content)
-    
+
     # Note: Output was already displayed in real-time by the async tasks
     # No need to print captured_content again unless silent mode
-    
+
     # Format the result for display
     result_str = if !REPL.ends_with_semicolon(str)
         io_buf = IOBuffer()
@@ -408,7 +410,7 @@ function execute_repllike(
     else
         ""
     end
-    
+
     # Refresh REPL if not silent
     if !silent
         if !isempty(result_str)
@@ -417,7 +419,7 @@ function execute_repllike(
         REPL.prepare_next(repl)
         REPL.LineEdit.refresh_line(repl.mistate)
     end
-    
+
     # If streaming, send completion notification and result
     if stream_channel !== nothing
         # Send result if not suppressed by semicolon
@@ -438,7 +440,7 @@ function execute_repllike(
         )
         put!(stream_channel, JSON.json(complete_event))
     end
-    
+
     # Return the complete output
     return captured_content * result_str
 end
@@ -693,172 +695,180 @@ function start!(;
         println()
     end
 
-    usage_instructions_tool = @mcp_tool :usage_instructions "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents." Dict(
-        "type" => "object",
-        "properties" => Dict(),
-        "required" => []
-    ) (args -> begin
-            try
-                workflow_path = joinpath(
-                    dirname(dirname(@__FILE__)),
-                    "prompts",
-                    "julia_repl_workflow.md",
-                )
-                commands_json_path = joinpath(
-                    dirname(dirname(@__FILE__)),
-                    "prompts",
-                    "vscode_commands.json",
-                )
-
-                if !isfile(workflow_path)
-                    return "Error: julia_repl_workflow.md not found at $workflow_path"
-                end
-
-                base_content = read(workflow_path, String)
-
-                # Try to read actual allowed commands from workspace settings and format with descriptions
+    usage_instructions_tool =
+        @mcp_tool :usage_instructions "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents." Dict(
+            "type" => "object",
+            "properties" => Dict(),
+            "required" => [],
+        ) (
+            args -> begin
                 try
-                    settings = read_vscode_settings()
-                    allowed_commands = get(
-                        settings,
-                        "vscode-remote-control.allowedCommands",
-                        nothing,
+                    workflow_path = joinpath(
+                        dirname(dirname(@__FILE__)),
+                        "prompts",
+                        "julia_repl_workflow.md",
+                    )
+                    commands_json_path = joinpath(
+                        dirname(dirname(@__FILE__)),
+                        "prompts",
+                        "vscode_commands.json",
                     )
 
-                    if allowed_commands !== nothing && !isempty(allowed_commands)
-                        # Load command documentation
-                        command_docs = Dict{String,String}()
-                        command_categories =
-                            Dict{String,Tuple{String,Vector{String}}}()  # category_id => (name, commands)
+                    if !isfile(workflow_path)
+                        return "Error: julia_repl_workflow.md not found at $workflow_path"
+                    end
 
-                        if isfile(commands_json_path)
-                            try
-                                commands_data = JSON.parse(
-                                    read(
-                                        commands_json_path,
-                                        String;
-                                        dicttype = Dict{String,Any},
-                                    ),
-                                )
-                                categories = get(commands_data, :categories, Dict())
+                    base_content = read(workflow_path, String)
 
-                                # Build lookup table and category mapping
-                                for (cat_id, cat_data) in pairs(categories)
-                                    cat_name = get(cat_data, :name, string(cat_id))
-                                    cat_commands = String[]
+                    # Try to read actual allowed commands from workspace settings and format with descriptions
+                    try
+                        settings = read_vscode_settings()
+                        allowed_commands = get(
+                            settings,
+                            "vscode-remote-control.allowedCommands",
+                            nothing,
+                        )
 
-                                    cmds = get(cat_data, :commands, Dict())
-                                    for (cmd, desc) in pairs(cmds)
-                                        command_docs[string(cmd)] = string(desc)
-                                        push!(cat_commands, string(cmd))
+                        if allowed_commands !== nothing && !isempty(allowed_commands)
+                            # Load command documentation
+                            command_docs = Dict{String,String}()
+                            command_categories =
+                                Dict{String,Tuple{String,Vector{String}}}()  # category_id => (name, commands)
+
+                            if isfile(commands_json_path)
+                                try
+                                    commands_data = JSON.parse(
+                                        read(
+                                            commands_json_path,
+                                            String;
+                                            dicttype = Dict{String,Any},
+                                        ),
+                                    )
+                                    categories =
+                                        get(commands_data, :categories, Dict())
+
+                                    # Build lookup table and category mapping
+                                    for (cat_id, cat_data) in pairs(categories)
+                                        cat_name = get(cat_data, :name, string(cat_id))
+                                        cat_commands = String[]
+
+                                        cmds = get(cat_data, :commands, Dict())
+                                        for (cmd, desc) in pairs(cmds)
+                                            command_docs[string(cmd)] = string(desc)
+                                            push!(cat_commands, string(cmd))
+                                        end
+
+                                        command_categories[string(cat_id)] =
+                                            (cat_name, cat_commands)
                                     end
-
-                                    command_categories[string(cat_id)] =
-                                        (cat_name, cat_commands)
-                                end
-                            catch e
-                                @debug "Could not load command documentation" exception =
-                                    e
-                            end
-                        end
-
-                        # Append formatted commands section
-                        commands_section = "\n\n---\n\n## Currently Configured VS Code Commands\n\n"
-                        commands_section *= "Your workspace has **$(length(allowed_commands)) commands** configured in `.vscode/settings.json`.\n\n"
-
-                        # Group commands by category
-                        categorized_commands = Dict{String,Vector{String}}()
-                        uncategorized_commands = String[]
-
-                        for cmd in allowed_commands
-                            cmd_str = string(cmd)
-                            found_category = false
-
-                            for (cat_id, (cat_name, cat_cmds)) in command_categories
-                                if cmd_str in cat_cmds
-                                    if !haskey(categorized_commands, cat_id)
-                                        categorized_commands[cat_id] = String[]
-                                    end
-                                    push!(categorized_commands[cat_id], cmd_str)
-                                    found_category = true
-                                    break
+                                catch e
+                                    @debug "Could not load command documentation" exception =
+                                        e
                                 end
                             end
 
-                            if !found_category
-                                push!(uncategorized_commands, cmd_str)
+                            # Append formatted commands section
+                            commands_section = "\n\n---\n\n## Currently Configured VS Code Commands\n\n"
+                            commands_section *= "Your workspace has **$(length(allowed_commands)) commands** configured in `.vscode/settings.json`.\n\n"
+
+                            # Group commands by category
+                            categorized_commands = Dict{String,Vector{String}}()
+                            uncategorized_commands = String[]
+
+                            for cmd in allowed_commands
+                                cmd_str = string(cmd)
+                                found_category = false
+
+                                for (cat_id, (cat_name, cat_cmds)) in command_categories
+                                    if cmd_str in cat_cmds
+                                        if !haskey(categorized_commands, cat_id)
+                                            categorized_commands[cat_id] = String[]
+                                        end
+                                        push!(categorized_commands[cat_id], cmd_str)
+                                        found_category = true
+                                        break
+                                    end
+                                end
+
+                                if !found_category
+                                    push!(uncategorized_commands, cmd_str)
+                                end
                             end
-                        end
 
-                        # Output categorized commands
-                        category_order = [
-                            "julia",
-                            "file",
-                            "navigation",
-                            "window",
-                            "terminal",
-                            "search",
-                            "git",
-                            "debug",
-                            "tasks",
-                            "extensions",
-                            "vscode_api",
-                        ]
+                            # Output categorized commands
+                            category_order = [
+                                "julia",
+                                "file",
+                                "navigation",
+                                "window",
+                                "terminal",
+                                "search",
+                                "git",
+                                "debug",
+                                "tasks",
+                                "extensions",
+                                "vscode_api",
+                            ]
 
-                        for cat_id in category_order
-                            if haskey(categorized_commands, cat_id)
-                                cat_name, _ = command_categories[cat_id]
-                                commands_section *= "### $(cat_name)\n\n"
+                            for cat_id in category_order
+                                if haskey(categorized_commands, cat_id)
+                                    cat_name, _ = command_categories[cat_id]
+                                    commands_section *= "### $(cat_name)\n\n"
 
-                                for cmd in sort(categorized_commands[cat_id])
+                                    for cmd in sort(categorized_commands[cat_id])
+                                        desc = get(
+                                            command_docs,
+                                            cmd,
+                                            "No description available",
+                                        )
+                                        commands_section *= "- **`$(cmd)`** - $(desc)\n"
+                                    end
+
+                                    commands_section *= "\n"
+                                end
+                            end
+
+                            # Output uncategorized commands
+                            if !isempty(uncategorized_commands)
+                                commands_section *= "### 📋 Other Commands\n\n"
+                                for cmd in sort(uncategorized_commands)
                                     desc = get(command_docs, cmd, "No description available")
                                     commands_section *= "- **`$(cmd)`** - $(desc)\n"
                                 end
-
                                 commands_section *= "\n"
                             end
-                        end
 
-                        # Output uncategorized commands
-                        if !isempty(uncategorized_commands)
-                            commands_section *= "### 📋 Other Commands\n\n"
-                            for cmd in sort(uncategorized_commands)
-                                desc = get(command_docs, cmd, "No description available")
-                                commands_section *= "- **`$(cmd)`** - $(desc)\n"
-                            end
-                            commands_section *= "\n"
+                            return base_content * commands_section
                         end
-
-                        return base_content * commands_section
+                    catch e
+                        # If reading settings fails, just return base content
+                        @debug "Could not read VS Code settings for allowed commands" exception =
+                            e
                     end
+                    return base_content
                 catch e
-                    # If reading settings fails, just return base content
-                    @debug "Could not read VS Code settings for allowed commands" exception =
-                        e
+                    return "Error reading usage instructions: $e"
                 end
-                return base_content
-            catch e
-                return "Error reading usage instructions: $e"
             end
-        end
-    )
+        )
 
-    repl_tool = @mcp_tool(:exec_repl,
-                """
-        Execute Julia code in a shared, persistent REPL session to avoid startup latency.
+    repl_tool = @mcp_tool(
+        :exec_repl,
+        """
+Execute Julia code in a shared, persistent REPL session to avoid startup latency.
 
-        **PREREQUISITE**: Before using this tool, you MUST first call the `usage_instructions` tool to understand proper Julia REPL workflow, best practices, and etiquette for shared REPL usage.
+**PREREQUISITE**: Before using this tool, you MUST first call the `usage_instructions` tool to understand proper Julia REPL workflow, best practices, and etiquette for shared REPL usage.
 
-        Once this function is available, **never** use `julia` commands in bash, always use the REPL.
+Once this function is available, **never** use `julia` commands in bash, always use the REPL.
 
-        The tool returns raw text output containing: all printed content from stdout and stderr streams, plus the mime text/plain representation of the expression's return value (unless the expression ends with a semicolon).
+The tool returns raw text output containing: all printed content from stdout and stderr streams, plus the mime text/plain representation of the expression's return value (unless the expression ends with a semicolon).
 
-        You may use this REPL to
-        - execute julia code
-        - execute test sets
-        - get julia function documentation (i.e. send @doc functionname)
-        - investigate the environment (use investigate_environment tool for comprehensive setup info)
-        """,
+You may use this REPL to
+- execute julia code
+- execute test sets
+- get julia function documentation (i.e. send @doc functionname)
+- investigate the environment (use investigate_environment tool for comprehensive setup info)
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -892,21 +902,22 @@ function start!(;
         end
     )
 
-    restart_repl_tool = @mcp_tool(:restart_repl,
-                """Restart the Julia REPL and return immediately.
+    restart_repl_tool = @mcp_tool(
+        :restart_repl,
+        """Restart the Julia REPL and return immediately.
 
-        **Workflow for AI Agents:**
-        1. Call this tool to trigger the restart
-        2. Wait 5-10 seconds (don't make any MCP requests during this time)
-        3. Try your next request - if it fails, wait a bit longer and retry
+**Workflow for AI Agents:**
+1. Call this tool to trigger the restart
+2. Wait 5-10 seconds (don't make any MCP requests during this time)
+3. Try your next request - if it fails, wait a bit longer and retry
 
-        The MCP server connection will be interrupted during restart. This is expected.
-        The tool returns immediately, and you (the AI agent) must wait before making
-        new requests to allow the Julia REPL to restart and the MCP server to reinitialize.
+The MCP server connection will be interrupted during restart. This is expected.
+The tool returns immediately, and you (the AI agent) must wait before making
+new requests to allow the Julia REPL to restart and the MCP server to reinitialize.
 
-        Typical restart time is 5-10 seconds depending on system load and package precompilation.
+Typical restart time is 5-10 seconds depending on system load and package precompilation.
 
-        Use this tool after making changes to the MCP server code or when the REPL needs a fresh start.""",
+Use this tool after making changes to the MCP server code or when the REPL needs a fresh start.""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         (args, stream_channel = nothing) -> begin
             try
@@ -928,17 +939,18 @@ function start!(;
         end
     )
 
-    whitespace_tool = @mcp_tool(:remove_trailing_whitespace,
-                """Remove trailing whitespace from all lines in a file.
+    whitespace_tool = @mcp_tool(
+        :remove_trailing_whitespace,
+        """Remove trailing whitespace from all lines in a file.
 
-        This tool should be called to clean up any trailing spaces that AI agents tend to leave in files after editing.
+This tool should be called to clean up any trailing spaces that AI agents tend to leave in files after editing.
 
-        **Usage Guidelines:**
-        - For single file edits: Call immediately after editing the file
-        - For multiple file edits: Call once on each modified file at the very end, before handing back to the user
-        - Always call this tool on files you've edited to maintain clean, professional code formatting
+**Usage Guidelines:**
+- For single file edits: Call immediately after editing the file
+- For multiple file edits: Call once on each modified file at the very end, before handing back to the user
+- Always call this tool on files you've edited to maintain clean, professional code formatting
 
-        The tool efficiently removes all types of trailing whitespace (spaces, tabs, mixed) from every line in the file.""",
+The tool efficiently removes all types of trailing whitespace (spaces, tabs, mixed) from every line in the file.""",
         MCPRepl.text_parameter("file_path", "Absolute path to the file to clean up"),
         args -> begin
             try
@@ -972,48 +984,49 @@ function start!(;
         end
     )
 
-    vscode_command_tool = @mcp_tool(:execute_vscode_command,
-                """Execute any VS Code command via the Remote Control extension.
+    vscode_command_tool = @mcp_tool(
+        :execute_vscode_command,
+        """Execute any VS Code command via the Remote Control extension.
 
-        This tool can trigger any VS Code command that has been allowlisted in the extension configuration.
-        Useful for automating editor operations like saving files, running tasks, managing windows, etc.
+This tool can trigger any VS Code command that has been allowlisted in the extension configuration.
+Useful for automating editor operations like saving files, running tasks, managing windows, etc.
 
-        **Prerequisites:**
-        - VS Code Remote Control extension must be installed (via MCPRepl.setup())
-        - The command must be in the allowed commands list (see usage_instructions tool for complete list)
+**Prerequisites:**
+- VS Code Remote Control extension must be installed (via MCPRepl.setup())
+- The command must be in the allowed commands list (see usage_instructions tool for complete list)
 
-        **Bidirectional Communication:**
-        - Set `wait_for_response=true` to wait for and return the command's result
-        - Useful for commands that return values (e.g., getting debug variable values)
-        - Default timeout is 5 seconds (configurable via `timeout` parameter)
+**Bidirectional Communication:**
+- Set `wait_for_response=true` to wait for and return the command's result
+- Useful for commands that return values (e.g., getting debug variable values)
+- Default timeout is 5 seconds (configurable via `timeout` parameter)
 
-        **Common Command Categories:**
-        - REPL & Window Control: restartREPL, startREPL, reloadWindow
-        - File Operations: saveAll, closeAllEditors, openFile
-        - Navigation: terminal.focus, focusActiveEditorGroup, focusFilesExplorer, quickOpen
-        - Terminal Operations: sendSequence (execute shell commands without approval dialogs)
-        - Testing & Debugging: tasks.runTask, debug.start, debug.stop
-        - Git: git.commit, git.refresh, git.sync
-        - Search: findInFiles, replaceInFiles
-        - Window Management: splitEditor, togglePanel, toggleSidebarVisibility
-        - Extensions: installExtension
+**Common Command Categories:**
+- REPL & Window Control: restartREPL, startREPL, reloadWindow
+- File Operations: saveAll, closeAllEditors, openFile
+- Navigation: terminal.focus, focusActiveEditorGroup, focusFilesExplorer, quickOpen
+- Terminal Operations: sendSequence (execute shell commands without approval dialogs)
+- Testing & Debugging: tasks.runTask, debug.start, debug.stop
+- Git: git.commit, git.refresh, git.sync
+- Search: findInFiles, replaceInFiles
+- Window Management: splitEditor, togglePanel, toggleSidebarVisibility
+- Extensions: installExtension
 
-        **Examples:**
-        ```
-        execute_vscode_command("language-julia.restartREPL")
-        execute_vscode_command("workbench.action.files.saveAll")
-        execute_vscode_command("workbench.action.terminal.focus")
-        execute_vscode_command("workbench.action.tasks.runTask", ["test"])
+**Examples:**
+```
+execute_vscode_command("language-julia.restartREPL")
+execute_vscode_command("workbench.action.files.saveAll")
+execute_vscode_command("workbench.action.terminal.focus")
+execute_vscode_command("workbench.action.tasks.runTask", ["test"])
 
-        # Execute shell commands (RECOMMENDED for julia --project commands):
-        execute_vscode_command("workbench.action.terminal.sendSequence",
-          ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
+# Execute shell commands (RECOMMENDED for julia --project commands):
+execute_vscode_command("workbench.action.terminal.sendSequence",
+  ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
 
-        # Get a value back from VS Code:
-        execute_vscode_command("someCommand", wait_for_response=true, timeout=10.0)
-        ```
+# Get a value back from VS Code:
+execute_vscode_command("someCommand", wait_for_response=true, timeout=10.0)
+```
 
-        For the complete list of available commands and their descriptions, call the usage_instructions tool.""",
+For the complete list of available commands and their descriptions, call the usage_instructions tool.""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1097,21 +1110,22 @@ function start!(;
         end
     )
 
-    investigate_tool = @mcp_tool(:investigate_environment,
-                """Investigate the current Julia environment including pwd, active project, packages, and development packages with their paths.
+    investigate_tool = @mcp_tool(
+        :investigate_environment,
+        """Investigate the current Julia environment including pwd, active project, packages, and development packages with their paths.
 
-        This tool provides comprehensive information about:
-        - Current working directory
-        - Active project and its details
-        - All packages in the environment with development status
-        - Development packages with their file system paths
-        - Current environment package status
-        - Revise.jl status for hot reloading
+This tool provides comprehensive information about:
+- Current working directory
+- Active project and its details
+- All packages in the environment with development status
+- Development packages with their file system paths
+- Current environment package status
+- Revise.jl status for hot reloading
 
-        This is useful for understanding the development setup and debugging environment issues.
+This is useful for understanding the development setup and debugging environment issues.
 
-        **Tip:** If you need to restart the Julia REPL (e.g., when Revise isn't tracking changes properly),
-        use the execute_vscode_command tool with "language-julia.restartREPL".""",
+**Tip:** If you need to restart the Julia REPL (e.g., when Revise isn't tracking changes properly),
+use the execute_vscode_command tool with "language-julia.restartREPL".""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             try
@@ -1122,18 +1136,19 @@ function start!(;
         end
     )
 
-    search_methods_tool = @mcp_tool(:search_methods,
-                """Search for all methods of a function or all methods matching a type signature.
+    search_methods_tool = @mcp_tool(
+        :search_methods,
+        """Search for all methods of a function or all methods matching a type signature.
 
-        This is essential for understanding Julia's multiple dispatch system and finding
-        what methods are available for a function.
+This is essential for understanding Julia's multiple dispatch system and finding
+what methods are available for a function.
 
-        # Examples
-        - Find all methods: `search_methods(println)`
-        - Find methods by signature: `methodswith(String)`
-        - Find methods in a module: `names(Module, all=true)`
+# Examples
+- Find all methods: `search_methods(println)`
+- Find methods by signature: `methodswith(String)`
+- Find methods in a module: `names(Module, all=true)`
 
-        Returns a formatted list of all matching methods with their signatures.""",
+Returns a formatted list of all matching methods with their signatures.""",
         MCPRepl.text_parameter(
             "query",
             "Function name or type to search (e.g., 'println', 'String', 'Base.sort')",
@@ -1166,17 +1181,18 @@ function start!(;
         end
     )
 
-    macro_expand_tool = @mcp_tool(:macro_expand,
-                """Expand a macro to see what code it generates.
+    macro_expand_tool = @mcp_tool(
+        :macro_expand,
+        """Expand a macro to see what code it generates.
 
-        This is invaluable for understanding what macros do and debugging macro-heavy code.
+This is invaluable for understanding what macros do and debugging macro-heavy code.
 
-        # Examples
-        - `@macroexpand @time sleep(1)`
-        - `@macroexpand @test 1 + 1 == 2`
-        - `@macroexpand @inbounds a[i]`
+# Examples
+- `@macroexpand @time sleep(1)`
+- `@macroexpand @test 1 + 1 == 2`
+- `@macroexpand @inbounds a[i]`
 
-        Returns the expanded code that the macro generates.""",
+Returns the expanded code that the macro generates.""",
         MCPRepl.text_parameter(
             "expression",
             "Macro expression to expand (e.g., '@time sleep(1)')",
@@ -1199,21 +1215,22 @@ function start!(;
         end
     )
 
-    type_info_tool = @mcp_tool(:type_info,
-                """Get comprehensive information about a Julia type.
+    type_info_tool = @mcp_tool(
+        :type_info,
+        """Get comprehensive information about a Julia type.
 
-        Provides details about:
-        - Type hierarchy (supertypes and subtypes)
-        - Field names and types
-        - Type parameters
-        - Whether it's abstract, primitive, or concrete
+Provides details about:
+- Type hierarchy (supertypes and subtypes)
+- Field names and types
+- Type parameters
+- Whether it's abstract, primitive, or concrete
 
-        # Examples
-        - `type_info(String)`
-        - `type_info(Vector{Int})`
-        - `type_info(AbstractArray)`
+# Examples
+- `type_info(String)`
+- `type_info(Vector{Int})`
+- `type_info(AbstractArray)`
 
-        This is essential for understanding Julia's type system.""",
+This is essential for understanding Julia's type system.""",
         MCPRepl.text_parameter(
             "type_expr",
             "Type expression to inspect (e.g., 'String', 'Vector{Int}', 'AbstractArray')",
@@ -1271,26 +1288,27 @@ function start!(;
         end
     )
 
-    profile_tool = @mcp_tool(:profile_code,
-                """Profile Julia code to identify performance bottlenecks.
+    profile_tool = @mcp_tool(
+        :profile_code,
+        """Profile Julia code to identify performance bottlenecks.
 
-        Uses Julia's built-in Profile stdlib to analyze where time is spent in your code.
+Uses Julia's built-in Profile stdlib to analyze where time is spent in your code.
 
-        # Example
-        ```julia
-        profile_code(\"\"\"
-            function test()
-                sum = 0
-                for i in 1:1000000
-                    sum += i
-                end
-                sum
-            end
-            test()
-        \"\"\")
-        ```
+# Example
+```julia
+profile_code(\"\"\"
+    function test()
+        sum = 0
+        for i in 1:1000000
+            sum += i
+        end
+        sum
+    end
+    test()
+\"\"\")
+```
 
-        Returns a profile report showing which lines take the most time.""",
+Returns a profile report showing which lines take the most time.""",
         MCPRepl.text_parameter("code", "Julia code to profile"),
         args -> begin
             try
@@ -1314,18 +1332,19 @@ function start!(;
         end
     )
 
-    list_names_tool = @mcp_tool(:list_names,
-                """List all exported names in a module or package.
+    list_names_tool = @mcp_tool(
+        :list_names,
+        """List all exported names in a module or package.
 
-        Useful for discovering what functions, types, and constants are available
-        in a module without reading documentation.
+Useful for discovering what functions, types, and constants are available
+in a module without reading documentation.
 
-        # Examples
-        - `list_names(Base)`
-        - `list_names(Core)`
-        - `list_names(MyPackage)`
+# Examples
+- `list_names(Base)`
+- `list_names(Core)`
+- `list_names(MyPackage)`
 
-        Set all=true to include non-exported names.""",
+Set all=true to include non-exported names.""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1367,17 +1386,18 @@ function start!(;
         end
     )
 
-    code_lowered_tool = @mcp_tool(:code_lowered,
-                """Show lowered (desugared) Julia code for a function.
+    code_lowered_tool = @mcp_tool(
+        :code_lowered,
+        """Show lowered (desugared) Julia code for a function.
 
-        This shows the intermediate representation after syntax desugaring but before
-        type inference. Useful for understanding what Julia does with your code.
+This shows the intermediate representation after syntax desugaring but before
+type inference. Useful for understanding what Julia does with your code.
 
-        # Example
-        - `code_lowered(sin, (Float64,))`
-        - `code_lowered(+, (Int, Int))`
+# Example
+- `code_lowered(sin, (Float64,))`
+- `code_lowered(+, (Int, Int))`
 
-        Requires function name and tuple of argument types.""",
+Requires function name and tuple of argument types.""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1415,17 +1435,18 @@ function start!(;
         end
     )
 
-    code_typed_tool = @mcp_tool(:code_typed,
-                """Show type-inferred Julia code for a function.
+    code_typed_tool = @mcp_tool(
+        :code_typed,
+        """Show type-inferred Julia code for a function.
 
-        This shows the code after type inference, which is crucial for understanding
-        performance. Type-unstable code will show up here with Union or Any types.
+This shows the code after type inference, which is crucial for understanding
+performance. Type-unstable code will show up here with Union or Any types.
 
-        # Example
-        - `code_typed(sin, (Float64,))`
-        - `code_typed(+, (Int, Int))`
+# Example
+- `code_typed(sin, (Float64,))`
+- `code_typed(+, (Int, Int))`
 
-        Useful for debugging type stability and performance issues.""",
+Useful for debugging type stability and performance issues.""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1464,28 +1485,29 @@ function start!(;
     )
 
     # Optional formatting tool (requires JuliaFormatter.jl)
-    format_tool = @mcp_tool(:format_code,
-                """Format Julia code using JuliaFormatter.jl (optional).
+    format_tool = @mcp_tool(
+        :format_code,
+        """Format Julia code using JuliaFormatter.jl (optional).
 
-        Formats Julia source files or directories according to standard style guidelines.
-        This tool requires JuliaFormatter.jl to be installed in your environment.
+Formats Julia source files or directories according to standard style guidelines.
+This tool requires JuliaFormatter.jl to be installed in your environment.
 
-        # Arguments
-        - `path`: Path to a Julia file or directory to format
-        - `overwrite`: Whether to overwrite files in place (default: true)
-        - `verbose`: Show which files are being formatted (default: true)
+# Arguments
+- `path`: Path to a Julia file or directory to format
+- `overwrite`: Whether to overwrite files in place (default: true)
+- `verbose`: Show which files are being formatted (default: true)
 
-        # Installation
-        If JuliaFormatter is not installed, add it with:
-        ```julia
-        using Pkg; Pkg.add("JuliaFormatter")
-        ```
+# Installation
+If JuliaFormatter is not installed, add it with:
+```julia
+using Pkg; Pkg.add("JuliaFormatter")
+```
 
-        # Examples
-        - Format a single file: `{"path": "src/MyModule.jl"}`
-        - Format entire src directory: `{"path": "src"}`
-        - Preview without overwriting: `{"path": "src/file.jl", "overwrite": false}`
-        """,
+# Examples
+- Format a single file: `{"path": "src/MyModule.jl"}`
+- Format entire src directory: `{"path": "src"}`
+- Preview without overwriting: `{"path": "src/file.jl", "overwrite": false}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1534,17 +1556,17 @@ function start!(;
 
                 code = """
                 using JuliaFormatter
-                
+
                 # Read the file before formatting to detect changes
                 before_content = read("$abs_path", String)
-                
+
                 # Format the file
                 format_result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
-                
+
                 # Read after to see if changes were made
                 after_content = read("$abs_path", String)
                 changes_made = before_content != after_content
-                
+
                 if changes_made
                     println("✅ File was reformatted: $abs_path")
                 elseif format_result
@@ -1552,7 +1574,7 @@ function start!(;
                 else
                     println("⚠️  Formatting completed but check for errors: $abs_path")
                 end
-                
+
                 changes_made || format_result
                 """
 
@@ -1564,32 +1586,33 @@ function start!(;
     )
 
     # Optional linting tool (requires Aqua.jl)
-    lint_tool = @mcp_tool(:lint_package,
-                """Run Aqua.jl quality assurance tests on a Julia package (optional).
+    lint_tool = @mcp_tool(
+        :lint_package,
+        """Run Aqua.jl quality assurance tests on a Julia package (optional).
 
-        Performs comprehensive package quality checks including:
-        - Ambiguity detection in method signatures
-        - Undefined exports
-        - Unbound type parameters
-        - Dependency analysis
-        - Project.toml validation
-        - And more
+Performs comprehensive package quality checks including:
+- Ambiguity detection in method signatures
+- Undefined exports
+- Unbound type parameters
+- Dependency analysis
+- Project.toml validation
+- And more
 
-        This tool requires Aqua.jl to be installed in your environment.
+This tool requires Aqua.jl to be installed in your environment.
 
-        # Arguments
-        - `package_name`: Name of the package to test (default: current project)
+# Arguments
+- `package_name`: Name of the package to test (default: current project)
 
-        # Installation
-        If Aqua is not installed, add it with:
-        ```julia
-        using Pkg; Pkg.add("Aqua")
-        ```
+# Installation
+If Aqua is not installed, add it with:
+```julia
+using Pkg; Pkg.add("Aqua")
+```
 
-        # Examples
-        - Test current package: `{}`
-        - Test specific package: `{"package_name": "MyPackage"}`
-        """,
+# Examples
+- Test current package: `{}`
+- Test specific package: `{"package_name": "MyPackage"}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1655,20 +1678,21 @@ function start!(;
     )
 
     # High-level debugging workflow tools
-    open_and_breakpoint_tool = @mcp_tool(:open_file_and_set_breakpoint,
-                """Open a file in VS Code and set a breakpoint at a specific line.
+    open_and_breakpoint_tool = @mcp_tool(
+        :open_file_and_set_breakpoint,
+        """Open a file in VS Code and set a breakpoint at a specific line.
 
-        This is a convenience tool that combines file opening and breakpoint setting
-        into a single operation, making it easier to set up debugging.
+This is a convenience tool that combines file opening and breakpoint setting
+into a single operation, making it easier to set up debugging.
 
-        # Arguments
-        - `file_path`: Absolute path to the file to open
-        - `line`: Line number to set the breakpoint (optional, defaults to current cursor position)
+# Arguments
+- `file_path`: Absolute path to the file to open
+- `line`: Line number to set the breakpoint (optional, defaults to current cursor position)
 
-        # Examples
-        - Open file and set breakpoint at line 42: `{"file_path": "/path/to/file.jl", "line": 42}`
-        - Open file (breakpoint at cursor): `{"file_path": "/path/to/file.jl"}`
-        """,
+# Examples
+- Open file and set breakpoint at line 42: `{"file_path": "/path/to/file.jl", "line": 42}`
+- Open file (breakpoint at cursor): `{"file_path": "/path/to/file.jl"}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1733,15 +1757,16 @@ function start!(;
         end
     )
 
-    start_debug_session_tool = @mcp_tool(:start_debug_session,
-                """Start a debugging session in VS Code.
+    start_debug_session_tool = @mcp_tool(
+        :start_debug_session,
+        """Start a debugging session in VS Code.
 
-        Opens the debug view and starts debugging with the current configuration.
-        Useful after setting breakpoints to begin stepping through code.
+Opens the debug view and starts debugging with the current configuration.
+Useful after setting breakpoints to begin stepping through code.
 
-        # Examples
-        - Start debugging: `{}`
-        """,
+# Examples
+- Start debugging: `{}`
+""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
@@ -1762,20 +1787,21 @@ function start!(;
         end
     )
 
-    add_watch_expression_tool = @mcp_tool(:add_watch_expression,
-                """Add a watch expression to monitor during debugging.
+    add_watch_expression_tool = @mcp_tool(
+        :add_watch_expression,
+        """Add a watch expression to monitor during debugging.
 
-        Watch expressions let you monitor the value of variables or expressions
-        as you step through code during debugging.
+Watch expressions let you monitor the value of variables or expressions
+as you step through code during debugging.
 
-        # Arguments
-        - `expression`: The Julia expression to watch (e.g., "x", "length(arr)", "myvar > 10")
+# Arguments
+- `expression`: The Julia expression to watch (e.g., "x", "length(arr)", "myvar > 10")
 
-        # Examples
-        - Watch a variable: `{"expression": "x"}`
-        - Watch an expression: `{"expression": "length(my_array)"}`
-        - Watch a condition: `{"expression": "counter > 100"}`
-        """,
+# Examples
+- Watch a variable: `{"expression": "x"}`
+- Watch an expression: `{"expression": "length(my_array)"}`
+- Watch a condition: `{"expression": "counter > 100"}`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1811,15 +1837,16 @@ function start!(;
         end
     )
 
-    quick_file_open_tool = @mcp_tool(:quick_open_file,
-                """Quickly open a file using VS Code's quick open (Cmd+P/Ctrl+P).
+    quick_file_open_tool = @mcp_tool(
+        :quick_open_file,
+        """Quickly open a file using VS Code's quick open (Cmd+P/Ctrl+P).
 
-        Opens the quick file picker, allowing navigation to files by name.
-        This is faster than navigating through the file explorer for known files.
+Opens the quick file picker, allowing navigation to files by name.
+This is faster than navigating through the file explorer for known files.
 
-        # Examples
-        - Open quick picker: `{}`
-        """,
+# Examples
+- Open quick picker: `{}`
+""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
@@ -1833,34 +1860,35 @@ function start!(;
         end
     )
 
-    copy_debug_value_tool = @mcp_tool(:copy_debug_value,
-                """Copy the value of a variable or expression during debugging to the clipboard.
+    copy_debug_value_tool = @mcp_tool(
+        :copy_debug_value,
+        """Copy the value of a variable or expression during debugging to the clipboard.
 
-        This tool allows AI agents to inspect variable values during a debug session.
-        The value is copied to the clipboard and can then be read using shell commands.
+This tool allows AI agents to inspect variable values during a debug session.
+The value is copied to the clipboard and can then be read using shell commands.
 
-        **Prerequisites:**
-        - Must be in an active debug session (paused at a breakpoint)
-        - The variable/expression must be selected or focused in the debug view
+**Prerequisites:**
+- Must be in an active debug session (paused at a breakpoint)
+- The variable/expression must be selected or focused in the debug view
 
-        **Workflow:**
-        1. Focus the appropriate debug view (Variables or Watch)
-        2. The user or AI should have the variable selected/focused
-        3. Copy the value to clipboard
-        4. Read clipboard contents to get the value
+**Workflow:**
+1. Focus the appropriate debug view (Variables or Watch)
+2. The user or AI should have the variable selected/focused
+3. Copy the value to clipboard
+4. Read clipboard contents to get the value
 
-        # Arguments
-        - `view`: Which debug view to focus - "variables" or "watch" (default: "variables")
+# Arguments
+- `view`: Which debug view to focus - "variables" or "watch" (default: "variables")
 
-        # Examples
-        - Copy from variables view: `{"view": "variables"}`
-        - Copy from watch view: `{"view": "watch"}`
+# Examples
+- Copy from variables view: `{"view": "variables"}`
+- Copy from watch view: `{"view": "watch"}`
 
-        **Note:** After copying, use a shell command to read the clipboard:
-        - macOS: `pbpaste`
-        - Linux: `xclip -selection clipboard -o` or `xsel --clipboard --output`
-        - Windows: `powershell Get-Clipboard`
-        """,
+**Note:** After copying, use a shell command to read the clipboard:
+- macOS: `pbpaste`
+- Linux: `xclip -selection clipboard -o` or `xsel --clipboard --output`
+- Windows: `powershell Get-Clipboard`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1912,16 +1940,17 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     )
 
     # Enhanced debugging tools using bidirectional communication
-    debug_step_over_tool = @mcp_tool(:debug_step_over,
-                """Step over the current line in the debugger.
+    debug_step_over_tool = @mcp_tool(
+        :debug_step_over,
+        """Step over the current line in the debugger.
 
-        Executes the current line and moves to the next line without entering function calls.
-        Must be in an active debug session (paused at a breakpoint).
+Executes the current line and moves to the next line without entering function calls.
+Must be in an active debug session (paused at a breakpoint).
 
-        # Examples
-        - `debug_step_over()`
-        - `debug_step_over(wait_for_response=true)` - Wait for confirmation
-        """,
+# Examples
+- `debug_step_over()`
+- `debug_step_over(wait_for_response=true)` - Wait for confirmation
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1954,15 +1983,16 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         end
     )
 
-    debug_step_into_tool = @mcp_tool(:debug_step_into,
-                """Step into a function call in the debugger.
+    debug_step_into_tool = @mcp_tool(
+        :debug_step_into,
+        """Step into a function call in the debugger.
 
-        Enters the function on the current line to debug its internals.
-        Must be in an active debug session (paused at a breakpoint).
+Enters the function on the current line to debug its internals.
+Must be in an active debug session (paused at a breakpoint).
 
-        # Examples
-        - `debug_step_into()`
-        """,
+# Examples
+- `debug_step_into()`
+""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
@@ -1974,15 +2004,16 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         end
     )
 
-    debug_step_out_tool = @mcp_tool(:debug_step_out,
-                """Step out of the current function in the debugger.
+    debug_step_out_tool = @mcp_tool(
+        :debug_step_out,
+        """Step out of the current function in the debugger.
 
-        Continues execution until the current function returns to its caller.
-        Must be in an active debug session (paused at a breakpoint).
+Continues execution until the current function returns to its caller.
+Must be in an active debug session (paused at a breakpoint).
 
-        # Examples
-        - `debug_step_out()`
-        """,
+# Examples
+- `debug_step_out()`
+""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
@@ -1994,15 +2025,16 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         end
     )
 
-    debug_continue_tool = @mcp_tool(:debug_continue,
-                """Continue execution in the debugger.
+    debug_continue_tool = @mcp_tool(
+        :debug_continue,
+        """Continue execution in the debugger.
 
-        Resumes execution until the next breakpoint or program completion.
-        Must be in an active debug session (paused at a breakpoint).
+Resumes execution until the next breakpoint or program completion.
+Must be in an active debug session (paused at a breakpoint).
 
-        # Examples
-        - `debug_continue()`
-        """,
+# Examples
+- `debug_continue()`
+""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
@@ -2014,14 +2046,15 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         end
     )
 
-    debug_stop_tool = @mcp_tool(:debug_stop,
-                """Stop the current debug session.
+    debug_stop_tool = @mcp_tool(
+        :debug_stop,
+        """Stop the current debug session.
 
-        Terminates the active debug session and returns to normal execution.
+Terminates the active debug session and returns to normal execution.
 
-        # Examples
-        - `debug_stop()`
-        """,
+# Examples
+- `debug_stop()`
+""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         function (args)
             try
@@ -2034,22 +2067,23 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
     )
 
     # Package management tools
-    pkg_add_tool = @mcp_tool(:pkg_add,
-                """Add one or more Julia packages to the current environment.
+    pkg_add_tool = @mcp_tool(
+        :pkg_add,
+        """Add one or more Julia packages to the current environment.
 
-        This is a convenience wrapper around Pkg.add() that provides better
-        feedback and error handling for AI agents.
+This is a convenience wrapper around Pkg.add() that provides better
+feedback and error handling for AI agents.
 
-        **Note**: This modifies Project.toml. For more control, agents can
-        directly edit Project.toml and run Pkg.instantiate().
+**Note**: This modifies Project.toml. For more control, agents can
+directly edit Project.toml and run Pkg.instantiate().
 
-        # Arguments
-        - `packages`: Array of package names to add (e.g., ["DataFrames", "Plots"])
+# Arguments
+- `packages`: Array of package names to add (e.g., ["DataFrames", "Plots"])
 
-        # Examples
-        - `pkg_add(packages=["DataFrames"])`
-        - `pkg_add(packages=["Plots", "StatsPlots"])`
-        """,
+# Examples
+- `pkg_add(packages=["DataFrames"])`
+- `pkg_add(packages=["Plots", "StatsPlots"])`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -2079,16 +2113,17 @@ Note: Make sure a variable is selected/focused in the debug view before copying.
         end
     )
 
-    pkg_rm_tool = @mcp_tool(:pkg_rm,
-                """Remove one or more Julia packages from the current environment.
+    pkg_rm_tool = @mcp_tool(
+        :pkg_rm,
+        """Remove one or more Julia packages from the current environment.
 
-        # Arguments
-        - `packages`: Array of package names to remove
+# Arguments
+- `packages`: Array of package names to remove
 
-        # Examples
-        - `pkg_rm(packages=["OldPackage"])`
-        - `pkg_rm(packages=["Package1", "Package2"])`
-        """,
+# Examples
+- `pkg_rm(packages=["OldPackage"])`
+- `pkg_rm(packages=["Package1", "Package2"])`
+""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -2183,7 +2218,7 @@ function get_mainmode(repl)
             mode isa REPL.Prompt &&
                 mode.prompt isa Function &&
                 contains(mode.prompt(), "julia>")
-        end
+        end,
     )
 end
 
@@ -2404,7 +2439,8 @@ function call_tool(tool_id::Symbol, args::Dict)
         result = try
             tool.handler(args)
         catch e
-            if e isa MethodError && hasmethod(tool.handler, Tuple{typeof(args), typeof(nothing)})
+            if e isa MethodError &&
+               hasmethod(tool.handler, Tuple{typeof(args),typeof(nothing)})
                 # Handler supports streaming, call with both parameters
                 tool.handler(args, nothing)
             else
@@ -2425,7 +2461,7 @@ function call_tool(tool_name::String, args::Dict)
 end
 
 function call_tool(tool_id::Symbol, args::Pair{Symbol,String}...)
-    return call_tool(tool_id, Dict([String(k) => v for (k,v) in args]))
+    return call_tool(tool_id, Dict([String(k) => v for (k, v) in args]))
 end
 
 """

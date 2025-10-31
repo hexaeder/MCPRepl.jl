@@ -6,25 +6,30 @@ using JSON
 using Dates
 
 # Create test tools
-time_tool = @mcp_tool :get_time "Get current time in specified format" MCPRepl.text_parameter(
-    "format",
-    "DateTime format string (e.g., 'yyyy-mm-dd HH:MM:SS')",
-) args -> Dates.format(now(), get(args, "format", "yyyy-mm-dd HH:MM:SS"))
+time_tool =
+    @mcp_tool :get_time "Get current time in specified format" MCPRepl.text_parameter(
+        "format",
+        "DateTime format string (e.g., 'yyyy-mm-dd HH:MM:SS')",
+    ) args -> Dates.format(now(), get(args, "format", "yyyy-mm-dd HH:MM:SS"))
 
-reverse_tool = @mcp_tool :reverse_text "Reverse the input text" MCPRepl.text_parameter("text", "Text to reverse") args -> reverse(get(args, "text", ""))
+reverse_tool = @mcp_tool :reverse_text "Reverse the input text" MCPRepl.text_parameter(
+    "text",
+    "Text to reverse",
+) args -> reverse(get(args, "text", ""))
 
-calc_tool = @mcp_tool :calculate "Evaluate a simple Julia expression" MCPRepl.text_parameter(
-    "expression",
-    "Julia expression to evaluate (e.g., '2 + 3 * 4')",
-) function (args)
-    try
-        expr = Meta.parse(get(args, "expression", "0"))
-        result = eval(expr)
-        string(result)
-    catch e
-        "Error: $e"
+calc_tool =
+    @mcp_tool :calculate "Evaluate a simple Julia expression" MCPRepl.text_parameter(
+        "expression",
+        "Julia expression to evaluate (e.g., '2 + 3 * 4')",
+    ) function (args)
+        try
+            expr = Meta.parse(get(args, "expression", "0"))
+            result = eval(expr)
+            string(result)
+        catch e
+            "Error: $e"
+        end
     end
-end
 
 tools = [time_tool, reverse_tool, calc_tool]
 
@@ -197,7 +202,11 @@ end
 
 @testset "SSE Streaming" begin
     # Create a simple streaming tool for testing
-    stream_tool = @mcp_tool :stream_test "Test tool that supports streaming" Dict("type" => "object", "properties" => Dict(), "required" => []) (args, stream_channel = nothing) -> begin
+    stream_tool = @mcp_tool :stream_test "Test tool that supports streaming" Dict(
+        "type" => "object",
+        "properties" => Dict(),
+        "required" => [],
+    ) (args, stream_channel = nothing) -> begin
         if stream_channel !== nothing
             # Send progress notification
             put!(
@@ -206,8 +215,7 @@ end
                     Dict(
                         "jsonrpc" => "2.0",
                         "method" => "notifications/progress",
-                        "params" =>
-                            Dict("progress" => 50, "message" => "Half done"),
+                        "params" => Dict("progress" => 50, "message" => "Half done"),
                     ),
                 ),
             )
