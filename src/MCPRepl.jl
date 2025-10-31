@@ -953,9 +953,13 @@ function start!(;
 
                 # Use sed to remove trailing whitespace (similar to emacs delete-trailing-whitespace)
                 # This removes all trailing whitespace characters from each line
-                result = run(
-                    pipeline(`sed -i 's/[[:space:]]*$//' $file_path`, stderr = devnull),
-                )
+                # Note: macOS sed requires -i '' while GNU sed uses -i
+                sed_cmd = if Sys.isapple()
+                    `sed -i '' 's/[[:space:]]*$//' $file_path`
+                else
+                    `sed -i 's/[[:space:]]*$//' $file_path`
+                end
+                result = run(pipeline(sed_cmd, stderr = devnull))
 
                 if result.exitcode == 0
                     return "Successfully removed trailing whitespace from $file_path"
