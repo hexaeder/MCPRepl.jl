@@ -450,16 +450,18 @@ function create_vscode_config(
     vscode_dir = joinpath(project_path, ".vscode")
     mkpath(vscode_dir)
 
-    # Build server config with environment variable for port
+    # Build server config with hardcoded values
+    # NOTE: Claude Code does not support environment variable expansion in mcp.json
+    # So we hardcode the values here and add the file to .gitignore
     server_config = Dict{String,Any}(
         "type" => "http",
-        "url" => "http://localhost:\${env:JULIA_MCP_PORT}"
+        "url" => "http://localhost:$port"
     )
 
-    # Add Authorization header with environment variable if api_key is provided
+    # Add Authorization header if api_key is provided
     if api_key !== nothing
         server_config["headers"] = Dict{String,Any}(
-            "Authorization" => "Bearer \${env:JULIA_MCP_API_KEY}"
+            "Authorization" => "Bearer $api_key"
         )
     end
 
@@ -919,26 +921,23 @@ This project uses MCPRepl's security system:
 - Don't expose sensitive data in REPL output
 - Be aware that REPL output is visible to the user
 
-### Environment Variable Configuration
+### Configuration Files and Security
 
-MCP client configuration files (`.vscode/mcp.json`, `claude-mcp-config.json`, `gemini-settings.json`) 
-use environment variables `JULIA_MCP_API_KEY` and `JULIA_MCP_PORT` for configuration. This provides:
+**Important**: Configuration files contain sensitive information:
 
-- **Security**: API keys are not stored in version-controlled config files
-- **Portability**: Different projects can use different ports/keys
-- **Convenience**: Automatically loaded from `.env` and `.claude/settings.local.json`
-- **Safety**: Config files can be safely committed to git
+- `.vscode/mcp.json` - **Hardcoded API key** (git-ignored, do not commit)
+- `.mcprepl/security.json` - Master security config (git-ignored)
+- `.env` - Environment variables for other tools (git-ignored)
+- `.claude/settings.local.json` - Claude Desktop config (git-ignored)
 
-The actual API key and port are stored in:
-- `.mcprepl/security.json` (master config, git-ignored)
-- `.env` (auto-loaded by most tools, git-ignored)
-- `.claude/settings.local.json` (auto-loaded by Claude Desktop, git-ignored)
+Template files (`claude-mcp-config.json`, `gemini-settings.json`) use environment variable placeholders
+and can be safely committed. The actual values are loaded from `.env` at runtime.
 
 **For AI Agents**: If authentication fails:
-1. Check that `.env` or `.claude/settings.local.json` exists with correct values
-2. Verify environment variables are loaded (`JULIA_MCP_API_KEY` and `JULIA_MCP_PORT`)
+1. For VS Code/Claude Code: Check `.vscode/mcp.json` has correct hardcoded API key
+2. For other tools: Check `.env` or `.claude/settings.local.json` exists with correct values
 3. Confirm the values match those in `.mcprepl/security.json`
-3. Remind users to restart their terminal/IDE after setting environment variables
+4. Remind users to restart their terminal/IDE after configuration changes
 
 ## Troubleshooting
 
@@ -1002,12 +1001,12 @@ function create_gitignore(project_path::String)
 .env
 .claude/
 
-# VS Code - but keep MCP config files (they use env vars)
+# VS Code - mcp.json contains hardcoded API keys
 .vscode/*
 !.vscode/settings.json
-!.vscode/mcp.json
 
-# MCP client configs (safe to commit - they use env vars)
+# MCP client configs - contain hardcoded API keys/ports
+# Note: These template files use env vars but are safe to commit
 # claude-mcp-config.json
 # gemini-settings.json
 
