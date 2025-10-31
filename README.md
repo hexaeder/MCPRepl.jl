@@ -8,6 +8,9 @@ The code the Agent sends will show up in the REPL as well as your own commands. 
 
 Ideally, this enables the Agent to, for example, execute and fix testsets interactively one by one, circumventing any time-to-first-plot issues.
 
+> [!TIP]
+> I am not sure how much work I'll put in this package in the future, check out @kahliburke's much more active [fork](https://github.com/kahliburke/MCPRepl.jl).
+
 ## Showcase
 
 https://github.com/user-attachments/assets/1c7546c4-23a3-4528-b222-fc8635af810d
