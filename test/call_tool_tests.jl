@@ -65,10 +65,10 @@ using MCPRepl: MCPTool
             MCPRepl.start!(; verbose = false, port = test_port+2)
 
             try
-                # Test tool with (args, stream_channel) signature
+                # Test tool with args signature
                 result = MCPRepl.call_tool(
-                    :exec_repl,
-                    Dict("expression" => "2 + 2", "silent" => true),
+                    :ex,
+                    Dict("e" => "2 + 2", "s" => true),
                 )
                 @test result isa String
 
@@ -83,7 +83,7 @@ using MCPRepl: MCPTool
 
         @testset "call_tool Error Cases" begin
             # Test without server running
-            @test_throws ErrorException MCPRepl.call_tool(:exec_repl, Dict())
+            @test_throws ErrorException MCPRepl.call_tool(:ex, Dict())
 
             MCPRepl.start!(; verbose = false, port = test_port+3)
 

@@ -702,110 +702,12 @@ function start_mcp_server(
                 return nothing
             end
 
-            request = JSON.parse(body; dicttype = Dict{String,Any})
-
-            # Check if this is a streaming tools/call request
-            # hybrid_handler only handles streaming; everything else goes to create_handler
-            is_streaming_call = false
-            if request["method"] == "tools/call"
-                tool_name_str = request["params"]["name"]
-                tool_id = get(name_to_id, tool_name_str, nothing)
-
-                if tool_id !== nothing && haskey(tools_dict, tool_id)
-                    args = get(request["params"], "arguments", Dict())
-
-                    # Check Accept header for text/event-stream support
-                    accept_header = ""
-                    for (name, value) in req.headers
-                        if lowercase(name) == "accept"
-                            accept_header = lowercase(value)
-                            break
-                        end
-                    end
-                    client_supports_sse = contains(accept_header, "text/event-stream")
-                    stream_requested = get(args, "stream", false)
-                    is_streaming_call = client_supports_sse || stream_requested
-                end
-            end
-
-            # Handle streaming tools/call inline
-            if is_streaming_call
-                tool = tools_dict[tool_id]
-                args = get(request["params"], "arguments", Dict())
-
-                # Set up SSE headers for streaming response
-                HTTP.setstatus(http, 200)
-                HTTP.setheader(http, "Content-Type" => "text/event-stream")
-                HTTP.setheader(http, "Cache-Control" => "no-cache")
-                HTTP.setheader(http, "Connection" => "keep-alive")
-                HTTP.startwrite(http)
-
-                # Create channel for streaming
-                stream_channel = Channel{String}(32)
-
-                # Start async task to run the tool
-                task = @async begin
-                    try
-                        # Call tool handler with streaming channel
-                        result_text = try
-                            tool.handler(args, stream_channel)
-                        catch e
-                            if isa(e, MethodError)
-                                # Handler doesn't support streaming, fall back
-                                tool.handler(args)
-                            else
-                                rethrow(e)
-                            end
-                        end
-
-                        # Send final result
-                        final_response = Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => request["id"],
-                            "result" => Dict(
-                                "content" => [
-                                    Dict("type" => "text", "text" => result_text),
-                                ],
-                            ),
-                        )
-                        final_event = JSON.json(final_response)
-                        put!(stream_channel, final_event)
-                    catch e
-                        # Send error response
-                        error_response = Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => request["id"],
-                            "error" => Dict("code" => -32603, "message" => string(e)),
-                        )
-                        error_event = JSON.json(error_response)
-                        put!(stream_channel, error_event)
-                    finally
-                        close(stream_channel)
-                    end
-                end
-
-                # Stream events as they come
-                try
-                    for event_data in stream_channel
-                        # SSE format: event: message\ndata: {json}\n\n
-                        write(http, "event: message\ndata: ")
-                        write(http, event_data)
-                        write(http, "\n\n")
-                        flush(http)
-                    end
-                catch e
-                    @warn "Streaming error" exception = e
-                end
-
-                return nothing
-            end
-
-            # All non-streaming requests (including non-streaming tools/call) go to create_handler
-            # This eliminates code duplication - create_handler handles:
+            # All requests go to create_handler
+            # create_handler handles:
             # - Security checks (already done above, but also in create_handler for direct calls)
             # - OAuth endpoints
             # - VS Code response endpoint
-            # - initialize, tools/list, and non-streaming tools/call
+            # - initialize, tools/list, and tools/call
             req_with_body = HTTP.Request(req.method, req.target, req.headers, body)
             handler = create_handler(tools_dict, name_to_id, port, security_config)
             response = handler(req_with_body)

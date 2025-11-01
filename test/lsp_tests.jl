@@ -7,7 +7,7 @@ using MCPRepl: MCPTool
     @testset "LSP Tool Creation" begin
         # Verify all tools are created
         tools = MCPRepl.create_lsp_tools()
-        @test length(tools) == 8  # Reduced from 12 to 8 (removed GUI-focused tools)
+        @test length(tools) == 6  # Essential LSP tools only
 
         tool_names = [tool.name for tool in tools]
         # Essential navigation and refactoring tools
@@ -15,11 +15,9 @@ using MCPRepl: MCPTool
         @test "lsp_find_references" in tool_names
         @test "lsp_document_symbols" in tool_names
         @test "lsp_workspace_symbols" in tool_names
-        # Refactoring and formatting tools
+        # Refactoring tools
         @test "lsp_rename" in tool_names
         @test "lsp_code_actions" in tool_names
-        @test "lsp_format_document" in tool_names
-        @test "lsp_format_range" in tool_names
 
         # Verify tool structure
         for tool in tools

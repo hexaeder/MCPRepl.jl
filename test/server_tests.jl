@@ -200,63 +200,9 @@ end
     end
 end
 
-@testset "SSE Streaming" begin
-    # Create a simple streaming tool for testing
-    stream_tool = @mcp_tool :stream_test "Test tool that supports streaming" Dict(
-        "type" => "object",
-        "properties" => Dict(),
-        "required" => [],
-    ) (args, stream_channel = nothing) -> begin
-        if stream_channel !== nothing
-            # Send progress notification
-            put!(
-                stream_channel,
-                JSON.json(
-                    Dict(
-                        "jsonrpc" => "2.0",
-                        "method" => "notifications/progress",
-                        "params" => Dict("progress" => 50, "message" => "Half done"),
-                    ),
-                ),
-            )
-        end
-        return "Streaming test completed"
-    end
-
-    test_port = 13005
-    server = MCPRepl.start_mcp_server([stream_tool], test_port)
-    sleep(0.1)
-
-    try
-        # Test with SSE Accept header
-        request_body = JSON.json(
-            Dict(
-                "jsonrpc" => "2.0",
-                "id" => 1,
-                "method" => "tools/call",
-                "params" => Dict("name" => "stream_test", "arguments" => Dict()),
-            ),
-        )
-
-        # Make request with SSE Accept header
-        response = HTTP.post(
-            "http://localhost:$test_port/",
-            ["Content-Type" => "application/json", "Accept" => "text/event-stream"],
-            request_body,
-        )
-
-        @test response.status == 200
-        @test HTTP.header(response, "Content-Type") == "text/event-stream"
-
-        # Response should contain SSE formatted events
-        body = String(response.body)
-        @test contains(body, "event: message")
-        @test contains(body, "data:")
-        @test contains(body, "Half done")
-        @test contains(body, "Streaming test completed")
-
-    finally
-        MCPRepl.stop_mcp_server(server)
-        sleep(0.1)
-    end
+# SSE Streaming tests removed - streaming functionality was removed for token efficiency
+#= @testset "SSE Streaming" begin
+    # Streaming support has been removed from MCPRepl for token efficiency
+    # Tests kept here for reference but commented out
 end
+=#

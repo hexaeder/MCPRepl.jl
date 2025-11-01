@@ -269,8 +269,8 @@ Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 function execute_repllike(
     str;
     silent::Bool = false,
+    quiet::Bool = true,
     description::Union{String,Nothing} = nothing,
-    stream_channel::Union{Nothing,Channel{String}} = nothing,
 )
     # Check for Pkg.activate usage
     if contains(str, "activate(") && !contains(str, r"#.*overwrite no-activate-rule")
@@ -283,6 +283,12 @@ function execute_repllike(
     end
 
     repl = Base.active_repl
+
+    # Auto-append semicolon in quiet mode to suppress output
+    if quiet && !REPL.ends_with_semicolon(str)
+        str = str * ";"
+    end
+
     expr = Base.parse_input_line(str)
     backend = repl.backendref
 
@@ -320,19 +326,6 @@ function execute_repllike(
                     write(orig_stdout, line)
                     flush(orig_stdout)
                 end
-                # Stream to AI agent in real-time
-                if stream_channel !== nothing && !isempty(line)
-                    try
-                        output_event = Dict(
-                            "jsonrpc" => "2.0",
-                            "method" => "notifications/message",
-                            "params" => Dict("level" => "info", "message" => line),
-                        )
-                        put!(stream_channel, JSON.json(output_event))
-                    catch e
-                        @debug "Error streaming stdout" exception=e
-                    end
-                end
             end
         catch e
             if !isa(e, EOFError)
@@ -350,19 +343,6 @@ function execute_repllike(
                 if !silent
                     write(orig_stderr, line)
                     flush(orig_stderr)
-                end
-                # Stream to AI agent in real-time
-                if stream_channel !== nothing && !isempty(line)
-                    try
-                        output_event = Dict(
-                            "jsonrpc" => "2.0",
-                            "method" => "notifications/message",
-                            "params" => Dict("level" => "warning", "message" => line),
-                        )
-                        put!(stream_channel, JSON.json(output_event))
-                    catch e
-                        @debug "Error streaming stderr" exception=e
-                    end
                 end
             end
         catch e
@@ -418,27 +398,6 @@ function execute_repllike(
         end
         REPL.prepare_next(repl)
         REPL.LineEdit.refresh_line(repl.mistate)
-    end
-
-    # If streaming, send completion notification and result
-    if stream_channel !== nothing
-        # Send result if not suppressed by semicolon
-        if !isempty(result_str)
-            result_event = Dict(
-                "jsonrpc" => "2.0",
-                "method" => "notifications/message",
-                "params" => Dict("level" => "info", "message" => result_str),
-            )
-            put!(stream_channel, JSON.json(result_event))
-        end
-
-        # Send completion notification
-        complete_event = Dict(
-            "jsonrpc" => "2.0",
-            "method" => "notifications/progress",
-            "params" => Dict("progress" => 100, "message" => "Execution complete"),
-        )
-        put!(stream_channel, JSON.json(complete_event))
     end
 
     # Return the complete output
@@ -695,6 +654,18 @@ function start!(;
         println()
     end
 
+    ping_tool = @mcp_tool(
+        :ping,
+        """Check if the MCP server is responsive.
+
+Returns a simple health status message. Useful for testing connectivity and server availability.
+
+# Example
+- Check server health: `{}`""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        args -> "✓ MCP Server is healthy and responsive"
+    )
+
     usage_instructions_tool =
         @mcp_tool :usage_instructions "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents." Dict(
             "type" => "object",
@@ -708,144 +679,12 @@ function start!(;
                         "prompts",
                         "julia_repl_workflow.md",
                     )
-                    commands_json_path = joinpath(
-                        dirname(dirname(@__FILE__)),
-                        "prompts",
-                        "vscode_commands.json",
-                    )
 
                     if !isfile(workflow_path)
                         return "Error: julia_repl_workflow.md not found at $workflow_path"
                     end
 
-                    base_content = read(workflow_path, String)
-
-                    # Try to read actual allowed commands from workspace settings and format with descriptions
-                    try
-                        settings = read_vscode_settings()
-                        allowed_commands = get(
-                            settings,
-                            "vscode-remote-control.allowedCommands",
-                            nothing,
-                        )
-
-                        if allowed_commands !== nothing && !isempty(allowed_commands)
-                            # Load command documentation
-                            command_docs = Dict{String,String}()
-                            command_categories =
-                                Dict{String,Tuple{String,Vector{String}}}()  # category_id => (name, commands)
-
-                            if isfile(commands_json_path)
-                                try
-                                    commands_data = JSON.parse(
-                                        read(
-                                            commands_json_path,
-                                            String;
-                                            dicttype = Dict{String,Any},
-                                        ),
-                                    )
-                                    categories =
-                                        get(commands_data, :categories, Dict())
-
-                                    # Build lookup table and category mapping
-                                    for (cat_id, cat_data) in pairs(categories)
-                                        cat_name = get(cat_data, :name, string(cat_id))
-                                        cat_commands = String[]
-
-                                        cmds = get(cat_data, :commands, Dict())
-                                        for (cmd, desc) in pairs(cmds)
-                                            command_docs[string(cmd)] = string(desc)
-                                            push!(cat_commands, string(cmd))
-                                        end
-
-                                        command_categories[string(cat_id)] =
-                                            (cat_name, cat_commands)
-                                    end
-                                catch e
-                                    @debug "Could not load command documentation" exception =
-                                        e
-                                end
-                            end
-
-                            # Append formatted commands section
-                            commands_section = "\n\n---\n\n## Currently Configured VS Code Commands\n\n"
-                            commands_section *= "Your workspace has **$(length(allowed_commands)) commands** configured in `.vscode/settings.json`.\n\n"
-
-                            # Group commands by category
-                            categorized_commands = Dict{String,Vector{String}}()
-                            uncategorized_commands = String[]
-
-                            for cmd in allowed_commands
-                                cmd_str = string(cmd)
-                                found_category = false
-
-                                for (cat_id, (cat_name, cat_cmds)) in command_categories
-                                    if cmd_str in cat_cmds
-                                        if !haskey(categorized_commands, cat_id)
-                                            categorized_commands[cat_id] = String[]
-                                        end
-                                        push!(categorized_commands[cat_id], cmd_str)
-                                        found_category = true
-                                        break
-                                    end
-                                end
-
-                                if !found_category
-                                    push!(uncategorized_commands, cmd_str)
-                                end
-                            end
-
-                            # Output categorized commands
-                            category_order = [
-                                "julia",
-                                "file",
-                                "navigation",
-                                "window",
-                                "terminal",
-                                "search",
-                                "git",
-                                "debug",
-                                "tasks",
-                                "extensions",
-                                "vscode_api",
-                            ]
-
-                            for cat_id in category_order
-                                if haskey(categorized_commands, cat_id)
-                                    cat_name, _ = command_categories[cat_id]
-                                    commands_section *= "### $(cat_name)\n\n"
-
-                                    for cmd in sort(categorized_commands[cat_id])
-                                        desc = get(
-                                            command_docs,
-                                            cmd,
-                                            "No description available",
-                                        )
-                                        commands_section *= "- **`$(cmd)`** - $(desc)\n"
-                                    end
-
-                                    commands_section *= "\n"
-                                end
-                            end
-
-                            # Output uncategorized commands
-                            if !isempty(uncategorized_commands)
-                                commands_section *= "### 📋 Other Commands\n\n"
-                                for cmd in sort(uncategorized_commands)
-                                    desc = get(command_docs, cmd, "No description available")
-                                    commands_section *= "- **`$(cmd)`** - $(desc)\n"
-                                end
-                                commands_section *= "\n"
-                            end
-
-                            return base_content * commands_section
-                        end
-                    catch e
-                        # If reading settings fails, just return base content
-                        @debug "Could not read VS Code settings for allowed commands" exception =
-                            e
-                    end
-                    return base_content
+                    return read(workflow_path, String)
                 catch e
                     return "Error reading usage instructions: $e"
                 end
@@ -853,48 +692,49 @@ function start!(;
         )
 
     repl_tool = @mcp_tool(
-        :exec_repl,
+        :ex,
         """
-Execute Julia code in a shared, persistent REPL session to avoid startup latency.
+Execute Julia code in a shared, persistent REPL session.
 
-**PREREQUISITE**: Before using this tool, you MUST first call the `usage_instructions` tool to understand proper Julia REPL workflow, best practices, and etiquette for shared REPL usage.
+**PREREQUISITE**: Call `usage_instructions` tool first to understand Julia REPL workflow and best practices.
 
-Once this function is available, **never** use `julia` commands in bash, always use the REPL.
+**Never** use `julia` commands in bash - always use this REPL tool.
 
-The tool returns raw text output containing: all printed content from stdout and stderr streams, plus the mime text/plain representation of the expression's return value (unless the expression ends with a semicolon).
+**Default behavior (quiet mode):** Returns only printed output and errors. The expression's return value is suppressed (equivalent to adding `;`). This saves 70-90% of tokens.
 
-You may use this REPL to
-- execute julia code
-- execute test sets
-- get julia function documentation (i.e. send @doc functionname)
-- investigate the environment (use investigate_environment tool for comprehensive setup info)
+**Verbose mode (q=false):** Returns full output including the expression's return value. Use this when you need to see the computed result.
+
+You may use this REPL to:
+- Execute Julia code
+- Run test sets
+- Get function documentation (@doc functionname)
+- Investigate the environment (see investigate_environment tool)
+
+**Important:** All code executed persists across calls to this tool. Variables, functions, and loaded packages remain available in subsequent calls unless the REPL has been restarted.
 """,
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "expression" => Dict(
+                "e" => Dict(
                     "type" => "string",
-                    "description" => "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`)",
+                    "description" => "Julia expression to evaluate (e.g., '2 + 3 * 4' or 'using Pkg; Pkg.status()')",
                 ),
-                "silent" => Dict(
+                "q" => Dict(
                     "type" => "boolean",
-                    "description" => "If true, suppress the 'agent>' prompt and output display (default: false)",
+                    "description" => "Quiet mode: suppresses return value to save tokens (default: true). Set to false to see the computed result.",
                 ),
-                "stream" => Dict(
+                "s" => Dict(
                     "type" => "boolean",
-                    "description" => "If true, enable real-time streaming of output via SSE (default: false)",
+                    "description" => "Silent mode: suppresses 'agent>' prompt and real-time output (default: false)",
                 ),
             ),
-            "required" => ["expression"],
+            "required" => ["e"],
         ),
-        (args, stream_channel = nothing) -> begin
+        (args) -> begin
             try
-                silent = get(args, "silent", false)
-                execute_repllike(
-                    get(args, "expression", "");
-                    silent = silent,
-                    stream_channel = stream_channel,
-                )
+                silent = get(args, "s", false)
+                quiet = get(args, "q", true)
+                execute_repllike(get(args, "e", ""); silent = silent, quiet = quiet)
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
@@ -906,18 +746,20 @@ You may use this REPL to
         :restart_repl,
         """Restart the Julia REPL and return immediately.
 
-**Workflow for AI Agents:**
-1. Call this tool to trigger the restart
-2. Wait 5-10 seconds (don't make any MCP requests during this time)
-3. Try your next request - if it fails, wait a bit longer and retry
+**Important:** This tool returns a response BEFORE the server restarts, so you receive clear instructions.
 
-The MCP server connection will be interrupted during restart. This is expected.
-The tool returns immediately, and you (the AI agent) must wait before making
-new requests to allow the Julia REPL to restart and the MCP server to reinitialize.
+**AI Agent Workflow:**
+1. Call this tool - you will receive a response immediately
+2. Wait 5 seconds before making any new requests
+3. Retry every 2 seconds until the connection is reestablished
+4. Typical restart time: 5-10 seconds
 
-Typical restart time is 5-10 seconds depending on system load and package precompilation.
+The MCP server will be temporarily offline during restart. This is expected and normal.
 
-Use this tool after making changes to the MCP server code or when the REPL needs a fresh start.""",
+**When to use:**
+- After making changes to the MCP server code
+- When Revise fails to pick up changes (rare)
+- When the REPL needs a fresh start""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         (args, stream_channel = nothing) -> begin
             try
@@ -932,54 +774,18 @@ Use this tool after making changes to the MCP server code or when the REPL needs
                 trigger_vscode_uri(restart_uri)
 
                 # Return immediately - the server will be restarting
-                return "✓ Julia REPL restart initiated on port $server_port.\n\n⏳ Typical restart time: 5-10 seconds. Waiting for restart to complete...\n\n(The AI agent should not make any MCP requests during this waiting period.)"
+                return """✓ Julia REPL restart initiated on port $server_port.
+
+⏳ The MCP server will be temporarily offline during restart.
+
+**AI Agent Instructions:**
+1. Wait 5 seconds before making any requests
+2. Then retry every 2 seconds until connection is reestablished
+3. Typical restart time: 5-10 seconds (may be longer if packages need recompilation)
+
+The server will automatically restart and be ready when the Julia REPL finishes loading."""
             catch e
                 return "Error initiating REPL restart: $e"
-            end
-        end
-    )
-
-    whitespace_tool = @mcp_tool(
-        :remove_trailing_whitespace,
-        """Remove trailing whitespace from all lines in a file.
-
-This tool should be called to clean up any trailing spaces that AI agents tend to leave in files after editing.
-
-**Usage Guidelines:**
-- For single file edits: Call immediately after editing the file
-- For multiple file edits: Call once on each modified file at the very end, before handing back to the user
-- Always call this tool on files you've edited to maintain clean, professional code formatting
-
-The tool efficiently removes all types of trailing whitespace (spaces, tabs, mixed) from every line in the file.""",
-        MCPRepl.text_parameter("file_path", "Absolute path to the file to clean up"),
-        args -> begin
-            try
-                file_path = get(args, "file_path", "")
-                if isempty(file_path)
-                    return "Error: file_path parameter is required"
-                end
-
-                if !isfile(file_path)
-                    return "Error: File does not exist: $file_path"
-                end
-
-                # Use sed to remove trailing whitespace (similar to emacs delete-trailing-whitespace)
-                # This removes all trailing whitespace characters from each line
-                # Note: macOS sed requires -i '' while GNU sed uses -i
-                sed_cmd = if Sys.isapple()
-                    `sed -i '' 's/[[:space:]]*$//' $file_path`
-                else
-                    `sed -i 's/[[:space:]]*$//' $file_path`
-                end
-                result = run(pipeline(sed_cmd, stderr = devnull))
-
-                if result.exitcode == 0
-                    return "Successfully removed trailing whitespace from $file_path"
-                else
-                    return "Error: Failed to remove trailing whitespace from $file_path"
-                end
-            catch e
-                return "Error removing trailing whitespace: $e"
             end
         end
     )
@@ -1110,6 +916,110 @@ For the complete list of available commands and their descriptions, call the usa
         end
     )
 
+    list_vscode_commands_tool = @mcp_tool(
+        :list_vscode_commands,
+        """List all VS Code commands that are allowed for execution.
+
+Returns the list of commands configured in `.vscode/settings.json` under `vscode-remote-control.allowedCommands`.
+Use this to discover which commands are available for the `execute_vscode_command` tool.""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        args -> begin
+            try
+                settings = read_vscode_settings()
+                allowed_commands =
+                    get(settings, "vscode-remote-control.allowedCommands", nothing)
+
+                if allowed_commands === nothing || isempty(allowed_commands)
+                    return "No VS Code commands configured. Run MCPRepl.setup() to configure the Remote Control extension."
+                end
+
+                result = "📋 Allowed VS Code Commands ($(length(allowed_commands)))\n\n"
+                for cmd in sort(allowed_commands)
+                    result *= "  • $cmd\n"
+                end
+                return result
+            catch e
+                return "Error reading VS Code settings: $e"
+            end
+        end
+    )
+
+    tool_help_tool = @mcp_tool(
+        :tool_help,
+        """Get detailed help and examples for a specific MCP tool.
+
+Provides verbose instructions, parameter descriptions, and usage examples for any available tool.
+Use this when you need more detailed information about how to use a specific tool properly.
+
+# Arguments
+- `tool_name`: Name of the tool (e.g., "exec_repl", "execute_vscode_command", "lsp_goto_definition")
+- `extended`: If true, includes additional examples and detailed documentation (default: false)
+
+# Example
+- Get help for exec_repl: `{"tool_name": "exec_repl"}`
+- Get extended help: `{"tool_name": "exec_repl", "extended": true}`""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "tool_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the tool to get help for",
+                ),
+                "extended" => Dict(
+                    "type" => "boolean",
+                    "description" => "If true, return extended documentation with additional examples (default: false)",
+                ),
+            ),
+            "required" => ["tool_name"],
+        ),
+        args -> begin
+            try
+                tool_name = get(args, "tool_name", "")
+                if isempty(tool_name)
+                    return "Error: tool_name parameter is required"
+                end
+
+                extended = get(args, "extended", false)
+                tool_id = Symbol(tool_name)
+
+                if SERVER[] === nothing
+                    return "Error: MCP server is not running"
+                end
+
+                server = SERVER[]
+                if !haskey(server.tools, tool_id)
+                    return "Error: Tool ':$tool_id' not found. Use list_tools() to see available tools."
+                end
+
+                tool = server.tools[tool_id]
+
+                result = "📖 Help for MCP Tool: $tool_name\n"
+                result *= "="^70 * "\n\n"
+                result *= tool.description * "\n"
+
+                # Try to load extended documentation if requested
+                if extended
+                    extended_help_path = joinpath(
+                        dirname(dirname(@__FILE__)),
+                        "extended-help",
+                        "$tool_name.md",
+                    )
+
+                    if isfile(extended_help_path)
+                        result *= "\n\n---\n\n## Extended Documentation\n\n"
+                        result *= read(extended_help_path, String)
+                    else
+                        result *= "\n\n(No extended documentation available for this tool)"
+                    end
+                end
+
+                return result
+            catch e
+                return "Error getting tool help: $e"
+            end
+        end
+    )
+
     investigate_tool = @mcp_tool(
         :investigate_environment,
         """Investigate the current Julia environment including pwd, active project, packages, and development packages with their paths.
@@ -1129,7 +1039,7 @@ use the execute_vscode_command tool with "language-julia.restartREPL".""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             try
-                execute_repllike("MCPRepl.repl_status_report()")
+                execute_repllike("MCPRepl.repl_status_report()"; quiet = false)
             catch e
                 "Error investigating environment: $e"
             end
@@ -1174,7 +1084,11 @@ Returns a formatted list of all matching methods with their signatures.""",
                     methods(target)
                 end
                 """
-                execute_repllike(code; description = "[Searching methods for: $query]")
+                execute_repllike(
+                    code;
+                    description = "[Searching methods for: $query]",
+                    quiet = false,
+                )
             catch e
                 "Error searching methods: \$e"
             end
@@ -1208,7 +1122,11 @@ Returns the expanded code that the macro generates.""",
                 using InteractiveUtils
                 @macroexpand $expr
                 """
-                execute_repllike(code; description = "[Expanding macro: $expr]")
+                execute_repllike(
+                    code;
+                    description = "[Expanding macro: $expr]",
+                    quiet = false,
+                )
             catch e
                 "Error expanding macro: \$e"
             end
@@ -1281,7 +1199,11 @@ This is essential for understanding Julia's type system.""",
                     end
                 end
                 """
-                execute_repllike(code; description = "[Getting type info for: $type_expr]")
+                execute_repllike(
+                    code;
+                    description = "[Getting type info for: $type_expr]",
+                    quiet = false,
+                )
             catch e
                 "Error getting type info: $e"
             end
@@ -1325,7 +1247,7 @@ Returns a profile report showing which lines take the most time.""",
                 end
                 Profile.print(format=:flat, sortedby=:count)
                 """
-                execute_repllike(wrapper; description = "[Profiling code]")
+                execute_repllike(wrapper; description = "[Profiling code]", quiet = false)
             catch e
                 "Error profiling code: \$e"
             end
@@ -1379,7 +1301,11 @@ Set all=true to include non-exported names.""",
                 println()
                 println("Total: ", length(name_list), " names")
                 """
-                execute_repllike(code; description = "[Listing names in: $module_name]")
+                execute_repllike(
+                    code;
+                    description = "[Listing names in: $module_name]",
+                    quiet = false,
+                )
             catch e
                 "Error listing names: \$e"
             end
@@ -1428,6 +1354,7 @@ Requires function name and tuple of argument types.""",
                 execute_repllike(
                     code;
                     description = "[Getting lowered code for: $func_expr with types $types_expr]",
+                    quiet = false,
                 )
             catch e
                 "Error getting lowered code: \$e"
@@ -1477,6 +1404,7 @@ Useful for debugging type stability and performance issues.""",
                 execute_repllike(
                     code;
                     description = "[Getting typed code for: $func_expr with types $types_expr]",
+                    quiet = false,
                 )
             catch e
                 "Error getting typed code: \$e"
@@ -1578,7 +1506,11 @@ using Pkg; Pkg.add("JuliaFormatter")
                 changes_made || format_result
                 """
 
-                execute_repllike(code; description = "[Formatting code at: $abs_path]")
+                execute_repllike(
+                    code;
+                    description = "[Formatting code at: $abs_path]",
+                    quiet = false,
+                )
             catch e
                 "Error formatting code: $e"
             end
@@ -1661,16 +1593,21 @@ using Pkg; Pkg.add("Aqua")
                     end
                     """
                 else
+                    # Construct code with package name
                     code = """
                     using Aqua
-                    using $pkg_name
-                    println("Running Aqua tests for package: $pkg_name")
-                    Aqua.test_all($pkg_name)
-                    println("✅ All Aqua tests passed for $pkg_name")
+                    @eval using $(Symbol("$(pkg_name)"))
+                    println("Running Aqua tests for package: $(pkg_name)")
+                    Aqua.test_all($(Symbol("$(pkg_name)")))
+                    println("✅ All Aqua tests passed for $(pkg_name)")
                     """
                 end
 
-                execute_repllike(code; description = "[Running Aqua quality tests]")
+                execute_repllike(
+                    code;
+                    description = "[Running Aqua quality tests]",
+                    quiet = false,
+                )
             catch e
                 "Error running Aqua tests: $e"
             end
@@ -1837,29 +1774,6 @@ as you step through code during debugging.
         end
     )
 
-    quick_file_open_tool = @mcp_tool(
-        :quick_open_file,
-        """Quickly open a file using VS Code's quick open (Cmd+P/Ctrl+P).
-
-Opens the quick file picker, allowing navigation to files by name.
-This is faster than navigating through the file explorer for known files.
-
-# Examples
-- Open quick picker: `{}`
-""",
-        Dict("type" => "object", "properties" => Dict(), "required" => []),
-        function (args)
-            try
-                quick_uri = build_vscode_uri("workbench.action.quickOpen")
-                trigger_vscode_uri(quick_uri)
-
-                return "Quick open dialog opened (user will type filename)"
-            catch e
-                return "Error opening quick open: $e"
-            end
-        end
-    )
-
     copy_debug_value_tool = @mcp_tool(
         :copy_debug_value,
         """Copy the value of a variable or expression during debugging to the clipboard.
@@ -1930,7 +1844,7 @@ The value is copied to the clipboard and can then be read using shell commands.
                     "appropriate clipboard command for your OS"
                 end
 
-                return """Value copied to clipboard from $(view) view. 
+                return """Value copied to clipboard from $(view) view.
 To read the value, run in terminal: $clipboard_cmd
 Note: Make sure a variable is selected/focused in the debug view before copying."""
             catch e
@@ -1968,9 +1882,10 @@ Must be in an active debug session (paused at a breakpoint).
 
                 if wait_response
                     result = execute_repllike(
-                        """execute_vscode_command("workbench.action.debug.stepOver", 
+                        """execute_vscode_command("workbench.action.debug.stepOver",
                                                   wait_for_response=true, timeout=10.0)""";
                         silent = false,
+                        quiet = false,
                     )
                     return result
                 else
@@ -2105,7 +2020,7 @@ directly edit Project.toml and run Pkg.instantiate().
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
                 code = "using Pkg; Pkg.add([$pkg_names])"
 
-                result = execute_repllike(code; silent = false)
+                result = execute_repllike(code; silent = false, quiet = false)
                 return "Added packages: $(join(packages, ", "))\n\n$result"
             catch e
                 return "Error adding packages: $e"
@@ -2145,7 +2060,7 @@ directly edit Project.toml and run Pkg.instantiate().
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
                 code = "using Pkg; Pkg.rm([$pkg_names])"
 
-                result = execute_repllike(code; silent = false)
+                result = execute_repllike(code; silent = false, quiet = false)
                 return "Removed packages: $(join(packages, ", "))\n\n$result"
             catch e
                 return "Error removing packages: $e"
@@ -2160,11 +2075,13 @@ directly edit Project.toml and run Pkg.instantiate().
     println("Starting MCP server on port $actual_port...")
     SERVER[] = start_mcp_server(
         [
+            ping_tool,
             usage_instructions_tool,
+            tool_help_tool,
             repl_tool,
             restart_repl_tool,
-            whitespace_tool,
             vscode_command_tool,
+            list_vscode_commands_tool,
             investigate_tool,
             search_methods_tool,
             macro_expand_tool,
@@ -2178,7 +2095,6 @@ directly edit Project.toml and run Pkg.instantiate().
             open_and_breakpoint_tool,
             start_debug_session_tool,
             add_watch_expression_tool,
-            quick_file_open_tool,
             copy_debug_value_tool,
             debug_step_over_tool,
             debug_step_into_tool,
