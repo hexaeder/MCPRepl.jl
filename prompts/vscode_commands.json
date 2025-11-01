@@ -3,7 +3,6 @@
     "julia": {
       "name": "🔬 Julia REPL",
       "commands": {
-        "language-julia.restartREPL": "Restart the Julia REPL. Use when Revise isn't tracking changes, REPL state is corrupted, or after struct/constant changes.",
         "language-julia.startREPL": "Start the Julia REPL if not running."
       }
     },

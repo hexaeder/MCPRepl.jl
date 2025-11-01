@@ -71,9 +71,6 @@ execute_vscode_command("git.sync")
 ```julia
 # Start Julia REPL
 execute_vscode_command("language-julia.startREPL")
-
-# Restart Julia REPL
-execute_vscode_command("language-julia.restartREPL")
 ```
 
 ### Testing

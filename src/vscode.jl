@@ -13,7 +13,6 @@ confirmation prompt.
 
 Usage:
     install_vscode_remote_control(pwd(); allowed_commands=[
-        "language-julia.restartREPL",
         "language-julia.startREPL",
         "workbench.action.reloadWindow",
         "workbench.action.files.save",

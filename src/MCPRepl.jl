@@ -658,12 +658,28 @@ function start!(;
         :ping,
         """Check if the MCP server is responsive.
 
-Returns a simple health status message. Useful for testing connectivity and server availability.
+Returns a simple health status message with Revise.jl status. Useful for testing connectivity and server availability.
 
 # Example
 - Check server health: `{}`""",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
-        args -> "✓ MCP Server is healthy and responsive"
+        args -> begin
+            status = "✓ MCP Server is healthy and responsive\n"
+
+            # Check Revise status
+            if isdefined(Main, :Revise)
+                revise_errors = Main.Revise.errors()
+                if revise_errors === nothing
+                    status *= "Revise: active (no errors)"
+                else
+                    status *= "Revise: active (has errors - call Revise.errors() for details)"
+                end
+            else
+                status *= "Revise: not loaded"
+            end
+
+            return status
+        end
     )
 
     usage_instructions_tool =
@@ -691,6 +707,89 @@ Returns a simple health status message. Useful for testing connectivity and serv
             end
         )
 
+    usage_quiz_tool = @mcp_tool(
+        :usage_quiz,
+        """Test your understanding of MCPRepl usage patterns with a self-graded quiz.
+
+This tool helps AI agents verify they understand the correct usage patterns for the `ex` tool
+and the shared REPL model before working with users.
+
+# Modes
+
+**Default (no arguments):** Returns quiz questions
+- 6 questions testing understanding of:
+  - Shared REPL model
+  - When to use q=false vs q=true (default)
+  - Communication channels (TEXT vs code vs println)
+  - Token efficiency
+  - Real-world scenarios
+- Agent should answer questions and output responses to user
+
+**With show_sols=true:** Returns solutions and grading instructions
+- Canonical answers for all questions
+- Point values and grading rubrics
+- Instructions to self-grade and report score to user
+- If score < 75, agent must review usage_instructions and retake
+
+# Usage
+
+```julia
+# Take the quiz
+usage_quiz()
+# [Agent answers questions in their response to user]
+
+# Check answers and grade yourself
+usage_quiz(show_sols=true)
+# [Agent compares answers, calculates score, reports to user]
+```
+
+# Purpose
+
+Ensures agents understand:
+- NOT to use println for communication (user sees REPL output directly)
+- Default to q=true (quiet mode) - only use q=false when you need return values for decisions
+- Token efficiency (70-90% savings with correct usage)
+- Communication happens in TEXT responses, not code
+
+**Recommended:** New agents should take this quiz before starting work to verify understanding.""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "show_sols" => Dict(
+                    "type" => "boolean",
+                    "description" => "If true, return solutions and grading instructions. If false/omitted, return quiz questions.",
+                    "default" => false,
+                ),
+            ),
+            "required" => [],
+        ),
+        args -> begin
+            try
+                show_solutions = get(args, "show_sols", false)
+
+                filename = if show_solutions
+                    "usage_quiz_solutions.md"
+                else
+                    "usage_quiz_questions.md"
+                end
+
+                quiz_path = joinpath(
+                    dirname(dirname(@__FILE__)),
+                    "prompts",
+                    filename,
+                )
+
+                if !isfile(quiz_path)
+                    return "Error: $filename not found at $quiz_path"
+                end
+
+                return read(quiz_path, String)
+            catch e
+                return "Error reading quiz file: $e"
+            end
+        end
+    )
+
     repl_tool = @mcp_tool(
         :ex,
         """
@@ -705,11 +804,13 @@ ex(e="(length(arr), typeof(arr))", q=false)      # Get multiple values as tuple
 
 **PREREQUISITE**: Call `usage_instructions` tool first to understand Julia REPL workflow and best practices.
 
+**CRITICAL - Shared REPL:** The user sees everything you execute in real-time in their REPL. DO NOT add `println` statements to "communicate" - use your text responses for that. The user already sees your code execute.
+
 **Never** use `julia` commands in bash - always use this REPL tool.
 
-**Default behavior (quiet mode):** Returns only printed output and errors. The expression's return value is suppressed (equivalent to adding `;`). This saves 70-90% of tokens.
+**Default behavior (quiet mode, q=true):** Returns only printed output and errors. The expression's return value is suppressed (equivalent to adding `;`). This saves 70-90% of tokens. **USE THIS BY DEFAULT.**
 
-**Verbose mode (q=false):** Returns full output including the expression's return value. Use this when you need to see the computed result. Use tuples to get multiple values: `(value1, value2, value3)`.
+**Verbose mode (q=false):** Returns full output including the expression's return value. **ONLY use when you need the return value to make a decision.** Examples: checking a length, comparing values, inspecting method signatures. DO NOT use for assignments, imports, or "showing" the user something (they already see it). Use tuples to get multiple values: `(value1, value2, value3)`.
 
 You may use this REPL to:
 - Execute Julia code
@@ -826,7 +927,6 @@ Useful for automating editor operations like saving files, running tasks, managi
 
 **Examples:**
 ```
-execute_vscode_command("language-julia.restartREPL")
 execute_vscode_command("workbench.action.files.saveAll")
 execute_vscode_command("workbench.action.terminal.focus")
 execute_vscode_command("workbench.action.tasks.runTask", ["test"])
@@ -2085,6 +2185,7 @@ directly edit Project.toml and run Pkg.instantiate().
         [
             ping_tool,
             usage_instructions_tool,
+            usage_quiz_tool,
             tool_help_tool,
             repl_tool,
             restart_repl_tool,
@@ -2427,7 +2528,7 @@ end
     tool_help(tool_id::Symbol)
 Get detailed help/documentation for a specific MCP tool.
 """
-function tool_help(tool_id::Symbol)
+function tool_help(tool_id::Symbol; extended::Bool = false)
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
@@ -2444,6 +2545,25 @@ function tool_help(tool_id::Symbol)
     println()
     println(tool.description)
     println()
+
+    # Try to load extended documentation if requested
+    if extended
+        extended_help_path = joinpath(
+            dirname(dirname(@__FILE__)),
+            "extended-help",
+            "$(string(tool_id)).md",
+        )
+
+        if isfile(extended_help_path)
+            println("\n" * "="^70)
+            println("Extended Documentation")
+            println("="^70)
+            println()
+            println(read(extended_help_path, String))
+        else
+            println("(No extended documentation available for this tool)")
+        end
+    end
 
     return tool
 end

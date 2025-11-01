@@ -481,7 +481,6 @@ function prompt_and_setup_vscode_extension()
                 pwd();
                 allowed_commands = [
                     # REPL & Window Control
-                    "language-julia.restartREPL",
                     "language-julia.startREPL",
                     "workbench.action.reloadWindow",
 
