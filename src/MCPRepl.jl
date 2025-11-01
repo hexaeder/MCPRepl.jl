@@ -266,6 +266,77 @@ Base.display(d::IOBufferDisplay, mime::AbstractString, x) = show(d.io, MIME(mime
 Base.display(d::IOBufferDisplay, mime::MIME, x) = show(d.io, mime, x)
 Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 
+"""
+    remove_println_calls(expr, toplevel=true)
+
+Strip println, print, printstyled, @show, and logging macros from an AST expression.
+When quiet mode is on, agents shouldn't use these to communicate since
+the user already sees code execution in their REPL.
+
+Logging macros (@error, @debug, @info, @warn) are only removed at the top level,
+not inside function definitions or other nested code.
+"""
+function remove_println_calls(expr, toplevel::Bool=true)
+    if expr isa Expr
+        # Check if this is a print-related call
+        if expr.head == :call
+            func = expr.args[1]
+            # List of functions to remove (always, regardless of level)
+            print_funcs = [:println, :print, :printstyled]
+            # Match direct calls (println, print, printstyled)
+            if func in print_funcs
+                return nothing
+            end
+            # Match qualified calls (Base.println, Main.print, etc.)
+            if (func isa Expr && func.head == :. &&
+                length(func.args) >= 2 &&
+                func.args[end] isa QuoteNode &&
+                func.args[end].value in print_funcs)
+                return nothing
+            end
+        elseif expr.head == :macrocall
+            macro_name = expr.args[1]
+            # Remove @show always
+            if macro_name == Symbol("@show")
+                return nothing
+            end
+            # Remove logging macros ONLY at top level
+            if toplevel
+                logging_macros = [Symbol("@error"), Symbol("@debug"), Symbol("@info"), Symbol("@warn")]
+                if macro_name in logging_macros
+                    return nothing
+                end
+                # Also handle qualified logging macros
+                if (macro_name isa Expr && macro_name.head == :. &&
+                    length(macro_name.args) >= 2 &&
+                    macro_name.args[end] isa QuoteNode &&
+                    macro_name.args[end].value in [:error, :debug, :info, :warn])
+                    return nothing
+                end
+            end
+        end
+
+        # Determine if we're entering a nested scope (not top level anymore)
+        entering_nested = expr.head in [:function, :macro, :let, :do, :try, :->]
+
+        # Recursively process all arguments, filtering out nothings
+        new_args = []
+        for arg in expr.args
+            cleaned = remove_println_calls(arg, toplevel && !entering_nested)
+            if cleaned !== nothing
+                push!(new_args, cleaned)
+            end
+        end
+        # If we have a block and removed some statements, rebuild it
+        if expr.head == :block && length(new_args) != length(expr.args)
+            return Expr(expr.head, new_args...)
+        else
+            return Expr(expr.head, new_args...)
+        end
+    end
+    return expr
+end
+
 function execute_repllike(
     str;
     silent::Bool = false,
@@ -290,6 +361,13 @@ function execute_repllike(
     end
 
     expr = Base.parse_input_line(str)
+
+    # In quiet mode, strip println statements from the AST
+    # User already sees code execution in their REPL - println is redundant
+    if quiet
+        expr = remove_println_calls(expr)
+    end
+
     backend = repl.backendref
 
     REPL.prepare_next(repl)
@@ -842,7 +920,22 @@ You may use this REPL to:
             try
                 silent = get(args, "s", false)
                 quiet = get(args, "q", true)
-                execute_repllike(get(args, "e", ""); silent = silent, quiet = quiet)
+                expr_str = get(args, "e", "")
+
+                # Format long one-liners for readability (if JuliaFormatter available)
+                if length(expr_str) > 80 && isdefined(Main, :JuliaFormatter)
+                    try
+                        formatted = Main.JuliaFormatter.format_text(expr_str)
+                        # Only use formatted version if it's actually multiline
+                        if count('\n', formatted) > 0
+                            expr_str = formatted
+                        end
+                    catch
+                        # If formatting fails, use original
+                    end
+                end
+
+                execute_repllike(expr_str; silent = silent, quiet = quiet)
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
