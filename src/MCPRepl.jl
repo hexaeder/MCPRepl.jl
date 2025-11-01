@@ -1593,13 +1593,14 @@ using Pkg; Pkg.add("Aqua")
                     end
                     """
                 else
-                    # Construct code with package name
+                    # Construct code with package name - interpolate at this level
+                    pkg_symbol = Symbol(pkg_name)
                     code = """
                     using Aqua
-                    @eval using $(Symbol("$(pkg_name)"))
-                    println("Running Aqua tests for package: $(pkg_name)")
-                    Aqua.test_all($(Symbol("$(pkg_name)")))
-                    println("✅ All Aqua tests passed for $(pkg_name)")
+                    @eval using $pkg_symbol
+                    println("Running Aqua tests for package: $pkg_name")
+                    Aqua.test_all($pkg_symbol)
+                    println("✅ All Aqua tests passed for $pkg_name")
                     """
                 end
 
