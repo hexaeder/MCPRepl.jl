@@ -1,5 +1,113 @@
 # Julia REPL Workflow Guide
 
+## 📝 New to MCPRepl? Take the Quiz!
+
+**Before working with users, verify your understanding:**
+
+```julia
+usage_quiz()              # Answer 6 questions about core concepts
+usage_quiz(show_sols=true)  # Check answers and grade yourself
+```
+
+**Must score 75+ to ensure token-efficient, effective usage.** The quiz takes 5-10 minutes and will help you save 70-90% of tokens.
+
+---
+
+## ⚠️ CRITICAL: Understand the Shared REPL Model
+
+**THIS IS THE MOST IMPORTANT CONCEPT TO UNDERSTAND.**
+
+### The User Sees Everything You Execute In Real-Time
+
+You and the user are working in the **SAME REPL**. When you execute code:
+- It appears in their REPL **immediately**
+- They see the **same output** you see
+- There is **NO SEPARATION** between your view and theirs
+
+**IMPLICATIONS:**
+
+1. **DO NOT add `println` statements to "communicate" with the user**
+   - ❌ WRONG: `ex(e="println('Testing mean function'); mean(data)")`
+   - ✅ RIGHT: Write explanations in your TEXT response, not in code
+   - **Why:** The user already sees `mean(data)` execute in their REPL. Adding `println` is redundant noise.
+
+2. **Use your TEXT responses to explain, NOT code**
+   - **TEXT (outside tool calls):** "Let me test the mean function to verify it's working:"
+   - **CODE:** `ex(e="mean(test_data)", q=false)`
+   - The user reads your TEXT for context, sees the code execute in their REPL in real-time.
+
+3. **Default to quiet mode (`q=true`, the default)**
+   - ❌ WRONG: `ex(e="test_data = [1,2,3,4,5]", q=false)`  # Wastes tokens showing the vector
+   - ✅ RIGHT: `ex(e="test_data = [1,2,3,4,5]")`  # User sees it execute, you don't need the return value
+
+### When to Use `q=false` (Verbose Mode)
+
+**ONLY use `q=false` when you need the return value to make a decision.** This should be **RARE**.
+
+**Valid uses of `q=false`:**
+```julia
+# You need to inspect the result to decide if there's a bug
+ex(e="length(result)", q=false)  # Need to see: is it 2 or 3?
+
+# You need multiple values for comparison
+ex(e="(actual_value, expected_value)", q=false)
+
+# You need to see the output to determine next steps
+ex(e="methods(my_function)", q=false)
+```
+
+**INVALID uses of `q=false` (wasteful):**
+```julia
+# ❌ Assignment - you don't need to see the value
+ex(e="x = 42", q=false)
+
+# ❌ Loading modules - no return value needed
+ex(e="using Package", q=false)
+
+# ❌ Defining functions - you don't need to see the return value
+ex(e="function foo() ... end", q=false)
+
+# ❌ "Showing the user what happened" - they already see it!
+ex(e="println('Result: ', result)", q=false)
+```
+
+### Communication Channels
+
+**Understand where to communicate what:**
+
+| Purpose | Where | Example |
+|---------|-------|---------|
+| Explain what you're doing | **Your TEXT response** | "Let me test the moving average function:" |
+| Execute actions | **`ex` tool with `q=true`** | `ex(e="result = moving_average(data, 3)")` |
+| Inspect values for decisions | **`ex` tool with `q=false`** | `ex(e="length(result)", q=false)` |
+| Debug output | **User's REPL** (automatic) | They see everything you execute |
+
+### Example: Good vs Bad Workflow
+
+**❌ BAD (wasteful, redundant):**
+```julia
+ex(e="println('Loading module...'); include('StatsUtils.jl')", q=false)
+ex(e="println('Creating test data...'); test_data = [1,2,3,4,5]", q=false)
+ex(e="println('Testing mean:'); mean(test_data)", q=false)
+ex(e="println('Result:', result)", q=false)
+```
+**Token waste:** ~500 tokens
+**Problems:** Redundant printlns, unnecessary q=false, poor communication
+
+**✅ GOOD (efficient, clear):**
+
+**Your TEXT:** "Let me load the module and test the mean function:"
+```julia
+ex(e="include('StatsUtils.jl')")
+ex(e="using .StatsUtils")
+ex(e="test_data = [1,2,3,4,5]")
+ex(e="mean(test_data)", q=false)  # Need to see the result
+```
+**Token waste:** ~50 tokens
+**Benefits:** 90% token savings, clear communication, user sees everything in their REPL
+
+---
+
 ## 🎯 Core Principles
 
 ### 1. The REPL is Shared
