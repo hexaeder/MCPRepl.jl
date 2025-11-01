@@ -696,13 +696,20 @@ Returns a simple health status message. Useful for testing connectivity and serv
         """
 Execute Julia code in a shared, persistent REPL session.
 
+# Quick Examples
+```julia
+ex(e="x = 42")                                    # Quiet: no output (default)
+ex(e="2 + 2", q=false)                           # Verbose: returns "4"
+ex(e="(length(arr), typeof(arr))", q=false)      # Get multiple values as tuple
+```
+
 **PREREQUISITE**: Call `usage_instructions` tool first to understand Julia REPL workflow and best practices.
 
 **Never** use `julia` commands in bash - always use this REPL tool.
 
 **Default behavior (quiet mode):** Returns only printed output and errors. The expression's return value is suppressed (equivalent to adding `;`). This saves 70-90% of tokens.
 
-**Verbose mode (q=false):** Returns full output including the expression's return value. Use this when you need to see the computed result.
+**Verbose mode (q=false):** Returns full output including the expression's return value. Use this when you need to see the computed result. Use tuples to get multiple values: `(value1, value2, value3)`.
 
 You may use this REPL to:
 - Execute Julia code
