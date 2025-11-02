@@ -7,4 +7,5 @@ using Test
     include("call_tool_tests.jl")
     include("lsp_tests.jl")
     include("generate_tests.jl")
+    include("ast_stripping_tests.jl")
 end
