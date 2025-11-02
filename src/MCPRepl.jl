@@ -2218,8 +2218,9 @@ directly edit Project.toml and run Pkg.instantiate().
                     return "Error: packages array is required and cannot be empty"
                 end
 
+                # Use Pkg.add directly with io=devnull to disable interactivity
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
-                code = "using Pkg; Pkg.add([$pkg_names])"
+                code = "using Pkg; Pkg.add([$pkg_names]; io=devnull)"
 
                 result = execute_repllike(code; silent = false, quiet = false)
                 return "Added packages: $(join(packages, ", "))\n\n$result"
@@ -2258,8 +2259,9 @@ directly edit Project.toml and run Pkg.instantiate().
                     return "Error: packages array is required and cannot be empty"
                 end
 
+                # Use Pkg.rm directly with io=devnull to disable interactivity
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
-                code = "using Pkg; Pkg.rm([$pkg_names])"
+                code = "using Pkg; Pkg.rm([$pkg_names]; io=devnull)"
 
                 result = execute_repllike(code; silent = false, quiet = false)
                 return "Removed packages: $(join(packages, ", "))\n\n$result"
