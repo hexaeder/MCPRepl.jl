@@ -419,22 +419,7 @@ Create MCP tools for LSP operations that can be added to the server.
 function create_lsp_tools()
     goto_definition_tool = @mcp_tool(
         :lsp_goto_definition,
-        """Jump to the definition of a symbol using Julia LSP.
-
-        Uses the Julia Language Server to find where a function, type, or variable
-        is defined in the codebase.
-
-        # Arguments
-        - `file_path`: Absolute path to the file (required)
-        - `line`: Line number, 1-indexed (required)
-        - `column`: Column number, 1-indexed (required)
-
-        # Returns
-        File path and position of the definition(s).
-
-        # Examples
-        - Find definition at line 42, column 10: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
-        """,
+        "Find the definition of a symbol using Julia LSP.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -491,23 +476,7 @@ function create_lsp_tools()
 
     find_references_tool = @mcp_tool(
         :lsp_find_references,
-        """Find all references to a symbol using Julia LSP.
-
-Uses the Julia Language Server to find where a function, type, or variable
-is used throughout the codebase.
-
-# Arguments
-- `file_path`: Absolute path to the file (required)
-- `line`: Line number, 1-indexed (required)
-- `column`: Column number, 1-indexed (required)
-- `include_declaration`: Include the declaration in results (default: true)
-
-# Returns
-List of file paths and positions where the symbol is referenced.
-
-# Examples
-- Find references: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10}`
-""",
+        "Find all references to a symbol using Julia LSP.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -570,20 +539,7 @@ List of file paths and positions where the symbol is referenced.
 
     document_symbols_tool = @mcp_tool(
         :lsp_document_symbols,
-        """List all symbols (functions, types, etc.) in a file using Julia LSP.
-
-Uses the Julia Language Server to get a structured list of all symbols
-defined in a file, similar to the outline view in VS Code.
-
-# Arguments
-- `file_path`: Absolute path to the file (required)
-
-# Returns
-List of symbols with their types, names, and locations.
-
-# Examples
-- List symbols: `{"file_path": "/path/to/file.jl"}`
-""",
+        "List all symbols in a file using Julia LSP.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -627,21 +583,7 @@ List of symbols with their types, names, and locations.
 
     workspace_symbols_tool = @mcp_tool(
         :lsp_workspace_symbols,
-        """Search for symbols across the entire workspace using Julia LSP.
-
-Uses the Julia Language Server to search for functions, types, and other
-symbols by name across all files in the workspace.
-
-# Arguments
-- `query`: Search query (can be partial name)
-
-# Returns
-List of matching symbols with their locations.
-
-# Examples
-- Search for "calculate": `{"query": "calculate"}`
-- Search for types ending in "Error": `{"query": "Error"}`
-""",
+        "Search for symbols across the workspace using Julia LSP.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -682,23 +624,7 @@ List of matching symbols with their locations.
     # Rename symbol tool
     rename_tool = @mcp_tool(
         :lsp_rename,
-        """Rename a symbol across the entire workspace using Julia LSP.
-
-Uses the Julia Language Server to safely rename a function, variable, or type
-everywhere it's used. Returns a WorkspaceEdit showing all changes that would be made.
-
-# Arguments
-- `file_path`: Absolute path to the file containing the symbol (required)
-- `line`: Line number where symbol is located, 1-indexed (required)
-- `column`: Column number where symbol is located, 1-indexed (required)
-- `new_name`: New name for the symbol (required)
-
-# Returns
-Description of all file changes that would be made (file paths and edit locations).
-
-# Examples
-- Rename function: `{"file_path": "/path/to/file.jl", "line": 42, "column": 10, "new_name": "calculate_result"}`
-""",
+        "Rename a symbol across the workspace using Julia LSP.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -767,26 +693,7 @@ Description of all file changes that would be made (file paths and edit location
     # Code actions tool
     code_actions_tool = @mcp_tool(
         :lsp_code_actions,
-        """Get available code actions (quick fixes, refactorings) for a location using Julia LSP.
-
-Uses the Julia Language Server to get available fixes and refactorings for errors,
-warnings, or code at a specific location. Similar to clicking the lightbulb in VS Code.
-
-# Arguments
-- `file_path`: Absolute path to the file (required)
-- `start_line`: Start line number, 1-indexed (required)
-- `start_column`: Start column number, 1-indexed (required)
-- `end_line`: End line number, 1-indexed (optional, defaults to start_line)
-- `end_column`: End column number, 1-indexed (optional, defaults to start_column)
-- `kind`: Filter by action kind (optional): "quickfix", "refactor", "source", etc.
-
-# Returns
-List of available code actions with their titles and kinds.
-
-# Examples
-- Get all actions: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10}`
-- Get only quick fixes: `{"file_path": "/path/to/file.jl", "start_line": 42, "start_column": 10, "kind": "quickfix"}`
-""",
+        "Get available code actions and quick fixes using Julia LSP.",
         Dict(
             "type" => "object",
             "properties" => Dict(

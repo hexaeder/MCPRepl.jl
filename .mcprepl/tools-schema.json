@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCPRepl Tools Configuration",
+  "description": "Configuration for enabling/disabling MCP tool sets and individual tools",
+  "type": "object",
+  "properties": {
+    "_comment": {
+      "type": "string",
+      "description": "Optional comment about the configuration"
+    },
+    "_total_tokens": {
+      "type": "string",
+      "description": "Total token count information"
+    },
+    "tool_sets": {
+      "type": "object",
+      "description": "Predefined sets of related tools that can be enabled or disabled together",
+      "patternProperties": {
+        "^[a-z-]+$": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Whether this tool set is enabled"
+            },
+            "description": {
+              "type": "string",
+              "description": "Description of this tool set"
+            },
+            "tokens": {
+              "type": "string",
+              "description": "Approximate token count for this tool set"
+            },
+            "tools": {
+              "type": "array",
+              "description": "List of tool names in this set",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": ["enabled", "description", "tools"]
+        }
+      }
+    },
+    "individual_overrides": {
+      "type": "object",
+      "description": "Override individual tools regardless of their tool_set setting",
+      "patternProperties": {
+        "^[a-z_]+$": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "required": ["tool_sets"]
+}

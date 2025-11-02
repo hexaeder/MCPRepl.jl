@@ -692,6 +692,82 @@ function repl_status_report()
     end
 end
 
+# ============================================================================
+# Tool Configuration Management
+# ============================================================================
+
+"""
+    load_tools_config(config_path::String = ".mcprepl/tools.json")
+
+Load the tools configuration from .mcprepl/tools.json.
+Returns a Set of enabled tool names (as Symbols).
+
+The configuration supports:
+- Tool sets that can be enabled/disabled as groups
+- Individual tool overrides that take precedence over tool set settings
+
+If the config file doesn't exist, returns `nothing` to indicate all tools should be enabled.
+"""
+function load_tools_config(config_path::String = ".mcprepl/tools.json")
+    full_path = joinpath(pwd(), config_path)
+
+    # If config doesn't exist, enable all tools (backward compatibility)
+    if !isfile(full_path)
+        return nothing
+    end
+
+    try
+        config = JSON.parsefile(full_path; dicttype = Dict{String,Any})
+        enabled_tools = Set{Symbol}()
+
+        # First, process tool sets
+        tool_sets = get(config, "tool_sets", Dict())
+        for (set_name, set_config) in tool_sets
+            if get(set_config, "enabled", false)
+                tools = get(set_config, "tools", String[])
+                for tool_name in tools
+                    push!(enabled_tools, Symbol(tool_name))
+                end
+            end
+        end
+
+        # Then apply individual overrides
+        individual_overrides = get(config, "individual_overrides", Dict())
+        for (tool_name, enabled) in individual_overrides
+            # Skip comment entries
+            if startswith(tool_name, "_")
+                continue
+            end
+
+            tool_sym = Symbol(tool_name)
+            if enabled
+                push!(enabled_tools, tool_sym)
+            else
+                delete!(enabled_tools, tool_sym)
+            end
+        end
+
+        return enabled_tools
+    catch e
+        @warn "Error loading tools configuration from $full_path: $e. Enabling all tools."
+        return nothing
+    end
+end
+
+"""
+    filter_tools_by_config(all_tools::Vector{MCPTool}, enabled_tools::Union{Set{Symbol},Nothing})
+
+Filter a vector of MCPTool objects based on the enabled tools set.
+If enabled_tools is `nothing`, returns all tools (backward compatibility).
+"""
+function filter_tools_by_config(all_tools::Vector{MCPTool}, enabled_tools::Union{Set{Symbol},Nothing})
+    if enabled_tools === nothing
+        return all_tools
+    end
+
+    return filter(tool -> tool.id in enabled_tools, all_tools)
+end
+
 function start!(;
     port::Union{Int,Nothing} = nothing,
     verbose::Bool = true,
@@ -752,12 +828,7 @@ function start!(;
 
     ping_tool = @mcp_tool(
         :ping,
-        """Check if the MCP server is responsive.
-
-Returns a simple health status message with Revise.jl status. Useful for testing connectivity and server availability.
-
-# Example
-- Check server health: `{}`""",
+        "Check if the MCP server is responsive and return Revise.jl status.",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             status = "✓ MCP Server is healthy and responsive\n"
@@ -779,7 +850,7 @@ Returns a simple health status message with Revise.jl status. Useful for testing
     )
 
     usage_instructions_tool =
-        @mcp_tool :usage_instructions "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents." Dict(
+        @mcp_tool :usage_instructions "Get Julia REPL usage instructions and best practices for AI agents." Dict(
             "type" => "object",
             "properties" => Dict(),
             "required" => [],
@@ -888,34 +959,12 @@ Ensures agents understand:
 
     repl_tool = @mcp_tool(
         :ex,
-        """
-Execute Julia code in a shared, persistent REPL session.
+        """Execute Julia code in a persistent REPL. User sees all code execute in real-time.
 
-# Quick Examples
-```julia
-ex(e="x = 42")                                    # Quiet: no output (default)
-ex(e="2 + 2", q=false)                           # Verbose: returns "4"
-ex(e="(length(arr), typeof(arr))", q=false)      # Get multiple values as tuple
-```
+Default (q=true): Returns only printed output/errors, suppresses return values (saves 70-90% tokens).
+Verbose (q=false): Returns full output including return value - use ONLY when you need the result to make a decision.
 
-**PREREQUISITE**: Call `usage_instructions` tool first to understand Julia REPL workflow and best practices.
-
-**CRITICAL - Shared REPL:** The user sees everything you execute in real-time in their REPL. DO NOT add `println` statements to "communicate" - use your text responses for that. The user already sees your code execute.
-
-**Never** use `julia` commands in bash - always use this REPL tool.
-
-**Default behavior (quiet mode, q=true):** Returns only printed output and errors. The expression's return value is suppressed (equivalent to adding `;`). This saves 70-90% of tokens. **USE THIS BY DEFAULT.**
-
-**Verbose mode (q=false):** Returns full output including the expression's return value. **ONLY use when you need the return value to make a decision.** Examples: checking a length, comparing values, inspecting method signatures. DO NOT use for assignments, imports, or "showing" the user something (they already see it). Use tuples to get multiple values: `(value1, value2, value3)`.
-
-You may use this REPL to:
-- Execute Julia code
-- Run test sets
-- Get function documentation (@doc functionname)
-- Investigate the environment (see investigate_environment tool)
-
-**Important:** All code executed persists across calls to this tool. Variables, functions, and loaded packages remain available in subsequent calls unless the REPL has been restarted.
-""",
+Never use `julia` in bash. Call usage_instructions first for workflow guidance.""",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -963,22 +1012,7 @@ You may use this REPL to:
 
     restart_repl_tool = @mcp_tool(
         :restart_repl,
-        """Restart the Julia REPL and return immediately.
-
-**Important:** This tool returns a response BEFORE the server restarts, so you receive clear instructions.
-
-**AI Agent Workflow:**
-1. Call this tool - you will receive a response immediately
-2. Wait 5 seconds before making any new requests
-3. Retry every 2 seconds until the connection is reestablished
-4. Typical restart time: 5-10 seconds
-
-The MCP server will be temporarily offline during restart. This is expected and normal.
-
-**When to use:**
-- After making changes to the MCP server code
-- When Revise fails to pick up changes (rare)
-- When the REPL needs a fresh start""",
+        "Restart the Julia REPL. Returns immediately, then server restarts (wait 5s, retry every 2s).",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         (args, stream_channel = nothing) -> begin
             try
@@ -1164,18 +1198,7 @@ Use this to discover which commands are available for the `execute_vscode_comman
 
     tool_help_tool = @mcp_tool(
         :tool_help,
-        """Get detailed help and examples for a specific MCP tool.
-
-Provides verbose instructions, parameter descriptions, and usage examples for any available tool.
-Use this when you need more detailed information about how to use a specific tool properly.
-
-# Arguments
-- `tool_name`: Name of the tool (e.g., "exec_repl", "execute_vscode_command", "lsp_goto_definition")
-- `extended`: If true, includes additional examples and detailed documentation (default: false)
-
-# Example
-- Get help for exec_repl: `{"tool_name": "exec_repl"}`
-- Get extended help: `{"tool_name": "exec_repl", "extended": true}`""",
+        "Get detailed help and examples for any MCP tool. Use extended=true for additional documentation.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1240,20 +1263,7 @@ Use this when you need more detailed information about how to use a specific too
 
     investigate_tool = @mcp_tool(
         :investigate_environment,
-        """Investigate the current Julia environment including pwd, active project, packages, and development packages with their paths.
-
-This tool provides comprehensive information about:
-- Current working directory
-- Active project and its details
-- All packages in the environment with development status
-- Development packages with their file system paths
-- Current environment package status
-- Revise.jl status for hot reloading
-
-This is useful for understanding the development setup and debugging environment issues.
-
-**Tip:** If you need to restart the Julia REPL (e.g., when Revise isn't tracking changes properly),
-use the execute_vscode_command tool with "language-julia.restartREPL".""",
+        "Get current Julia environment info: pwd, active project, packages, dev packages, and Revise status.",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             try
@@ -1266,17 +1276,7 @@ use the execute_vscode_command tool with "language-julia.restartREPL".""",
 
     search_methods_tool = @mcp_tool(
         :search_methods,
-        """Search for all methods of a function or all methods matching a type signature.
-
-This is essential for understanding Julia's multiple dispatch system and finding
-what methods are available for a function.
-
-# Examples
-- Find all methods: `search_methods(println)`
-- Find methods by signature: `methodswith(String)`
-- Find methods in a module: `names(Module, all=true)`
-
-Returns a formatted list of all matching methods with their signatures.""",
+        "Search for all methods of a function or methods matching a type signature.",
         MCPRepl.text_parameter(
             "query",
             "Function name or type to search (e.g., 'println', 'String', 'Base.sort')",
@@ -1315,16 +1315,7 @@ Returns a formatted list of all matching methods with their signatures.""",
 
     macro_expand_tool = @mcp_tool(
         :macro_expand,
-        """Expand a macro to see what code it generates.
-
-This is invaluable for understanding what macros do and debugging macro-heavy code.
-
-# Examples
-- `@macroexpand @time sleep(1)`
-- `@macroexpand @test 1 + 1 == 2`
-- `@macroexpand @inbounds a[i]`
-
-Returns the expanded code that the macro generates.""",
+        "Expand a macro to see the generated code.",
         MCPRepl.text_parameter(
             "expression",
             "Macro expression to expand (e.g., '@time sleep(1)')",
@@ -1353,20 +1344,7 @@ Returns the expanded code that the macro generates.""",
 
     type_info_tool = @mcp_tool(
         :type_info,
-        """Get comprehensive information about a Julia type.
-
-Provides details about:
-- Type hierarchy (supertypes and subtypes)
-- Field names and types
-- Type parameters
-- Whether it's abstract, primitive, or concrete
-
-# Examples
-- `type_info(String)`
-- `type_info(Vector{Int})`
-- `type_info(AbstractArray)`
-
-This is essential for understanding Julia's type system.""",
+        "Get type information: hierarchy, fields, parameters, and properties.",
         MCPRepl.text_parameter(
             "type_expr",
             "Type expression to inspect (e.g., 'String', 'Vector{Int}', 'AbstractArray')",
@@ -1430,25 +1408,7 @@ This is essential for understanding Julia's type system.""",
 
     profile_tool = @mcp_tool(
         :profile_code,
-        """Profile Julia code to identify performance bottlenecks.
-
-Uses Julia's built-in Profile stdlib to analyze where time is spent in your code.
-
-# Example
-```julia
-profile_code(\"\"\"
-    function test()
-        sum = 0
-        for i in 1:1000000
-            sum += i
-        end
-        sum
-    end
-    test()
-\"\"\")
-```
-
-Returns a profile report showing which lines take the most time.""",
+        "Profile Julia code to identify performance bottlenecks.",
         MCPRepl.text_parameter("code", "Julia code to profile"),
         args -> begin
             try
@@ -1474,17 +1434,7 @@ Returns a profile report showing which lines take the most time.""",
 
     list_names_tool = @mcp_tool(
         :list_names,
-        """List all exported names in a module or package.
-
-Useful for discovering what functions, types, and constants are available
-in a module without reading documentation.
-
-# Examples
-- `list_names(Base)`
-- `list_names(Core)`
-- `list_names(MyPackage)`
-
-Set all=true to include non-exported names.""",
+        "List all exported names in a module or package.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1532,16 +1482,7 @@ Set all=true to include non-exported names.""",
 
     code_lowered_tool = @mcp_tool(
         :code_lowered,
-        """Show lowered (desugared) Julia code for a function.
-
-This shows the intermediate representation after syntax desugaring but before
-type inference. Useful for understanding what Julia does with your code.
-
-# Example
-- `code_lowered(sin, (Float64,))`
-- `code_lowered(+, (Int, Int))`
-
-Requires function name and tuple of argument types.""",
+        "Show lowered (desugared) IR for a function.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1582,16 +1523,7 @@ Requires function name and tuple of argument types.""",
 
     code_typed_tool = @mcp_tool(
         :code_typed,
-        """Show type-inferred Julia code for a function.
-
-This shows the code after type inference, which is crucial for understanding
-performance. Type-unstable code will show up here with Union or Any types.
-
-# Example
-- `code_typed(sin, (Float64,))`
-- `code_typed(+, (Int, Int))`
-
-Useful for debugging type stability and performance issues.""",
+        "Show type-inferred code for a function (for debugging type stability).",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1633,27 +1565,7 @@ Useful for debugging type stability and performance issues.""",
     # Optional formatting tool (requires JuliaFormatter.jl)
     format_tool = @mcp_tool(
         :format_code,
-        """Format Julia code using JuliaFormatter.jl (optional).
-
-Formats Julia source files or directories according to standard style guidelines.
-This tool requires JuliaFormatter.jl to be installed in your environment.
-
-# Arguments
-- `path`: Path to a Julia file or directory to format
-- `overwrite`: Whether to overwrite files in place (default: true)
-- `verbose`: Show which files are being formatted (default: true)
-
-# Installation
-If JuliaFormatter is not installed, add it with:
-```julia
-using Pkg; Pkg.add("JuliaFormatter")
-```
-
-# Examples
-- Format a single file: `{"path": "src/MyModule.jl"}`
-- Format entire src directory: `{"path": "src"}`
-- Preview without overwriting: `{"path": "src/file.jl", "overwrite": false}`
-""",
+        "Format Julia code using JuliaFormatter.jl.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -1738,31 +1650,7 @@ using Pkg; Pkg.add("JuliaFormatter")
     # Optional linting tool (requires Aqua.jl)
     lint_tool = @mcp_tool(
         :lint_package,
-        """Run Aqua.jl quality assurance tests on a Julia package (optional).
-
-Performs comprehensive package quality checks including:
-- Ambiguity detection in method signatures
-- Undefined exports
-- Unbound type parameters
-- Dependency analysis
-- Project.toml validation
-- And more
-
-This tool requires Aqua.jl to be installed in your environment.
-
-# Arguments
-- `package_name`: Name of the package to test (default: current project)
-
-# Installation
-If Aqua is not installed, add it with:
-```julia
-using Pkg; Pkg.add("Aqua")
-```
-
-# Examples
-- Test current package: `{}`
-- Test specific package: `{"package_name": "MyPackage"}`
-""",
+        "Run Aqua.jl quality assurance tests on a package.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -2203,21 +2091,7 @@ Terminates the active debug session and returns to normal execution.
     # Package management tools
     pkg_add_tool = @mcp_tool(
         :pkg_add,
-        """Add one or more Julia packages to the current environment.
-
-This is a convenience wrapper around Pkg.add() that provides better
-feedback and error handling for AI agents.
-
-**Note**: This modifies Project.toml. For more control, agents can
-directly edit Project.toml and run Pkg.instantiate().
-
-# Arguments
-- `packages`: Array of package names to add (e.g., ["DataFrames", "Plots"])
-
-# Examples
-- `pkg_add(packages=["DataFrames"])`
-- `pkg_add(packages=["Plots", "StatsPlots"])`
-""",
+        "Add Julia packages to the current environment (modifies Project.toml).",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -2250,15 +2124,7 @@ directly edit Project.toml and run Pkg.instantiate().
 
     pkg_rm_tool = @mcp_tool(
         :pkg_rm,
-        """Remove one or more Julia packages from the current environment.
-
-# Arguments
-- `packages`: Array of package names to remove
-
-# Examples
-- `pkg_rm(packages=["OldPackage"])`
-- `pkg_rm(packages=["Package1", "Package2"])`
-""",
+        "Remove Julia packages from the current environment.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -2292,41 +2158,59 @@ directly edit Project.toml and run Pkg.instantiate().
     # Create LSP tools
     lsp_tools = create_lsp_tools()
 
+    # Load tools configuration
+    enabled_tools = load_tools_config()
+
+    # Collect all tools
+    all_tools = [
+        ping_tool,
+        usage_instructions_tool,
+        usage_quiz_tool,
+        tool_help_tool,
+        repl_tool,
+        restart_repl_tool,
+        vscode_command_tool,
+        list_vscode_commands_tool,
+        investigate_tool,
+        search_methods_tool,
+        macro_expand_tool,
+        type_info_tool,
+        profile_tool,
+        list_names_tool,
+        code_lowered_tool,
+        code_typed_tool,
+        format_tool,
+        lint_tool,
+        open_and_breakpoint_tool,
+        start_debug_session_tool,
+        add_watch_expression_tool,
+        copy_debug_value_tool,
+        debug_step_over_tool,
+        debug_step_into_tool,
+        debug_step_out_tool,
+        debug_continue_tool,
+        debug_stop_tool,
+        pkg_add_tool,
+        pkg_rm_tool,
+        lsp_tools...,  # Add all LSP tools
+    ]
+
+    # Filter tools based on configuration
+    active_tools = filter_tools_by_config(all_tools, enabled_tools)
+
+    # Show tool configuration status if verbose and config exists
+    if verbose && enabled_tools !== nothing
+        disabled_count = length(all_tools) - length(active_tools)
+        if disabled_count > 0
+            printstyled("🔧 Tools: ", color = :cyan, bold = true)
+            println("$(length(active_tools)) enabled, $disabled_count disabled by config")
+        end
+    end
+
     # Create and start server
     println("Starting MCP server on port $actual_port...")
     SERVER[] = start_mcp_server(
-        [
-            ping_tool,
-            usage_instructions_tool,
-            usage_quiz_tool,
-            tool_help_tool,
-            repl_tool,
-            restart_repl_tool,
-            vscode_command_tool,
-            list_vscode_commands_tool,
-            investigate_tool,
-            search_methods_tool,
-            macro_expand_tool,
-            type_info_tool,
-            profile_tool,
-            list_names_tool,
-            code_lowered_tool,
-            code_typed_tool,
-            format_tool,
-            lint_tool,
-            open_and_breakpoint_tool,
-            start_debug_session_tool,
-            add_watch_expression_tool,
-            copy_debug_value_tool,
-            debug_step_over_tool,
-            debug_step_into_tool,
-            debug_step_out_tool,
-            debug_continue_tool,
-            debug_stop_tool,
-            pkg_add_tool,
-            pkg_rm_tool,
-            lsp_tools...,  # Add all LSP tools
-        ],
+        active_tools,
         actual_port;
         verbose = verbose,
         security_config = security_config,
