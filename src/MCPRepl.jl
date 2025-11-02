@@ -378,7 +378,20 @@ function execute_repllike(
         if description !== nothing
             println(description)
         else
-            print(str, "\n")
+            # Transform println calls to comments for display
+            display_str = replace(str, r"println\s*\(\s*\"([^\"]*)\"\s*\)" => s"# \1")
+            display_str = replace(display_str, r"@info\s+\"([^\"]*?)\"" => s"# \1")
+            display_str = replace(display_str, r"@warn\s+\"([^\"]*?)\"" => s"# WARNING: \1")
+            display_str = replace(display_str, r"@error\s+\"([^\"]*?)\"" => s"# ERROR: \1")
+            # Split on semicolons for multi-line display
+            display_str = replace(display_str, r";\s*" => "\n")
+            # If multiline, start on new line for proper indentation
+            if contains(display_str, '\n')
+                println()  # Start on new line
+                print(display_str, "\n")
+            else
+                print(display_str, "\n")
+            end
         end
     end
 
@@ -478,8 +491,13 @@ function execute_repllike(
         REPL.LineEdit.refresh_line(repl.mistate)
     end
 
-    # Return the complete output
-    return captured_content * result_str
+    # In quiet mode, don't return captured stdout/stderr (println output)
+    # User already saw it in their REPL, no need to send it back to agent
+    if quiet
+        return result_str  # Only return the result value (which is "" in quiet mode)
+    else
+        return captured_content * result_str
+    end
 end
 
 SERVER = Ref{Union{Nothing,MCPServer}}(nothing)
