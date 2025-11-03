@@ -772,6 +772,77 @@ function filter_tools_by_config(all_tools::Vector{MCPTool}, enabled_tools::Union
     return filter(tool -> tool.id in enabled_tools, all_tools)
 end
 
+"""
+    start_agent_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
+
+Start a background task that sends periodic heartbeats to the supervisor.
+
+This function spawns a separate thread that:
+1. Reads supervisor configuration from agents.json
+2. Sends HTTP POST heartbeats every second
+3. Silently ignores failures (supervisor may not be running yet)
+
+The heartbeat task runs indefinitely until the Julia process exits.
+"""
+function start_agent_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
+    if verbose
+        printstyled("💓 Agent Heartbeat: ", color = :cyan, bold = true)
+        printstyled("Enabled for '$agent_name'\n", color = :green, bold = true)
+    end
+
+    # Spawn heartbeat task on a separate thread
+    Threads.@spawn begin
+        # Read supervisor configuration
+        config_path = joinpath(".mcprepl", agents_config)
+        supervisor_port = 3000  # Default
+
+        if isfile(config_path)
+            try
+                config = JSON.parsefile(config_path)
+                supervisor_port = get(get(config, "supervisor", Dict()), "port", 3000)
+            catch e
+                @warn "Could not read supervisor config from $config_path" exception=e
+            end
+        end
+
+        supervisor_url = "http://localhost:$supervisor_port/"
+
+        if verbose
+            printstyled("   • Sending to: $supervisor_url\n", color = :green)
+            println()
+        end
+
+        # Heartbeat loop
+        while true
+            try
+                heartbeat = Dict(
+                    "jsonrpc" => "2.0",
+                    "method" => "supervisor/heartbeat",
+                    "id" => 1,
+                    "params" => Dict(
+                        "agent_name" => agent_name,
+                        "pid" => getpid(),
+                        "status" => "healthy",
+                        "timestamp" => string(Dates.now())
+                    )
+                )
+
+                HTTP.post(
+                    supervisor_url,
+                    ["Content-Type" => "application/json"],
+                    JSON.json(heartbeat);
+                    readtimeout=2,
+                    connect_timeout=1
+                )
+            catch e
+                # Silently ignore heartbeat failures (supervisor may not be running yet)
+            end
+
+            sleep(1)  # Send heartbeat every second
+        end
+    end
+end
+
 function start!(;
     port::Union{Int,Nothing} = nothing,
     verbose::Bool = true,
@@ -871,6 +942,12 @@ function start!(;
                 println()
             end
         end
+    end
+
+    # Start heartbeat task if running as an agent
+    agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
+    if !isempty(agent_name)
+        start_agent_heartbeat(agent_name, agents_config, verbose)
     end
 
     ping_tool = @mcp_tool(
