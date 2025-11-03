@@ -82,7 +82,7 @@ function load_security_config(
                         error("Agent '$agent_name' missing required 'port' field in agents.json")
                     end
                     port = agent_config["port"]
-                    created_at = time()
+                    created_at = Int64(round(time()))
 
                     @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port path=agents_config_path
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
@@ -116,7 +116,7 @@ function load_security_config(
                         error("Supervisor missing required 'port' field in agents.json")
                     end
                     port = supervisor_config["port"]
-                    created_at = time()
+                    created_at = Int64(round(time()))
 
                     @info "Loaded security config for supervisor from agents.json" mode=mode port=port path=agents_config_path
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
