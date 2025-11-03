@@ -719,8 +719,8 @@ The configuration supports:
 
 If the config file doesn't exist, returns `nothing` to indicate all tools should be enabled.
 """
-function load_tools_config(config_path::String = ".mcprepl/tools.json")
-    full_path = joinpath(pwd(), config_path)
+function load_tools_config(config_path::String = ".mcprepl/tools.json", workspace_dir::String = pwd())
+    full_path = joinpath(workspace_dir, config_path)
 
     # If config doesn't exist, enable all tools (backward compatibility)
     if !isfile(full_path)
@@ -890,20 +890,21 @@ function start!(;
     actual_port = if port !== nothing
         port
     elseif supervisor
-        # In supervisor mode, read port from agents config
-        if isfile(agents_config)
+        # In supervisor mode, read port from agents config (use absolute path)
+        agents_config_path = joinpath(workspace_dir, agents_config)
+        if isfile(agents_config_path)
             try
-                config = JSON.parsefile(agents_config)
+                config = JSON.parsefile(agents_config_path)
                 supervisor_config = get(config, "supervisor", Dict())
                 if !haskey(supervisor_config, "port")
-                    error("Supervisor mode requires 'port' field in $agents_config under 'supervisor' section")
+                    error("Supervisor mode requires 'port' field in $agents_config_path under 'supervisor' section")
                 end
                 supervisor_config["port"]
             catch e
-                error("Failed to read supervisor port from $agents_config: $e")
+                error("Failed to read supervisor port from $agents_config_path: $e")
             end
         else
-            error("Supervisor mode requires $agents_config file with supervisor.port configuration")
+            error("Supervisor mode requires $agents_config_path file with supervisor.port configuration")
         end
     else
         security_config.port
@@ -946,8 +947,9 @@ function start!(;
             printstyled("Enabled\n", color = :green, bold = true)
         end
 
-        # Load agents configuration
-        registry = Supervisor.load_agents_config(agents_config)
+        # Load agents configuration (use absolute path)
+        agents_config_path = joinpath(workspace_dir, agents_config)
+        registry = Supervisor.load_agents_config(agents_config_path)
 
         if registry === nothing
             @warn "Failed to load agents configuration from $agents_config. Supervisor mode disabled."
@@ -2541,8 +2543,8 @@ Terminates the active debug session and returns to normal execution.
     # Create LSP tools
     lsp_tools = create_lsp_tools()
 
-    # Load tools configuration
-    enabled_tools = load_tools_config()
+    # Load tools configuration from workspace directory
+    enabled_tools = load_tools_config(".mcprepl/tools.json", workspace_dir)
 
     # Collect all tools
     all_tools = [
