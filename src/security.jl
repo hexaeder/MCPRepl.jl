@@ -84,7 +84,7 @@ function load_security_config(
                     port = agent_config["port"]
                     created_at = time()
 
-                    @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port
+                    @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port path=agents_config_path
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
                 else
                     @warn "Agent not found in agents.json" agent=agent_name path=agents_config_path available_agents=collect(keys(get(agents_config, "agents", Dict())))
@@ -115,7 +115,7 @@ function load_security_config(
                     port = supervisor_config["port"]
                     created_at = time()
 
-                    @info "Loaded security config for supervisor from agents.json" mode=mode port=port
+                    @info "Loaded security config for supervisor from agents.json" mode=mode port=port path=agents_config_path
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
                 else
                     error("Supervisor config not found in agents.json at $agents_config_path")

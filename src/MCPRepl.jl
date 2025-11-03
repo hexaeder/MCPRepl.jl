@@ -909,6 +909,7 @@ function start!(;
 
     # Determine port: priority is function arg > supervisor config > security config
     actual_port = if port !== nothing
+        @info "Using port from function argument" port=port
         port
     elseif supervisor
         # In supervisor mode, read port from agents config (use absolute path)
@@ -920,7 +921,9 @@ function start!(;
                 if !haskey(supervisor_config, "port")
                     error("Supervisor mode requires 'port' field in $agents_config_path under 'supervisor' section")
                 end
-                supervisor_config["port"]
+                sup_port = supervisor_config["port"]
+                @info "Using port from supervisor config in agents.json" port=sup_port path=agents_config_path
+                sup_port
             catch e
                 error("Failed to read supervisor port from $agents_config_path: $e")
             end
@@ -928,6 +931,7 @@ function start!(;
             error("Supervisor mode requires $agents_config_path file with supervisor.port configuration")
         end
     else
+        @info "Using port from security config" port=security_config.port agent_name=agent_name
         security_config.port
     end
 
