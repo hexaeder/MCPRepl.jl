@@ -716,6 +716,10 @@ if [ -n "\$AGENT_NAME" ]; then
   echo "  Directory: \$AGENT_DIR"
   echo ""
 
+  # Update agent packages BEFORE starting Julia to ensure latest code is loaded
+  echo "Updating agent packages..."
+  julia --project="\$AGENT_FULL_DIR" -e "using Pkg; Pkg.update()"
+
   # Pass agent name and project root via global variables set before loading startup script
   exec julia -i --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\\\"\$AGENT_NAME\\\"; global MCPREPL_PROJECT_ROOT=\\\"\$SCRIPT_DIR\\\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
