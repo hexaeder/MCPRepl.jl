@@ -26,7 +26,7 @@ export generate
 export create_security_config, create_startup_script, create_repl_script
 export create_vscode_config, create_vscode_settings, create_claude_config_template
 export create_gemini_config_template, create_gitignore, create_env_file
-export create_claude_env_settings
+export create_claude_env_settings, create_tools_config
 # Export the VS Code commands constant for testing
 export VSCODE_ALLOWED_COMMANDS
 
@@ -211,6 +211,7 @@ function generate(
 
     # Generate all configuration files
     create_security_config(project_path, security_mode, port)
+    create_tools_config(project_path)
 
     # Get API key for VS Code config (if not lax mode)
     api_key = nothing
@@ -254,6 +255,147 @@ end
 # ============================================================================
 # Internal Helper Functions
 # ============================================================================
+
+function create_tools_config(project_path::String)
+    println("🔧 Creating tools configuration...")
+
+    config_dir = joinpath(project_path, ".mcprepl")
+    mkpath(config_dir)
+
+    # Create tools-schema.json
+    schema = Dict(
+        "\$schema" => "http://json-schema.org/draft-07/schema#",
+        "title" => "MCPRepl Tools Configuration",
+        "description" => "Configuration for enabling/disabling MCP tool sets and individual tools",
+        "type" => "object",
+        "properties" => Dict(
+            "_comment" => Dict(
+                "type" => "string",
+                "description" => "Optional comment about the configuration"
+            ),
+            "_total_tokens" => Dict(
+                "type" => "string",
+                "description" => "Total token count information"
+            ),
+            "tool_sets" => Dict(
+                "type" => "object",
+                "description" => "Predefined sets of related tools that can be enabled or disabled together",
+                "patternProperties" => Dict(
+                    "^[a-z-]+\$" => Dict(
+                        "type" => "object",
+                        "properties" => Dict(
+                            "enabled" => Dict(
+                                "type" => "boolean",
+                                "description" => "Whether this tool set is enabled"
+                            ),
+                            "description" => Dict(
+                                "type" => "string",
+                                "description" => "Description of this tool set"
+                            ),
+                            "tokens" => Dict(
+                                "type" => "string",
+                                "description" => "Approximate token count for this tool set"
+                            ),
+                            "tools" => Dict(
+                                "type" => "array",
+                                "description" => "List of tool names in this set",
+                                "items" => Dict("type" => "string")
+                            )
+                        ),
+                        "required" => ["enabled", "description", "tools"]
+                    )
+                )
+            ),
+            "individual_overrides" => Dict(
+                "type" => "object",
+                "description" => "Override individual tools regardless of their tool_set setting",
+                "patternProperties" => Dict(
+                    "^[a-z_]+\$" => Dict("type" => "boolean")
+                )
+            )
+        ),
+        "required" => ["tool_sets"]
+    )
+
+    schema_path = joinpath(config_dir, "tools-schema.json")
+    write(schema_path, JSON.json(schema, 2))
+
+    # Create tools.json with default configuration
+    tools_config = Dict(
+        "\$schema" => "./tools-schema.json",
+        "_comment" => "Tool configuration for MCPRepl MCP server. Enable/disable tool sets or individual tools.",
+        "_total_tokens" => "~13,000 tokens (all tools enabled), ~5,500 tokens (default config)",
+        "tool_sets" => Dict(
+            "core" => Dict(
+                "enabled" => true,
+                "description" => "Essential tools for basic MCP server operation",
+                "tokens" => "~600",
+                "tools" => ["ping", "usage_instructions", "investigate_environment", "tool_help", "restart_repl"]
+            ),
+            "execution" => Dict(
+                "enabled" => true,
+                "description" => "REPL code execution",
+                "tokens" => "~500",
+                "tools" => ["ex"]
+            ),
+            "code-analysis" => Dict(
+                "enabled" => true,
+                "description" => "Basic code introspection (types, methods, names)",
+                "tokens" => "~200",
+                "tools" => ["type_info", "search_methods", "list_names"]
+            ),
+            "advanced-analysis" => Dict(
+                "enabled" => false,
+                "description" => "Advanced code inspection (macros, IR, profiling)",
+                "tokens" => "~300",
+                "tools" => ["macro_expand", "code_lowered", "code_typed", "profile_code"]
+            ),
+            "code-quality" => Dict(
+                "enabled" => true,
+                "description" => "Code formatting and linting",
+                "tokens" => "~100",
+                "tools" => ["format_code", "lint_package"]
+            ),
+            "lsp" => Dict(
+                "enabled" => false,
+                "description" => "Language Server Protocol integrations",
+                "tokens" => "~400",
+                "tools" => ["lsp_document_symbols", "lsp_workspace_symbols", "lsp_goto_definition", "lsp_find_references", "lsp_code_actions", "lsp_rename"]
+            ),
+            "debugging" => Dict(
+                "enabled" => false,
+                "description" => "Interactive debugging tools",
+                "tokens" => "~1,000",
+                "tools" => ["start_debug_session", "debug_step_over", "debug_step_into", "debug_step_out", "debug_continue", "debug_stop", "open_file_and_set_breakpoint", "add_watch_expression", "copy_debug_value"]
+            ),
+            "package-management" => Dict(
+                "enabled" => true,
+                "description" => "Julia package installation and removal",
+                "tokens" => "~100",
+                "tools" => ["pkg_add", "pkg_rm"]
+            ),
+            "vscode" => Dict(
+                "enabled" => false,
+                "description" => "VS Code editor integration",
+                "tokens" => "~200",
+                "tools" => ["execute_vscode_command", "list_vscode_commands"]
+            ),
+            "education" => Dict(
+                "enabled" => true,
+                "description" => "Learning and quiz tools",
+                "tokens" => "~1,000",
+                "tools" => ["usage_quiz"]
+            )
+        ),
+        "individual_overrides" => Dict()
+    )
+
+    tools_path = joinpath(config_dir, "tools.json")
+    write(tools_path, JSON.json(tools_config, 2))
+
+    println("   ✓ Created tools configuration with default settings")
+    println("   ℹ️  Edit .mcprepl/tools.json to customize available tools")
+end
 
 function create_security_config(project_path::String, mode::Symbol, port::Int)
     println("🔒 Creating security configuration...")
