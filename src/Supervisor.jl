@@ -282,9 +282,11 @@ function start_agent(agent::AgentState)::Bool
     @info "Starting agent" name=agent.name directory=agent.directory port=agent.port
 
     try
-        # Launch in detached mode so it survives even if supervisor dies
-        # Use --agent <name> to specify which agent to start
-        run(detach(`$repl_script --agent $(agent.name)`))
+        # Launch in background using @async and detach so it:
+        # 1. Doesn't block the supervisor REPL
+        # 2. Runs as a separate OS process
+        # 3. Survives even if supervisor dies
+        @async run(detach(`$repl_script --agent $(agent.name)`))
 
         agent.status = :starting
         agent.uptime_start = now()
