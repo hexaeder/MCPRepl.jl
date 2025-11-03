@@ -482,31 +482,34 @@ if !isempty(agent_name)
 
             # Check if supervisor is using dev version
             supervisor_manifest_path = joinpath(dirname(pwd()), "Manifest.toml")
-            supervisor_manifest = nothing
+            mcprepl_info = nothing
+
             if isfile(supervisor_manifest_path)
                 supervisor_manifest = TOML.parsefile(supervisor_manifest_path)
+
+                # Manifest format: deps is an array of [[deps.PackageName]] entries
+                if haskey(supervisor_manifest, "deps")
+                    for dep_entry in supervisor_manifest["deps"]
+                        if haskey(dep_entry, "name") && dep_entry["name"] == "MCPRepl"
+                            mcprepl_info = dep_entry
+                            break
+                        # Also check if the section itself is named (older format)
+                        elseif isa(dep_entry, Pair) && dep_entry.first == "MCPRepl"
+                            mcprepl_info = dep_entry.second
+                            break
+                        end
+                    end
+                end
             end
 
             # Sync MCPRepl (required)
-            if supervisor_manifest !== nothing &&
-               haskey(supervisor_manifest, "deps") &&
-               haskey(supervisor_manifest["deps"], "MCPRepl")
-
-                mcprepl_info = supervisor_manifest["deps"]["MCPRepl"]
-
-                # Check if it's a dev dependency (has path)
-                if haskey(mcprepl_info, "path")
-                    # Dev version - use the same path
-                    dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
-                    @info "  Using MCPRepl dev version from: \$dev_path"
-                    Pkg.develop(path=dev_path)
-                else
-                    # Registered version - add it
-                    @info "  Adding MCPRepl package"
-                    Pkg.add("MCPRepl")
-                end
+            if mcprepl_info !== nothing && haskey(mcprepl_info, "path")
+                # Dev version - use the same path
+                dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
+                @info "  Using MCPRepl dev version from: \$dev_path"
+                Pkg.develop(path=dev_path)
             else
-                # Fallback: just add MCPRepl
+                # Registered version or no manifest info - just add it
                 @info "  Adding MCPRepl package"
                 Pkg.add("MCPRepl")
             end
