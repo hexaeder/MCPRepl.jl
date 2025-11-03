@@ -588,6 +588,10 @@ try
                 supervisor_enabled = isdefined(Main, :MCPREPL_SUPERVISOR) ? Main.MCPREPL_SUPERVISOR : false
                 agent_name_arg = isdefined(Main, :MCPREPL_AGENT_NAME) ? String(Main.MCPREPL_AGENT_NAME) : ""
 
+                # Get project root directory (for agents to find agents.json)
+                # When running as an agent, pwd() is the agent dir, but we need project root
+                project_root = isdefined(Main, :MCPREPL_PROJECT_ROOT) ? String(Main.MCPREPL_PROJECT_ROOT) : pwd()
+
                 # Start MCPRepl with parsed arguments
                 # Port is determined by .mcprepl/security.json or agents.json
                 # Heartbeats are automatically started if agent_name is provided
@@ -596,7 +600,7 @@ try
                 has_agent_name = any(m -> :agent_name in Base.kwarg_decl(m), start_methods)
 
                 if has_agent_name
-                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled, agent_name=agent_name_arg)
+                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled, agent_name=agent_name_arg, workspace_dir=project_root)
                 else
                     MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
                 end
@@ -711,8 +715,8 @@ if [ -n "\$AGENT_NAME" ]; then
   echo "  Directory: \$AGENT_DIR"
   echo ""
 
-  # Pass agent name via global variable set before loading startup script
-  exec julia -i --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\\\"\$AGENT_NAME\\\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+  # Pass agent name and project root via global variables set before loading startup script
+  exec julia -i --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\\\"\$AGENT_NAME\\\"; global MCPREPL_PROJECT_ROOT=\\\"\$SCRIPT_DIR\\\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
 
 # Handle supervisor mode

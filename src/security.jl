@@ -80,11 +80,16 @@ function load_security_config(
                     port = get(agent_config, "port", 3000)
                     created_at = time()
 
+                    @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
+                else
+                    @warn "Agent not found in agents.json" agent=agent_name path=agents_config_path available_agents=collect(keys(get(agents_config, "agents", Dict())))
                 end
             catch e
-                @warn "Failed to load agent config from agents.json" exception = e
+                @warn "Failed to load agent config from agents.json" agent=agent_name path=agents_config_path exception=e
             end
+        else
+            @warn "Agents config file not found for agent" agent=agent_name path=agents_config_path
         end
     end
 
@@ -102,11 +107,16 @@ function load_security_config(
                     port = get(supervisor_config, "port", 3000)
                     created_at = time()
 
+                    @info "Loaded security config for supervisor from agents.json" mode=mode port=port
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
+                else
+                    @warn "Supervisor config not found in agents.json" path=agents_config_path
                 end
             catch e
-                @warn "Failed to load supervisor config from agents.json" exception = e
+                @warn "Failed to load supervisor config from agents.json" path=agents_config_path exception=e
             end
+        else
+            @warn "Agents config file not found for supervisor" path=agents_config_path
         end
     end
 

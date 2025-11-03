@@ -860,12 +860,14 @@ function start!(;
     supervisor::Bool = false,
     agents_config::String = ".mcprepl/agents.json",
     agent_name::String = "",
+    workspace_dir::String = pwd(),
 )
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     # Load or prompt for security configuration
     # Pass agent_name and supervisor flag so it can load from agents.json if needed
-    security_config = load_security_config(pwd(), agent_name, supervisor)
+    # Use workspace_dir (project root) not pwd() (which may be agent dir)
+    security_config = load_security_config(workspace_dir, agent_name, supervisor)
 
     if security_config === nothing
         printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color = :red, bold = true)
