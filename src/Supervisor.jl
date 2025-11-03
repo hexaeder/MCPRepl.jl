@@ -254,13 +254,14 @@ end
 """
     start_agent(agent::AgentState)
 
-Start an agent by executing its repl script in detached mode.
+Start an agent by executing the project root's repl script with --agent flag.
 """
 function start_agent(agent::AgentState)::Bool
-    repl_script = joinpath(agent.directory, "repl")
+    # Use project root's repl script with --agent <name>
+    repl_script = "./repl"
 
     if !isfile(repl_script)
-        @error "Agent repl script not found" name=agent.name path=repl_script
+        @error "Project repl script not found" name=agent.name path=repl_script
         return false
     end
 
@@ -275,7 +276,8 @@ function start_agent(agent::AgentState)::Bool
 
     try
         # Launch in detached mode so it survives even if supervisor dies
-        run(detach(`$repl_script`))
+        # Use --agent <name> to specify which agent to start
+        run(detach(`$repl_script --agent $(agent.name)`))
 
         agent.status = :starting
         agent.uptime_start = now()
