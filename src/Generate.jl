@@ -679,7 +679,7 @@ if [ -n "\$AGENT_NAME" ]; then
   echo ""
 
   # Pass agent name via global variable set before loading startup script
-  exec julia --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\"\$AGENT_NAME\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+  exec julia --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\\\"\$AGENT_NAME\\\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
 
 # Handle supervisor mode
