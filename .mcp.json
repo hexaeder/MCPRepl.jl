@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "julia-repl": {
+      "type": "http",
+      "url": "http://localhost:3000"
+    }
+  }
+}
