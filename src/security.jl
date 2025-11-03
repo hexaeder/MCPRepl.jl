@@ -57,6 +57,33 @@ Returns nothing if no configuration exists.
 function load_security_config(workspace_dir::String = pwd())
     config_path = get_security_config_path(workspace_dir)
 
+    # Check if running as an agent
+    agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
+
+    # If agent mode and no local security.json, try reading from agents.json
+    if !isempty(agent_name) && !isfile(config_path)
+        agents_config_path = joinpath(dirname(workspace_dir), ".mcprepl", "agents.json")
+        if isfile(agents_config_path)
+            try
+                using TOML
+                agents_config = TOML.parsefile(agents_config_path)
+                if haskey(agents_config, "agents") && haskey(agents_config["agents"], agent_name)
+                    agent_config = agents_config["agents"][agent_name]
+
+                    mode = Symbol(get(agent_config, "mode", "lax"))
+                    api_keys = get(agent_config, "api_keys", String[])
+                    allowed_ips = get(agent_config, "allowed_ips", String[])
+                    port = get(agent_config, "port", 3000)
+                    created_at = time()
+
+                    return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
+                end
+            catch e
+                @warn "Failed to load agent config from agents.json" exception = e
+            end
+        end
+    end
+
     if !isfile(config_path)
         return nothing
     end
