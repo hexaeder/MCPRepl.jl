@@ -23,26 +23,35 @@ Create a `.mcprepl/agents.json` file (copy from `agents.json.example`):
 ```json
 {
   "supervisor": {
+    "mode": "lax",
+    "host": "127.0.0.1",
     "port": 3000,
-    "api_key": "",
+    "api_keys": [],
+    "allowed_ips": [],
     "heartbeat_interval_seconds": 1,
     "heartbeat_timeout_count": 5,
     "max_restarts_per_hour": 10
   },
   "agents": {
     "test-fixer": {
+      "mode": "lax",
+      "host": "127.0.0.1",
       "port": 3001,
-      "api_key": "",
+      "api_keys": [],
+      "allowed_ips": [],
       "directory": "agents/test-fixer",
-      "description": "Analyzes and fixes test failures",
+      "description": "Analyzes test failures and iteratively fixes issues",
       "auto_start": true,
       "restart_policy": "always"
     },
     "performance-optimizer": {
+      "mode": "relaxed",
+      "host": "127.0.0.1",
       "port": 3002,
-      "api_key": "",
+      "api_keys": ["change-me-secret-key"],
+      "allowed_ips": [],
       "directory": "agents/performance-optimizer",
-      "description": "Profiles code and optimizes performance",
+      "description": "Profiles code and suggests performance improvements",
       "auto_start": true,
       "restart_policy": "on_failure"
     }
@@ -50,7 +59,7 @@ Create a `.mcprepl/agents.json` file (copy from `agents.json.example`):
 }
 ```
 
-**Note**: The configuration now includes ports and API keys for both supervisor and agents. Leave `api_key` empty for lax security mode (localhost only).
+**Note**: Each supervisor and agent has its own security configuration with mode (lax/relaxed/strict), host binding, API keys, and IP allowlists. See the full `agents.json.example` for more examples including strict mode.
 
 ### 2. Create Agent Directories
 
@@ -64,7 +73,8 @@ mkdir -p agents/performance-optimizer/src
 Each agent directory should contain:
 - `Project.toml` - Julia project file
 - `src/` - Agent source code
-- `.julia-startup.jl` - Startup script (created automatically)
+
+**Note**: Agents use the shared `.julia-startup.jl` from the project root, not individual startup scripts.
 
 ### 3. Launch Agents
 
@@ -88,10 +98,10 @@ The unified `repl` script in the project root handles all modes:
 
 The `repl` script automatically:
 - Reads `.mcprepl/agents.json` configuration
-- Sets environment variables (`JULIA_MCP_PORT`, `JULIA_MCP_API_KEY`, `JULIA_MCP_AGENT_NAME`)
-- Changes to agent directory
+- Sets environment variables (`JULIA_MCP_PORT`, `JULIA_MCP_AGENT_NAME`)
+- Changes to agent directory (in agent mode)
 - Starts Julia with agent-specific Project.toml
-- Begins sending heartbeats to supervisor (in agent mode)
+- Loads shared `.julia-startup.jl` which detects mode and starts heartbeats (in agent mode)
 
 ### 4. How It Works
 
@@ -100,9 +110,10 @@ When you start an agent with `./repl --agent test-fixer`:
 1. Script reads `.mcprepl/agents.json` and extracts agent configuration
 2. Sets `JULIA_MCP_PORT=3001`, `JULIA_MCP_AGENT_NAME=test-fixer`
 3. Changes to `agents/test-fixer/`
-4. Starts Julia with `.julia-startup.jl`
-5. Startup script detects agent mode and starts heartbeat loop
-6. Agent sends heartbeats to supervisor every second
+4. Starts Julia with agent's Project.toml, loads project root's `.julia-startup.jl`
+5. Startup script detects agent mode (via `JULIA_MCP_AGENT_NAME` env var)
+6. Starts MCP server with agent's security config from agents.json
+7. Begins heartbeat loop sending to supervisor every second
 
 The supervisor monitors heartbeats and automatically restarts agents that become unresponsive
 
@@ -113,6 +124,11 @@ The supervisor monitors heartbeats and automatically restarts agents that become
 ```json
 {
   "supervisor": {
+    "mode": "lax",                      // Security mode: "lax", "relaxed", or "strict"
+    "host": "127.0.0.1",                // Bind address
+    "port": 3000,                       // Supervisor MCP server port
+    "api_keys": [],                     // Required API keys (empty for lax mode)
+    "allowed_ips": [],                  // IP allowlist (empty for lax/relaxed)
     "heartbeat_interval_seconds": 1,    // How often to check for heartbeats
     "heartbeat_timeout_count": 5,       // Missed heartbeats before declaring dead
     "max_restarts_per_hour": 10         // Rate limit for restarts
@@ -125,14 +141,26 @@ The supervisor monitors heartbeats and automatically restarts agents that become
 ```json
 {
   "agent-name": {
+    "mode": "lax",                      // Security mode for this agent
+    "host": "127.0.0.1",                // Bind address for agent's MCP server
     "port": 3001,                       // Port for agent's MCP server
+    "api_keys": [],                     // Required API keys for this agent
+    "allowed_ips": [],                  // IP allowlist for this agent
     "directory": "agents/agent-name",   // Agent's working directory
     "description": "What this agent does",
     "auto_start": true,                 // Start automatically with supervisor
-    "restart_policy": "always"          // "always", "on_failure", or "never"
+    "restart_policy": "always",         // "always", "on_failure", or "never"
+    "supervisor_host": "localhost",     // Optional: supervisor host (default: localhost)
+    "supervisor_port": 3000             // Optional: supervisor port (default: 3000)
   }
 }
 ```
+
+### Security Modes
+
+- **`lax`**: No authentication, localhost only (127.0.0.1)
+- **`relaxed`**: API key required, localhost only
+- **`strict`**: API key required, IP allowlist enforced, can bind to any interface
 
 ### Restart Policies
 
@@ -152,55 +180,21 @@ Agents must send periodic heartbeats to the supervisor using JSON-RPC:
   "params": {
     "agent_name": "test-fixer",
     "pid": 12345,
-    "port": 3001,
     "status": "healthy",
     "timestamp": "2025-11-02T18:48:00Z"
   }
 }
 ```
 
-Example agent startup code:
+**Note**: The heartbeat protocol is automatically handled by the shared `.julia-startup.jl` when running in agent mode. You don't need to manually implement heartbeats in your agent code.
 
-```julia
-using MCPRepl
-using HTTP
-using JSON
+The startup script automatically:
+1. Detects agent mode via `JULIA_MCP_AGENT_NAME` environment variable
+2. Reads supervisor configuration from `.mcprepl/agents.json`
+3. Starts a background task that sends heartbeats every second
+4. Silently ignores failures (in case supervisor isn't running yet)
 
-# Start this agent's MCP server
-MCPRepl.start!(port=3001)
-
-# Send heartbeats to supervisor
-@async begin
-    supervisor_url = "http://localhost:3000/"
-
-    while true
-        try
-            heartbeat = Dict(
-                "jsonrpc" => "2.0",
-                "method" => "supervisor/heartbeat",
-                "id" => 1,
-                "params" => Dict(
-                    "agent_name" => "test-fixer",
-                    "pid" => getpid(),
-                    "port" => 3001,
-                    "status" => "healthy",
-                    "timestamp" => string(now())
-                )
-            )
-
-            HTTP.post(
-                supervisor_url,
-                ["Content-Type" => "application/json"],
-                JSON.json(heartbeat)
-            )
-        catch e
-            @warn "Failed to send heartbeat" exception=e
-        end
-
-        sleep(1)  # Match heartbeat_interval_seconds
-    end
-end
-```
+If you need to customize the heartbeat behavior, you can inspect the heartbeat implementation in `.julia-startup.jl`.
 
 ## MCP Tools
 
@@ -341,39 +335,42 @@ Edit `.mcprepl/tools.json` to enable supervisor tools:
 my-project/
 ├── .mcprepl/
 │   ├── agents.json             # Supervisor & agent configuration
-│   └── security.json           # Single-instance security config
+│   └── security.json           # Single-instance security config (optional)
+├── .julia-startup.jl           # Shared startup script (auto-detects mode)
+├── repl                        # Unified launcher (--supervisor, --agent <name>)
 ├── agents/
 │   ├── test-fixer/
-│   │   ├── repl                # Launcher script
-│   │   ├── .julia-startup.jl   # Startup with heartbeats
 │   │   ├── Project.toml
 │   │   └── src/
 │   │       └── TestFixer.jl
 │   ├── performance-optimizer/
-│   │   ├── repl
-│   │   ├── .julia-startup.jl
 │   │   ├── Project.toml
 │   │   └── src/
 │   │       └── PerformanceOptimizer.jl
 │   └── documentation-writer/
-│       ├── repl
-│       ├── .julia-startup.jl
 │       ├── Project.toml
 │       └── src/
 │           └── DocumentationWriter.jl
-├── Project.toml
+├── Project.toml                # Supervisor's project
 └── src/
     └── MyProject.jl
 ```
+
+**Key Points:**
+- Single shared `.julia-startup.jl` in project root (not per-agent)
+- Single `repl` script in project root (handles all modes)
+- Agent directories only need `Project.toml` and `src/`
 
 ## Troubleshooting
 
 ### Agent won't start
 
 Check that:
-1. Agent's `repl` script exists and is executable
-2. Agent's directory contains `.julia-startup.jl`
-3. Port is not already in use: `lsof -i :<port>`
+1. Project root's `repl` script exists and is executable: `chmod +x repl`
+2. `.mcprepl/agents.json` exists and contains agent configuration
+3. Agent's directory exists and contains `Project.toml`
+4. Port is not already in use: `lsof -i :<port>`
+5. `jq` is installed (required for JSON parsing): `brew install jq` or `apt-get install jq`
 
 ### Agent keeps restarting
 
@@ -408,9 +405,11 @@ Check:
 
 ## Security Considerations
 
-- Supervisor runs with same privileges as main Julia process
-- Agents inherit security configuration from supervisor
-- Use separate API keys per agent for strict security
+- Supervisor and each agent have independent security configurations
+- Each agent can use different security modes (lax/relaxed/strict)
+- Use separate API keys per agent for isolation
+- Bind to `127.0.0.1` for local-only access, `0.0.0.0` for network access
+- Use IP allowlists in strict mode for network-exposed agents
 - Monitor agent logs for suspicious activity
 - Limit restart rate to prevent DOS via restart loops
 
