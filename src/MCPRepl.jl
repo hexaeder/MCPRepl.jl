@@ -804,15 +804,23 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
     Threads.@spawn begin
         # Read supervisor configuration
         config_path = agents_config  # Already includes .mcprepl/ prefix
-        supervisor_port = 3000  # Default
+        supervisor_port = nothing
 
         if isfile(config_path)
             try
                 config = JSON.parsefile(config_path)
-                supervisor_port = get(get(config, "supervisor", Dict()), "port", 3000)
+                supervisor_port = get(get(config, "supervisor", Dict()), "port", nothing)
+                if supervisor_port === nothing
+                    @warn "Supervisor port not found in $config_path, heartbeat disabled"
+                    return
+                end
             catch e
                 @warn "Could not read supervisor config from $config_path" exception=e
+                return
             end
+        else
+            @warn "Agents config file not found at $config_path, heartbeat disabled"
+            return
         end
 
         supervisor_url = "http://localhost:$supervisor_port/"
@@ -882,17 +890,21 @@ function start!(;
     actual_port = if port !== nothing
         port
     elseif supervisor
-        # In supervisor mode, try to read port from agents config
-        supervisor_port = 3000  # Default fallback
+        # In supervisor mode, read port from agents config
         if isfile(agents_config)
             try
                 config = JSON.parsefile(agents_config)
-                supervisor_port = get(get(config, "supervisor", Dict()), "port", 3000)
+                supervisor_config = get(config, "supervisor", Dict())
+                if !haskey(supervisor_config, "port")
+                    error("Supervisor mode requires 'port' field in $agents_config under 'supervisor' section")
+                end
+                supervisor_config["port"]
             catch e
-                @warn "Could not read supervisor port from $agents_config, using default 3000" exception=e
+                error("Failed to read supervisor port from $agents_config: $e")
             end
+        else
+            error("Supervisor mode requires $agents_config file with supervisor.port configuration")
         end
-        supervisor_port
     else
         security_config.port
     end
@@ -1163,7 +1175,7 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
         (args, stream_channel = nothing) -> begin
             try
                 # Get the current server port (before restart)
-                server_port = SERVER[] !== nothing ? SERVER[].port : 3000
+                server_port = SERVER[] !== nothing ? SERVER[].port : nothing
 
                 # Check if running in VS Code by looking for JULIA_VSCODE_INTERNAL variable
                 in_vscode =
@@ -1171,15 +1183,17 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
                     haskey(ENV, "VSCODE_PID") ||
                     isdefined(Main, :VSCodeServer)
 
+                port_msg = server_port !== nothing ? " on port $server_port" : ""
+
                 if in_vscode
                     # Execute the restart command using the vscode URI trigger
                     restart_uri = build_vscode_uri(
                         "language-julia.restartREPL";
-                        mcp_port = server_port,
+                        mcp_port = server_port !== nothing ? server_port : 0,
                     )
                     trigger_vscode_uri(restart_uri)
 
-                    return """✓ Julia REPL restart initiated on port $server_port.
+                    return """✓ Julia REPL restart initiated$port_msg.
 
 ⏳ The MCP server will be temporarily offline during restart.
 
@@ -1197,7 +1211,7 @@ The server will automatically restart and be ready when the Julia REPL finishes 
                         exit(0)
                     end
 
-                    return """✓ Julia REPL restart initiated on port $server_port.
+                    return """✓ Julia REPL restart initiated$port_msg.
 
 ⏳ The MCP server will be temporarily offline during restart.
 

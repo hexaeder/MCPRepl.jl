@@ -77,7 +77,11 @@ function load_security_config(
                     mode = Symbol(get(agent_config, "mode", "lax"))
                     api_keys = get(agent_config, "api_keys", String[])
                     allowed_ips = get(agent_config, "allowed_ips", String[])
-                    port = get(agent_config, "port", 3000)
+                    # Port is required in agent config
+                    if !haskey(agent_config, "port")
+                        error("Agent '$agent_name' missing required 'port' field in agents.json")
+                    end
+                    port = agent_config["port"]
                     created_at = time()
 
                     @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port
@@ -104,7 +108,11 @@ function load_security_config(
                     mode = Symbol(get(supervisor_config, "mode", "lax"))
                     api_keys = get(supervisor_config, "api_keys", String[])
                     allowed_ips = get(supervisor_config, "allowed_ips", String[])
-                    port = get(supervisor_config, "port", 3000)
+                    # Port is required in supervisor config
+                    if !haskey(supervisor_config, "port")
+                        error("Supervisor missing required 'port' field in agents.json")
+                    end
+                    port = supervisor_config["port"]
                     created_at = time()
 
                     @info "Loaded security config for supervisor from agents.json" mode=mode port=port
