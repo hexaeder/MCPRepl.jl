@@ -967,30 +967,32 @@ function start!(;
             # Start supervisor monitor loop
             Supervisor.start_supervisor(registry)
 
+            agent_count = length(registry.agents)
             if verbose
-                agent_count = length(registry.agents)
                 printstyled("   • Managing $agent_count agent(s)\n", color = :green)
+            end
 
-                # Start auto-start agents with staggered delays to avoid package lock conflicts
-                auto_start_count = 0
-                for (i, (name, agent)) in enumerate(Supervisor.get_all_agents(registry))
-                    @info "Checking agent for auto-start" name=name auto_start=agent.auto_start status=agent.status
-                    if agent.auto_start
-                        @info "Starting agent" name=name
-                        if Supervisor.start_agent(agent)
-                            auto_start_count += 1
-                            @info "Agent started successfully" name=name
-                            # Wait between agent starts to avoid simultaneous package operations
-                            # This prevents git lock conflicts during Pkg.instantiate()
-                            if i < length(registry.agents)
-                                sleep(5)  # 5 second delay to allow package operations to complete
-                            end
-                        else
-                            @warn "Failed to start agent" name=name
+            # Start auto-start agents with staggered delays to avoid package lock conflicts
+            auto_start_count = 0
+            for (i, (name, agent)) in enumerate(Supervisor.get_all_agents(registry))
+                @info "Checking agent for auto-start" name=name auto_start=agent.auto_start status=agent.status
+                if agent.auto_start
+                    @info "Starting agent" name=name
+                    if Supervisor.start_agent(agent)
+                        auto_start_count += 1
+                        @info "Agent started successfully" name=name
+                        # Wait between agent starts to avoid simultaneous package operations
+                        # This prevents git lock conflicts during Pkg.instantiate()
+                        if i < length(registry.agents)
+                            sleep(5)  # 5 second delay to allow package operations to complete
                         end
+                    else
+                        @warn "Failed to start agent" name=name
                     end
                 end
+            end
 
+            if verbose
                 if auto_start_count > 0
                     printstyled(
                         "   • Auto-started $auto_start_count agent(s)\n",
