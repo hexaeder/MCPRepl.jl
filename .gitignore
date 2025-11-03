@@ -17,4 +17,8 @@ Manifest.toml
 
 # MCPRepl security configuration (contains API keys)
 .mcprepl/security.json
+
+# Agent configuration (project-specific)
+agents.json
+
 **/.DS_Store

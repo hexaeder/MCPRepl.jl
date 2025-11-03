@@ -61,6 +61,7 @@ end
 
 include("security.jl")
 include("security_wizard.jl")
+include("Supervisor.jl")
 include("MCPServer.jl")
 include("setup.jl")
 include("vscode.jl")
@@ -84,6 +85,9 @@ const VSCODE_NONCES = Dict{String,Tuple{String,Float64}}()
 
 # Lock for thread-safe access to nonces dictionary
 const VSCODE_NONCE_LOCK = ReentrantLock()
+
+# Global reference to supervisor registry (if supervisor mode is enabled)
+const SUPERVISOR_REGISTRY = Ref{Union{Supervisor.AgentRegistry,Nothing}}(nothing)
 
 """
     store_vscode_response(request_id::String, result, error::Union{Nothing,String})
@@ -772,6 +776,8 @@ function start!(;
     port::Union{Int,Nothing} = nothing,
     verbose::Bool = true,
     security_mode::Union{Symbol,Nothing} = nothing,
+    supervisor::Bool = false,
+    agents_config::String = "agents.json",
 )
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
@@ -824,6 +830,47 @@ function start!(;
         printstyled("📡 Server Port: ", color = :cyan, bold = true)
         printstyled("$actual_port\n", color = :green, bold = true)
         println()
+    end
+
+    # Initialize supervisor if requested
+    if supervisor
+        if verbose
+            printstyled("👁️  Supervisor Mode: ", color = :cyan, bold = true)
+            printstyled("Enabled\n", color = :green, bold = true)
+        end
+
+        # Load agents configuration
+        registry = Supervisor.load_agents_config(agents_config)
+
+        if registry === nothing
+            @warn "Failed to load agents configuration from $agents_config. Supervisor mode disabled."
+        else
+            # Store registry globally
+            SUPERVISOR_REGISTRY[] = registry
+
+            # Start supervisor monitor loop
+            Supervisor.start_supervisor(registry)
+
+            if verbose
+                agent_count = length(registry.agents)
+                printstyled("   • Managing $agent_count agent(s)\n", color = :green)
+
+                # Start auto-start agents
+                auto_start_count = 0
+                for (name, agent) in Supervisor.get_all_agents(registry)
+                    if agent.auto_start
+                        if Supervisor.start_agent(agent)
+                            auto_start_count += 1
+                        end
+                    end
+                end
+
+                if auto_start_count > 0
+                    printstyled("   • Auto-started $auto_start_count agent(s)\n", color = :green)
+                end
+                println()
+            end
+        end
     end
 
     ping_tool = @mcp_tool(
@@ -2155,6 +2202,181 @@ Terminates the active debug session and returns to normal execution.
         end
     )
 
+    # Create supervisor tools
+    supervisor_status_tool = @mcp_tool(
+        :supervisor_status,
+        "Get status of all managed agents in supervisor mode.",
+        Dict("type" => "object", "properties" => Dict()),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agents = Supervisor.get_all_agents(registry)
+
+            if isempty(agents)
+                return "No agents registered."
+            end
+
+            output = "Agent Status Report\n"
+            output *= "=" ^ 60 * "\n\n"
+
+            for (name, agent) in agents
+                output *= "Agent: $name\n"
+                output *= "  Status: $(agent.status)\n"
+                output *= "  Port: $(agent.port)\n"
+                output *= "  PID: $(agent.pid === nothing ? "unknown" : agent.pid)\n"
+                output *= "  Directory: $(agent.directory)\n"
+                output *= "  Description: $(agent.description)\n"
+                output *= "  Uptime: $(Supervisor.uptime_string(agent))\n"
+                output *= "  Last Heartbeat: $(Supervisor.heartbeat_age_string(agent))\n"
+                output *= "  Missed Heartbeats: $(agent.missed_heartbeats)\n"
+                output *= "  Restarts: $(agent.restarts)\n"
+                output *= "  Restart Policy: $(agent.restart_policy)\n"
+                output *= "\n"
+            end
+
+            return output
+        end
+    )
+
+    supervisor_start_agent_tool = @mcp_tool(
+        :supervisor_start_agent,
+        "Start a managed agent process.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "agent_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the agent to start"
+                )
+            ),
+            "required" => ["agent_name"]
+        ),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            agent_name = get(args, "agent_name", "")
+            if isempty(agent_name)
+                return "Error: agent_name is required"
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agent = Supervisor.get_agent(registry, agent_name)
+
+            if agent === nothing
+                return "Error: Agent '$agent_name' not found in registry"
+            end
+
+            if agent.status != :stopped
+                return "Agent '$agent_name' is already running (status: $(agent.status))"
+            end
+
+            success = Supervisor.start_agent(agent)
+
+            if success
+                return "Agent '$agent_name' started successfully on port $(agent.port)"
+            else
+                return "Failed to start agent '$agent_name'"
+            end
+        end
+    )
+
+    supervisor_stop_agent_tool = @mcp_tool(
+        :supervisor_stop_agent,
+        "Stop a managed agent process.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "agent_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the agent to stop"
+                ),
+                "force" => Dict(
+                    "type" => "boolean",
+                    "description" => "Force kill the agent (default: false)",
+                    "default" => false
+                )
+            ),
+            "required" => ["agent_name"]
+        ),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            agent_name = get(args, "agent_name", "")
+            force = get(args, "force", false)
+
+            if isempty(agent_name)
+                return "Error: agent_name is required"
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agent = Supervisor.get_agent(registry, agent_name)
+
+            if agent === nothing
+                return "Error: Agent '$agent_name' not found in registry"
+            end
+
+            if agent.status == :stopped
+                return "Agent '$agent_name' is already stopped"
+            end
+
+            success = Supervisor.stop_agent(agent; force=force)
+
+            if success
+                return "Agent '$agent_name' stopped successfully"
+            else
+                return "Failed to stop agent '$agent_name'"
+            end
+        end
+    )
+
+    supervisor_restart_agent_tool = @mcp_tool(
+        :supervisor_restart_agent,
+        "Restart a managed agent process.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "agent_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the agent to restart"
+                )
+            ),
+            "required" => ["agent_name"]
+        ),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            agent_name = get(args, "agent_name", "")
+
+            if isempty(agent_name)
+                return "Error: agent_name is required"
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agent = Supervisor.get_agent(registry, agent_name)
+
+            if agent === nothing
+                return "Error: Agent '$agent_name' not found in registry"
+            end
+
+            success = Supervisor.restart_agent(agent)
+
+            if success
+                return "Agent '$agent_name' restarted successfully. It should be online in a few seconds."
+            else
+                return "Failed to restart agent '$agent_name'"
+            end
+        end
+    )
+
     # Create LSP tools
     lsp_tools = create_lsp_tools()
 
@@ -2192,6 +2414,10 @@ Terminates the active debug session and returns to normal execution.
         debug_stop_tool,
         pkg_add_tool,
         pkg_rm_tool,
+        supervisor_status_tool,
+        supervisor_start_agent_tool,
+        supervisor_stop_agent_tool,
+        supervisor_restart_agent_tool,
         lsp_tools...,  # Add all LSP tools
     ]
 
@@ -2254,6 +2480,13 @@ function stop!()
         end
     else
         println("No server running to stop.")
+    end
+
+    # Stop supervisor if running
+    if SUPERVISOR_REGISTRY[] !== nothing
+        println("Stopping supervisor...")
+        Supervisor.stop_supervisor(SUPERVISOR_REGISTRY[]; stop_agents=true)
+        SUPERVISOR_REGISTRY[] = nothing
     end
 end
 

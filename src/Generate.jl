@@ -385,6 +385,12 @@ function create_tools_config(project_path::String)
                 "description" => "Learning and quiz tools",
                 "tokens" => "~1,000",
                 "tools" => ["usage_quiz"]
+            ),
+            "supervisor" => Dict(
+                "enabled" => false,
+                "description" => "Multi-agent process supervision and management",
+                "tokens" => "~200",
+                "tools" => ["supervisor_status", "supervisor_start_agent", "supervisor_stop_agent", "supervisor_restart_agent"]
             )
         ),
         "individual_overrides" => Dict()
