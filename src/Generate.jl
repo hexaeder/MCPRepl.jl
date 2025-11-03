@@ -487,17 +487,12 @@ if !isempty(agent_name)
             if isfile(supervisor_manifest_path)
                 supervisor_manifest = TOML.parsefile(supervisor_manifest_path)
 
-                # Manifest format: deps is an array of [[deps.PackageName]] entries
-                if haskey(supervisor_manifest, "deps")
-                    for dep_entry in supervisor_manifest["deps"]
-                        if haskey(dep_entry, "name") && dep_entry["name"] == "MCPRepl"
-                            mcprepl_info = dep_entry
-                            break
-                        # Also check if the section itself is named (older format)
-                        elseif isa(dep_entry, Pair) && dep_entry.first == "MCPRepl"
-                            mcprepl_info = dep_entry.second
-                            break
-                        end
+                # Manifest format: deps[PackageName] is an array of version entries
+                if haskey(supervisor_manifest, "deps") && haskey(supervisor_manifest["deps"], "MCPRepl")
+                    mcprepl_entries = supervisor_manifest["deps"]["MCPRepl"]
+                    # Take the first entry (usually only one)
+                    if !isempty(mcprepl_entries)
+                        mcprepl_info = mcprepl_entries[1]
                     end
                 end
             end
