@@ -42,7 +42,7 @@ try
                     @info "Agent mode: sending heartbeats as '$agent_name'"
 
                     # Read supervisor configuration
-                    config_path = joinpath(dirname(dirname(pwd())), "agents.json")
+                    config_path = joinpath(dirname(dirname(pwd())), ".mcprepl", "agents.json")
                     supervisor_port = 3000  # Default
 
                     if isfile(config_path)

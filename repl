@@ -5,7 +5,7 @@
 # script. Configuration is read from agents.json in the project root.
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-CONFIG_FILE="$SCRIPT_DIR/agents.json"
+CONFIG_FILE="$SCRIPT_DIR/.mcprepl/agents.json"
 
 # Parse options
 SUPERVISOR_MODE=false
@@ -85,7 +85,7 @@ if [ -n "$AGENT_NAME" ]; then
   echo "  Directory: $AGENT_DIR"
   echo ""
 
-  exec julia --project="$AGENT_FULL_DIR" --load="$AGENT_FULL_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
+  exec julia --project="$AGENT_FULL_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
 fi
 
 # Handle supervisor mode

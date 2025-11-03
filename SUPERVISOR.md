@@ -18,7 +18,7 @@ Supervisor mode enables MCPRepl to manage multiple Julia REPL agent processes, m
 
 ### 1. Create Agents Configuration
 
-Create an `agents.json` file in your project root:
+Create a `.mcprepl/agents.json` file (copy from `agents.json.example`):
 
 ```json
 {
@@ -87,7 +87,7 @@ The unified `repl` script in the project root handles all modes:
 ```
 
 The `repl` script automatically:
-- Reads `agents.json` configuration
+- Reads `.mcprepl/agents.json` configuration
 - Sets environment variables (`JULIA_MCP_PORT`, `JULIA_MCP_API_KEY`, `JULIA_MCP_AGENT_NAME`)
 - Changes to agent directory
 - Starts Julia with agent-specific Project.toml
@@ -97,7 +97,7 @@ The `repl` script automatically:
 
 When you start an agent with `./repl --agent test-fixer`:
 
-1. Script reads `agents.json` and extracts agent configuration
+1. Script reads `.mcprepl/agents.json` and extracts agent configuration
 2. Sets `JULIA_MCP_PORT=3001`, `JULIA_MCP_AGENT_NAME=test-fixer`
 3. Changes to `agents/test-fixer/`
 4. Starts Julia with `.julia-startup.jl`
@@ -339,7 +339,9 @@ Edit `.mcprepl/tools.json` to enable supervisor tools:
 
 ```
 my-project/
-├── agents.json                 # Supervisor configuration
+├── .mcprepl/
+│   ├── agents.json             # Supervisor & agent configuration
+│   └── security.json           # Single-instance security config
 ├── agents/
 │   ├── test-fixer/
 │   │   ├── repl                # Launcher script

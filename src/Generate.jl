@@ -497,7 +497,7 @@ try
                     @info "Agent mode: sending heartbeats as '\$agent_name'"
 
                     # Read supervisor configuration
-                    config_path = joinpath(dirname(dirname(pwd())), "agents.json")
+                    config_path = joinpath(dirname(dirname(pwd())), ".mcprepl", "agents.json")
                     supervisor_port = 3000  # Default
 
                     if isfile(config_path)
@@ -576,7 +576,7 @@ function create_repl_script(project_path::String)
 # script. Configuration is read from agents.json in the project root.
 
 SCRIPT_DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
-CONFIG_FILE="\$SCRIPT_DIR/agents.json"
+CONFIG_FILE="\$SCRIPT_DIR/.mcprepl/agents.json"
 
 # Parse options
 SUPERVISOR_MODE=false
