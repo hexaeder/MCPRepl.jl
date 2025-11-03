@@ -1,7 +1,6 @@
 {
   "$schema": "./tools-schema.json",
   "_comment": "Tool configuration for MCPRepl MCP server. Enable/disable tool sets or individual tools.",
-  "_total_tokens": "~13,000 tokens (all tools enabled), ~5,500 tokens (default config)",
   "tool_sets": {
     "core": {
       "enabled": true,
@@ -34,7 +33,7 @@
       ]
     },
     "advanced-analysis": {
-      "enabled": false,
+      "enabled": true,
       "description": "Advanced code inspection (macros, IR, profiling)",
       "tokens": "~300",
       "tools": [
@@ -101,7 +100,7 @@
       ]
     },
     "education": {
-      "enabled": false,
+      "enabled": true,
       "description": "Learning and quiz tools",
       "tokens": "~1,000",
       "tools": [
