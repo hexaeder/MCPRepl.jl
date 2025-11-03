@@ -375,8 +375,9 @@ function supervisor_monitor_loop(registry::AgentRegistry)
             agents = get_all_agents(registry)
 
             for (name, agent) in agents
-                # Skip if agent is intentionally stopped
-                if agent.status == :stopped
+                # Skip if agent is intentionally stopped or still starting
+                # Agents in :starting status haven't sent their first heartbeat yet
+                if agent.status == :stopped || agent.status == :starting
                     continue
                 end
 
