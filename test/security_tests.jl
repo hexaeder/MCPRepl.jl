@@ -110,6 +110,62 @@ using JSON
             @test loaded.mode == :lax
         end
 
+        @testset "Agent Mode Configuration" begin
+            # Start fresh
+            config_dir = joinpath(test_dir, ".mcprepl")
+            if isdir(config_dir)
+                rm(config_dir; recursive = true)
+            end
+            mkpath(config_dir)
+
+            # Create agents.json with agent and supervisor configs
+            agents_config = Dict(
+                "supervisor" => Dict("mode" => "lax", "port" => 4000),
+                "agents" => Dict(
+                    "test-agent" => Dict("mode" => "lax", "port" => 4001, "directory" => "TestAgent", "description" => "Test agent"),
+                    "math-agent" => Dict("mode" => "strict", "port" => 4002, "directory" => "MathAgent", "description" => "Math agent", "api_keys" => ["test_key_123"])
+                )
+            )
+            agents_path = joinpath(config_dir, "agents.json")
+            open(agents_path, "w") do io
+                JSON.print(io, agents_config, 2)
+            end
+
+            # Also create a security.json with different port (should be ignored for agents)
+            security_config = MCPRepl.SecurityConfig(:strict, String[], ["127.0.0.1"], 3000)
+            MCPRepl.save_security_config(security_config, test_dir)
+
+            # Test loading agent config - should use agents.json, NOT security.json
+            agent_config = MCPRepl.load_security_config(test_dir, "test-agent", false)
+            @test agent_config !== nothing
+            @test agent_config.port == 4001  # From agents.json, NOT 3000 from security.json
+            @test agent_config.mode == :lax
+            @test agent_config.created_at isa Int64  # Should be Int64, not Float64
+
+            # Test loading math agent with API keys
+            math_config = MCPRepl.load_security_config(test_dir, "math-agent", false)
+            @test math_config !== nothing
+            @test math_config.port == 4002
+            @test math_config.mode == :strict
+            @test "test_key_123" in math_config.api_keys
+            @test math_config.created_at isa Int64
+
+            # Test loading supervisor config - should use agents.json
+            supervisor_config = MCPRepl.load_security_config(test_dir, "", true)
+            @test supervisor_config !== nothing
+            @test supervisor_config.port == 4000  # From supervisor section in agents.json
+            @test supervisor_config.mode == :lax
+            @test supervisor_config.created_at isa Int64
+
+            # Test error when agent doesn't exist
+            @test_throws ErrorException MCPRepl.load_security_config(test_dir, "nonexistent-agent", false)
+
+            # Test error when agents.json is missing
+            rm(agents_path)
+            @test_throws ErrorException MCPRepl.load_security_config(test_dir, "test-agent", false)
+            @test_throws ErrorException MCPRepl.load_security_config(test_dir, "", true)
+        end
+
         @testset "Security Management Functions" begin
             # Start fresh
             config_dir = joinpath(test_dir, ".mcprepl")
