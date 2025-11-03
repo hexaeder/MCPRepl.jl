@@ -854,8 +854,8 @@ function start!(;
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     # Load or prompt for security configuration
-    # Pass agent_name so it can load from agents.json if needed
-    security_config = load_security_config(pwd(), agent_name)
+    # Pass agent_name and supervisor flag so it can load from agents.json if needed
+    security_config = load_security_config(pwd(), agent_name, supervisor)
 
     if security_config === nothing
         printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color = :red, bold = true)

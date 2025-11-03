@@ -50,17 +50,19 @@ function get_security_config_path(workspace_dir::String = pwd())
 end
 
 """
-    load_security_config(workspace_dir::String=pwd()) -> Union{SecurityConfig, Nothing}
+    load_security_config(workspace_dir::String=pwd(), agent_name::String="", supervisor::Bool=false) -> Union{SecurityConfig, Nothing}
 
 Load security configuration from workspace .mcprepl/security.json file.
 Returns nothing if no configuration exists.
 """
-function load_security_config(workspace_dir::String = pwd(), agent_name::String = "")
+function load_security_config(workspace_dir::String = pwd(), agent_name::String = "", supervisor::Bool = false)
     config_path = get_security_config_path(workspace_dir)
+
+    # Try to load from agents.json if in agent or supervisor mode
+    agents_config_path = joinpath(workspace_dir, ".mcprepl", "agents.json")
 
     # If agent mode and no local security.json, try reading from agents.json
     if !isempty(agent_name) && !isfile(config_path)
-        agents_config_path = joinpath(dirname(workspace_dir), ".mcprepl", "agents.json")
         if isfile(agents_config_path)
             try
                 agents_config = TOML.parsefile(agents_config_path)
@@ -77,6 +79,28 @@ function load_security_config(workspace_dir::String = pwd(), agent_name::String 
                 end
             catch e
                 @warn "Failed to load agent config from agents.json" exception = e
+            end
+        end
+    end
+
+    # If supervisor mode and no local security.json, try reading supervisor config from agents.json
+    if supervisor && !isfile(config_path)
+        if isfile(agents_config_path)
+            try
+                agents_config = TOML.parsefile(agents_config_path)
+                if haskey(agents_config, "supervisor")
+                    supervisor_config = agents_config["supervisor"]
+
+                    mode = Symbol(get(supervisor_config, "mode", "lax"))
+                    api_keys = get(supervisor_config, "api_keys", String[])
+                    allowed_ips = get(supervisor_config, "allowed_ips", String[])
+                    port = get(supervisor_config, "port", 3000)
+                    created_at = time()
+
+                    return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
+                end
+            catch e
+                @warn "Failed to load supervisor config from agents.json" exception = e
             end
         end
     end
