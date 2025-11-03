@@ -5,10 +5,16 @@ import Base.Threads
 # If running as agent, ensure MCPRepl and other dependencies are synced from supervisor
 agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
 if !isempty(agent_name)
-    # Check if MCPRepl is in this agent's environment
-    agent_deps = Pkg.project().dependencies
+    # Check if MCPRepl is actually installed (not just listed in Project.toml)
+    mcprepl_installed = try
+        Base.find_package("MCPRepl") !== nothing
+    catch
+        false
+    end
 
-    if !haskey(agent_deps, "MCPRepl")
+    @info "Agent '$agent_name' checking dependencies" mcprepl_installed=mcprepl_installed
+
+    if !mcprepl_installed
         @info "Agent '$agent_name': Syncing dependencies from supervisor environment..."
 
         # Find supervisor project (parent directory)
