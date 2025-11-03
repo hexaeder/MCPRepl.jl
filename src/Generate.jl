@@ -602,7 +602,7 @@ if [ -n "\$AGENT_NAME" ]; then
   echo "  Directory: \$AGENT_DIR"
   echo ""
 
-  exec julia --project="\$AGENT_FULL_DIR" --load="\$AGENT_FULL_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+  exec julia --project="\$AGENT_FULL_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
 
 # Handle supervisor mode
