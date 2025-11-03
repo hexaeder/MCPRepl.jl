@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Start Julia REPL with MCPRepl project and auto-load startup script
+# This script launches Julia in the project and loads the recommended startup
+# script. Environment configuration is expected to be stored in project
+# configuration (.mcprepl/security.json) or a project .env file managed by
+# the project tools — the launcher intentionally does not alter environment
+# variables.
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+echo "Starting Julia REPL with MCPRepl project..."
+echo ""
+
+exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "$@"
