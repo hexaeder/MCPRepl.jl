@@ -608,7 +608,8 @@ try
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
 
-                @info "✓ MCP REPL server started $emoticon"
+                version = MCPRepl.version_info()
+                @info "✓ MCP REPL server started $emoticon (version: $version)"
 
                 # Refresh the prompt to ensure clean display
                 if isdefined(Base, :active_repl)

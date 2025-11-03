@@ -11,6 +11,17 @@ using Dates
 
 export @mcp_tool
 
+# Version tracking - gets git commit hash at runtime
+function version_info()
+    try
+        commit = readchomp(`git -C $(pkgdir(@__MODULE__)) rev-parse --short HEAD`)
+        dirty = success(`git -C $(pkgdir(@__MODULE__)) diff --quiet`) ? "" : "-dirty"
+        return "$(commit)$(dirty)"
+    catch
+        return "unknown"
+    end
+end
+
 # ============================================================================
 # Tool Definition Macros
 # ============================================================================
@@ -1003,6 +1014,7 @@ function start!(;
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             status = "✓ MCP Server is healthy and responsive\n"
+            status *= "Version: $(version_info())\n"
 
             # Check Revise status
             if isdefined(Main, :Revise)
