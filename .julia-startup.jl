@@ -3,7 +3,14 @@ Pkg.activate(".")
 import Base.Threads
 
 # If running as agent, ensure MCPRepl and other dependencies are synced from supervisor
-agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
+# Parse agent name from command line arguments (--agent=name)
+agent_name = ""
+for arg in ARGS
+    if startswith(arg, "--agent=")
+        agent_name = split(arg, "=", limit=2)[2]
+        break
+    end
+end
 if !isempty(agent_name)
     # Check if MCPRepl is actually installed (not just listed in Project.toml)
     mcprepl_installed = try
@@ -99,16 +106,21 @@ try
             try
                 sleep(1)
 
-                # Check if supervisor mode is enabled via environment variable
-                supervisor_enabled = get(ENV, "JULIA_MCP_SUPERVISOR", "false") == "true"
+                # Parse arguments from command line
+                supervisor_enabled = false
+                agent_name_arg = ""
+                for arg in ARGS
+                    if arg == "--supervisor"
+                        supervisor_enabled = true
+                    elseif startswith(arg, "--agent=")
+                        agent_name_arg = split(arg, "=", limit=2)[2]
+                    end
+                end
 
-                # Port is determined by:
-                # 1. JULIA_MCP_PORT environment variable (highest priority)
-                # 2. .mcprepl/security.json port field (default)
-                #
-                # Heartbeats are automatically started by MCPRepl.start!() if
-                # JULIA_MCP_AGENT_NAME environment variable is set
-                MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
+                # Start MCPRepl with parsed arguments
+                # Port is determined by .mcprepl/security.json or agents.json
+                # Heartbeats are automatically started if agent_name is provided
+                MCPRepl.start!(verbose=false, supervisor=supervisor_enabled, agent_name=agent_name_arg)
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)

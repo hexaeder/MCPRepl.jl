@@ -55,11 +55,8 @@ end
 Load security configuration from workspace .mcprepl/security.json file.
 Returns nothing if no configuration exists.
 """
-function load_security_config(workspace_dir::String = pwd())
+function load_security_config(workspace_dir::String = pwd(), agent_name::String = "")
     config_path = get_security_config_path(workspace_dir)
-
-    # Check if running as an agent
-    agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
 
     # If agent mode and no local security.json, try reading from agents.json
     if !isempty(agent_name) && !isfile(config_path)

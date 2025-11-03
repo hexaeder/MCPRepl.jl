@@ -458,7 +458,14 @@ Pkg.activate(".")
 import Base.Threads
 
 # If running as agent, ensure MCPRepl and other dependencies are synced from supervisor
-agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
+# Parse agent name from command line arguments (--agent=name)
+agent_name = ""
+for arg in ARGS
+    if startswith(arg, "--agent=")
+        agent_name = split(arg, "=", limit=2)[2]
+        break
+    end
+end
 if !isempty(agent_name)
     # Check if MCPRepl is actually installed (not just listed in Project.toml)
     mcprepl_installed = try
@@ -554,16 +561,21 @@ try
             try
                 sleep(1)
 
-                # Check if supervisor mode is enabled via environment variable
-                supervisor_enabled = get(ENV, "JULIA_MCP_SUPERVISOR", "false") == "true"
+                # Parse arguments from command line
+                supervisor_enabled = false
+                agent_name_arg = ""
+                for arg in ARGS
+                    if arg == "--supervisor"
+                        supervisor_enabled = true
+                    elseif startswith(arg, "--agent=")
+                        agent_name_arg = split(arg, "=", limit=2)[2]
+                    end
+                end
 
-                # Port is determined by:
-                # 1. JULIA_MCP_PORT environment variable (highest priority)
-                # 2. .mcprepl/security.json port field (default)
-                #
-                # Heartbeats are automatically started by MCPRepl.start!() if
-                # JULIA_MCP_AGENT_NAME environment variable is set
-                MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
+                # Start MCPRepl with parsed arguments
+                # Port is determined by .mcprepl/security.json or agents.json
+                # Heartbeats are automatically started if agent_name is provided
+                MCPRepl.start!(verbose=false, supervisor=supervisor_enabled, agent_name=agent_name_arg)
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
@@ -666,14 +678,6 @@ if [ -n "\$AGENT_NAME" ]; then
     exit 1
   fi
 
-  # Set environment variables for agent
-  export JULIA_MCP_PORT="\$AGENT_PORT"
-  export JULIA_MCP_AGENT_NAME="\$AGENT_NAME"
-
-  if [ -n "\$AGENT_API_KEY" ]; then
-    export JULIA_MCP_API_KEY="\$AGENT_API_KEY"
-  fi
-
   # Change to agent directory
   cd "\$AGENT_FULL_DIR" || exit 1
 
@@ -683,31 +687,18 @@ if [ -n "\$AGENT_NAME" ]; then
   echo "  Directory: \$AGENT_DIR"
   echo ""
 
-  exec julia --project="\$AGENT_FULL_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+  # Pass agent name as script argument after --
+  exec julia --project="\$AGENT_FULL_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}" -- --agent="\$AGENT_NAME"
 fi
 
 # Handle supervisor mode
 if [ "\$SUPERVISOR_MODE" = true ]; then
-  export JULIA_MCP_SUPERVISOR="true"
-
-  # Extract supervisor port from config if available
-  if [ -f "\$CONFIG_FILE" ]; then
-    SUPERVISOR_PORT=\$(jq -r '.supervisor.port // empty' "\$CONFIG_FILE")
-    if [ -n "\$SUPERVISOR_PORT" ]; then
-      export JULIA_MCP_PORT="\$SUPERVISOR_PORT"
-    fi
-
-    SUPERVISOR_API_KEY=\$(jq -r '.supervisor.api_key // empty' "\$CONFIG_FILE")
-    if [ -n "\$SUPERVISOR_API_KEY" ]; then
-      export JULIA_MCP_API_KEY="\$SUPERVISOR_API_KEY"
-    fi
-  fi
-
   echo "Starting Julia REPL with MCPRepl project..."
   echo "  Supervisor mode: enabled"
   echo ""
 
-  exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+  # Pass supervisor flag as script argument
+  exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}" -- --supervisor
 fi
 
 # Normal mode

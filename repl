@@ -68,14 +68,6 @@ if [ -n "$AGENT_NAME" ]; then
     exit 1
   fi
 
-  # Set environment variables for agent
-  export JULIA_MCP_PORT="$AGENT_PORT"
-  export JULIA_MCP_AGENT_NAME="$AGENT_NAME"
-
-  if [ -n "$AGENT_API_KEY" ]; then
-    export JULIA_MCP_API_KEY="$AGENT_API_KEY"
-  fi
-
   # Change to agent directory
   cd "$AGENT_FULL_DIR" || exit 1
 
@@ -85,31 +77,18 @@ if [ -n "$AGENT_NAME" ]; then
   echo "  Directory: $AGENT_DIR"
   echo ""
 
-  exec julia --project="$AGENT_FULL_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
+  # Pass agent name as script argument after --
+  exec julia --project="$AGENT_FULL_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}" -- --agent="$AGENT_NAME"
 fi
 
 # Handle supervisor mode
 if [ "$SUPERVISOR_MODE" = true ]; then
-  export JULIA_MCP_SUPERVISOR="true"
-
-  # Extract supervisor port from config if available
-  if [ -f "$CONFIG_FILE" ]; then
-    SUPERVISOR_PORT=$(jq -r '.supervisor.port // empty' "$CONFIG_FILE")
-    if [ -n "$SUPERVISOR_PORT" ]; then
-      export JULIA_MCP_PORT="$SUPERVISOR_PORT"
-    fi
-
-    SUPERVISOR_API_KEY=$(jq -r '.supervisor.api_key // empty' "$CONFIG_FILE")
-    if [ -n "$SUPERVISOR_API_KEY" ]; then
-      export JULIA_MCP_API_KEY="$SUPERVISOR_API_KEY"
-    fi
-  fi
-
   echo "Starting Julia REPL with MCPRepl project..."
   echo "  Supervisor mode: enabled"
   echo ""
 
-  exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
+  # Pass supervisor flag as script argument
+  exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}" -- --supervisor
 fi
 
 # Normal mode

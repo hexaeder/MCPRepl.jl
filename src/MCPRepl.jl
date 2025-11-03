@@ -849,11 +849,13 @@ function start!(;
     security_mode::Union{Symbol,Nothing} = nothing,
     supervisor::Bool = false,
     agents_config::String = ".mcprepl/agents.json",
+    agent_name::String = "",
 )
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     # Load or prompt for security configuration
-    security_config = load_security_config()
+    # Pass agent_name so it can load from agents.json if needed
+    security_config = load_security_config(pwd(), agent_name)
 
     if security_config === nothing
         printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color = :red, bold = true)
@@ -864,10 +866,8 @@ function start!(;
         error("Security configuration required. Run MCPRepl.setup() first.")
     end
 
-    # Determine port: priority is ENV var > function arg > config file
-    actual_port = if haskey(ENV, "JULIA_MCP_PORT")
-        parse(Int, ENV["JULIA_MCP_PORT"])
-    elseif port !== nothing
+    # Determine port: priority is function arg > config file
+    actual_port = if port !== nothing
         port
     else
         security_config.port
@@ -945,7 +945,6 @@ function start!(;
     end
 
     # Start heartbeat task if running as an agent
-    agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
     if !isempty(agent_name)
         start_agent_heartbeat(agent_name, agents_config, verbose)
     end
