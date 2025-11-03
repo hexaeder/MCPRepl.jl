@@ -876,9 +876,21 @@ function start!(;
         error("Security configuration required. Run MCPRepl.setup() first.")
     end
 
-    # Determine port: priority is function arg > config file
+    # Determine port: priority is function arg > supervisor config > security config
     actual_port = if port !== nothing
         port
+    elseif supervisor
+        # In supervisor mode, try to read port from agents config
+        supervisor_port = 3000  # Default fallback
+        if isfile(agents_config)
+            try
+                config = JSON.parsefile(agents_config)
+                supervisor_port = get(get(config, "supervisor", Dict()), "port", 3000)
+            catch e
+                @warn "Could not read supervisor port from $agents_config, using default 3000" exception=e
+            end
+        end
+        supervisor_port
     else
         security_config.port
     end
@@ -1151,15 +1163,21 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
                 # Get the current server port (before restart)
                 server_port = SERVER[] !== nothing ? SERVER[].port : 3000
 
-                # Execute the restart command using the vscode URI trigger
-                restart_uri = build_vscode_uri(
-                    "language-julia.restartREPL";
-                    mcp_port = server_port,
-                )
-                trigger_vscode_uri(restart_uri)
+                # Check if running in VS Code by looking for JULIA_VSCODE_INTERNAL variable
+                in_vscode =
+                    haskey(ENV, "JULIA_VSCODE_INTERNAL") ||
+                    haskey(ENV, "VSCODE_PID") ||
+                    isdefined(Main, :VSCodeServer)
 
-                # Return immediately - the server will be restarting
-                return """✓ Julia REPL restart initiated on port $server_port.
+                if in_vscode
+                    # Execute the restart command using the vscode URI trigger
+                    restart_uri = build_vscode_uri(
+                        "language-julia.restartREPL";
+                        mcp_port = server_port,
+                    )
+                    trigger_vscode_uri(restart_uri)
+
+                    return """✓ Julia REPL restart initiated on port $server_port.
 
 ⏳ The MCP server will be temporarily offline during restart.
 
@@ -1169,6 +1187,26 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
 3. Typical restart time: 5-10 seconds (may be longer if packages need recompilation)
 
 The server will automatically restart and be ready when the Julia REPL finishes loading."""
+                else
+                    # Not in VS Code - use exit() approach
+                    # Schedule exit after a brief delay to allow response to be sent
+                    @async begin
+                        sleep(0.5)
+                        exit(0)
+                    end
+
+                    return """✓ Julia REPL restart initiated on port $server_port.
+
+⏳ The MCP server will be temporarily offline during restart.
+
+**AI Agent Instructions:**
+1. Wait 5 seconds before making any requests
+2. Then retry every 2 seconds until connection is reestablished
+3. Typical restart time: 5-10 seconds (may be longer if packages need recompilation)
+
+**Note:** Running outside VS Code - Julia will exit and needs to be manually restarted.
+If Julia is started via the .julia-startup.jl script, it should restart automatically."""
+                end
             catch e
                 return "Error initiating REPL restart: $e"
             end
