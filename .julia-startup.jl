@@ -19,72 +19,72 @@ if !isempty(agent_name)
 
     @info "Agent '$agent_name' checking dependencies" mcprepl_installed=mcprepl_installed
 
-    if !mcprepl_installed
-        @info "Agent '$agent_name': Syncing dependencies from supervisor environment..."
+    # Always sync/update MCPRepl from supervisor to ensure we have the latest version
+    @info "Agent '$agent_name': Syncing dependencies from supervisor environment..."
 
-        # Find supervisor project (parent directory)
-        supervisor_project_path = joinpath(dirname(pwd()), "Project.toml")
+    # Find supervisor project (parent directory)
+    supervisor_project_path = joinpath(dirname(pwd()), "Project.toml")
 
-        if isfile(supervisor_project_path)
-            using TOML
-            supervisor_project = TOML.parsefile(supervisor_project_path)
-            supervisor_deps = get(supervisor_project, "deps", Dict())
+    if isfile(supervisor_project_path)
+        using TOML
+        supervisor_project = TOML.parsefile(supervisor_project_path)
+        supervisor_deps = get(supervisor_project, "deps", Dict())
 
-            # Check if supervisor is using dev version
-            supervisor_manifest_path = joinpath(dirname(pwd()), "Manifest.toml")
-            mcprepl_info = nothing
+        # Check if supervisor is using dev version
+        supervisor_manifest_path = joinpath(dirname(pwd()), "Manifest.toml")
+        mcprepl_info = nothing
 
-            if isfile(supervisor_manifest_path)
-                supervisor_manifest = TOML.parsefile(supervisor_manifest_path)
+        if isfile(supervisor_manifest_path)
+            supervisor_manifest = TOML.parsefile(supervisor_manifest_path)
 
-                # Manifest format: deps[PackageName] is an array of version entries
-                if haskey(supervisor_manifest, "deps") && haskey(supervisor_manifest["deps"], "MCPRepl")
-                    mcprepl_entries = supervisor_manifest["deps"]["MCPRepl"]
-                    # Take the first entry (usually only one)
-                    if !isempty(mcprepl_entries)
-                        mcprepl_info = mcprepl_entries[1]
-                    end
+            # Manifest format: deps[PackageName] is an array of version entries
+            if haskey(supervisor_manifest, "deps") &&
+               haskey(supervisor_manifest["deps"], "MCPRepl")
+                mcprepl_entries = supervisor_manifest["deps"]["MCPRepl"]
+                # Take the first entry (usually only one)
+                if !isempty(mcprepl_entries)
+                    mcprepl_info = mcprepl_entries[1]
                 end
             end
-
-            # Sync MCPRepl (required)
-            if mcprepl_info !== nothing && haskey(mcprepl_info, "path")
-                # Dev version - use the same path
-                dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
-                @info "  Using MCPRepl dev version from: $dev_path"
-                Pkg.develop(path=dev_path)
-            elseif mcprepl_info !== nothing && haskey(mcprepl_info, "repo-url")
-                # Git repository version
-                repo_url = mcprepl_info["repo-url"]
-                if haskey(mcprepl_info, "repo-rev")
-                    # Specific branch/rev
-                    repo_rev = mcprepl_info["repo-rev"]
-                    @info "  Adding MCPRepl from: $repo_url#$repo_rev"
-                    Pkg.add(url=repo_url, rev=repo_rev)
-                else
-                    @info "  Adding MCPRepl from: $repo_url"
-                    Pkg.add(url=repo_url)
-                end
-            else
-                # Registered version or no manifest info - just add it
-                @info "  Adding MCPRepl package"
-                Pkg.add("MCPRepl")
-            end
-
-            # Sync Revise if supervisor has it (optional but recommended)
-            if haskey(supervisor_deps, "Revise")
-                @info "  Adding Revise package (for hot reloading)"
-                Pkg.add("Revise")
-            end
-
-            # Instantiate to ensure all dependencies are ready
-            Pkg.instantiate()
-        else
-            @warn "Could not find supervisor Project.toml at $supervisor_project_path"
-            @info "  Adding MCPRepl package anyway"
-            Pkg.add("MCPRepl")
-            Pkg.instantiate()
         end
+
+        # Sync MCPRepl (required)
+        if mcprepl_info !== nothing && haskey(mcprepl_info, "path")
+            # Dev version - use the same path
+            dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
+            @info "  Using MCPRepl dev version from: $dev_path"
+            Pkg.develop(path = dev_path)
+        elseif mcprepl_info !== nothing && haskey(mcprepl_info, "repo-url")
+            # Git repository version
+            repo_url = mcprepl_info["repo-url"]
+            if haskey(mcprepl_info, "repo-rev")
+                # Specific branch/rev
+                repo_rev = mcprepl_info["repo-rev"]
+                @info "  Adding/updating MCPRepl from: $repo_url#$repo_rev"
+                Pkg.add(url = repo_url, rev = repo_rev)
+            else
+                @info "  Adding/updating MCPRepl from: $repo_url"
+                Pkg.add(url = repo_url)
+            end
+        else
+            # Registered version or no manifest info - just add it
+            @info "  Adding MCPRepl package"
+            Pkg.add("MCPRepl")
+        end
+
+        # Sync Revise if supervisor has it (optional but recommended)
+        if haskey(supervisor_deps, "Revise")
+            @info "  Adding Revise package (for hot reloading)"
+            Pkg.add("Revise")
+        end
+
+        # Instantiate to ensure all dependencies are ready
+        Pkg.instantiate()
+    else
+        @warn "Could not find supervisor Project.toml at $supervisor_project_path"
+        @info "  Adding MCPRepl package anyway"
+        Pkg.add("MCPRepl")
+        Pkg.instantiate()
     end
 end
 
@@ -105,8 +105,11 @@ try
                 sleep(1)
 
                 # Check if supervisor mode or agent name was set via -e flags
-                supervisor_enabled = isdefined(Main, :MCPREPL_SUPERVISOR) ? Main.MCPREPL_SUPERVISOR : false
-                agent_name_arg = isdefined(Main, :MCPREPL_AGENT_NAME) ? String(Main.MCPREPL_AGENT_NAME) : ""
+                supervisor_enabled =
+                    isdefined(Main, :MCPREPL_SUPERVISOR) ? Main.MCPREPL_SUPERVISOR : false
+                agent_name_arg =
+                    isdefined(Main, :MCPREPL_AGENT_NAME) ? String(Main.MCPREPL_AGENT_NAME) :
+                    ""
 
                 # Start MCPRepl with parsed arguments
                 # Port is determined by .mcprepl/security.json or agents.json
@@ -116,9 +119,13 @@ try
                 has_agent_name = any(m -> :agent_name in Base.kwarg_decl(m), start_methods)
 
                 if has_agent_name
-                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled, agent_name=agent_name_arg)
+                    MCPRepl.start!(
+                        verbose = false,
+                        supervisor = supervisor_enabled,
+                        agent_name = agent_name_arg,
+                    )
                 else
-                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
+                    MCPRepl.start!(verbose = false, supervisor = supervisor_enabled)
                 end
 
                 # Wait a moment for server to fully initialize
@@ -129,7 +136,8 @@ try
                 # Refresh the prompt to ensure clean display after test completes
                 if isdefined(Base, :active_repl)
                     try
-                        println();println()  # Add clean newline
+                        println();
+                        println()  # Add clean newline
                         REPL.LineEdit.refresh_line(Base.active_repl.mistate)
                     catch
                         # Ignore if REPL isn't ready yet

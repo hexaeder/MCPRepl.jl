@@ -374,7 +374,9 @@ function create_handler(
                     if hasfield(typeof(MCPRepl), :SUPERVISOR_REGISTRY)
                         if MCPRepl.SUPERVISOR_REGISTRY[] !== nothing
                             MCPRepl.Supervisor.update_heartbeat!(
-                                MCPRepl.SUPERVISOR_REGISTRY[], agent_name, pid
+                                MCPRepl.SUPERVISOR_REGISTRY[],
+                                agent_name,
+                                pid,
                             )
                         end
                     end
@@ -383,7 +385,7 @@ function create_handler(
                     response = Dict(
                         "jsonrpc" => "2.0",
                         "id" => request["id"],
-                        "result" => Dict("status" => "ok")
+                        "result" => Dict("status" => "ok"),
                     )
                     return HTTP.Response(
                         200,
@@ -396,8 +398,8 @@ function create_handler(
                         "id" => request["id"],
                         "error" => Dict(
                             "code" => -32602,
-                            "message" => "Invalid heartbeat: missing agent_name or pid"
-                        )
+                            "message" => "Invalid heartbeat: missing agent_name or pid",
+                        ),
                     )
                     return HTTP.Response(
                         400,

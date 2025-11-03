@@ -1202,8 +1202,8 @@ Uses the same security configuration options as the regular setup,
 but with a kinder, more encouraging presentation.
 """
 function gentle_setup(
-    mode::Symbol = :strict,
-    port::Int = 3000,
+    _mode::Symbol = :strict,
+    _port::Int = 3000,
     workspace_dir::String = pwd(),
 )
     return security_setup_wizard(workspace_dir; force = false, gentle = true)

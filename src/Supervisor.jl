@@ -56,8 +56,14 @@ mutable struct AgentState
     restart_policy::String  # "always", "on_failure", "never"
 end
 
-function AgentState(name::String, port::Int, directory::String, description::String;
-                    auto_start::Bool=true, restart_policy::String="on_failure")
+function AgentState(
+    name::String,
+    port::Int,
+    directory::String,
+    description::String;
+    auto_start::Bool = true,
+    restart_policy::String = "on_failure",
+)
     AgentState(
         name,
         port,
@@ -70,7 +76,7 @@ function AgentState(name::String, port::Int, directory::String, description::Str
         0,
         nothing,
         auto_start,
-        restart_policy
+        restart_policy,
     )
 end
 
@@ -129,9 +135,10 @@ mutable struct AgentRegistry
 end
 
 function AgentRegistry(;
-                       heartbeat_interval::Int=1,
-                       heartbeat_timeout_count::Int=5,
-                       max_restarts_per_hour::Int=10)
+    heartbeat_interval::Int = 1,
+    heartbeat_timeout_count::Int = 5,
+    max_restarts_per_hour::Int = 10,
+)
     AgentRegistry(
         Dict{String,AgentState}(),
         ReentrantLock(),
@@ -139,7 +146,7 @@ function AgentRegistry(;
         false,
         heartbeat_interval,
         heartbeat_timeout_count,
-        max_restarts_per_hour
+        max_restarts_per_hour,
     )
 end
 
@@ -315,7 +322,7 @@ end
 
 Stop an agent gracefully (or forcefully if force=true).
 """
-function stop_agent(agent::AgentState; force::Bool=false)::Bool
+function stop_agent(agent::AgentState; force::Bool = false)::Bool
     if force
         @info "Force stopping agent" name=agent.name
         success = force_kill_agent(agent)
@@ -391,7 +398,8 @@ function supervisor_monitor_loop(registry::AgentRegistry)
                             else
                                 @warn "Not restarting agent (policy or restart limit)" name=name policy=agent.restart_policy restarts=agent.restarts
                             end
-                        elseif agent.missed_heartbeats >= div(registry.heartbeat_timeout_count, 2)
+                        elseif agent.missed_heartbeats >=
+                               div(registry.heartbeat_timeout_count, 2)
                             # Agent is degraded (slow to respond)
                             if agent.status == :healthy
                                 @warn "Agent is degraded" name=name missed=agent.missed_heartbeats
@@ -463,7 +471,7 @@ end
 
 Stop the supervisor monitor loop and optionally stop all agents.
 """
-function stop_supervisor(registry::AgentRegistry; stop_agents::Bool=true)
+function stop_supervisor(registry::AgentRegistry; stop_agents::Bool = true)
     if !registry.running
         @warn "Supervisor not running"
         return
@@ -487,7 +495,7 @@ function stop_supervisor(registry::AgentRegistry; stop_agents::Bool=true)
         agents = get_all_agents(registry)
         for (name, agent) in agents
             if agent.status != :stopped
-                stop_agent(agent; force=true)
+                stop_agent(agent; force = true)
             end
         end
     end
@@ -524,7 +532,9 @@ Example agents.json:
 }
 ```
 """
-function load_agents_config(path::String=".mcprepl/agents.json")::Union{AgentRegistry,Nothing}
+function load_agents_config(
+    path::String = ".mcprepl/agents.json",
+)::Union{AgentRegistry,Nothing}
     if !isfile(path)
         @warn "Agents config file not found" path=path
         return nothing
@@ -541,9 +551,9 @@ function load_agents_config(path::String=".mcprepl/agents.json")::Union{AgentReg
 
         # Create registry
         registry = AgentRegistry(
-            heartbeat_interval=heartbeat_interval,
-            heartbeat_timeout_count=heartbeat_timeout_count,
-            max_restarts_per_hour=max_restarts_per_hour
+            heartbeat_interval = heartbeat_interval,
+            heartbeat_timeout_count = heartbeat_timeout_count,
+            max_restarts_per_hour = max_restarts_per_hour,
         )
 
         # Parse agents
@@ -556,8 +566,12 @@ function load_agents_config(path::String=".mcprepl/agents.json")::Union{AgentReg
             restart_policy = get(agent_config, "restart_policy", "on_failure")
 
             agent = AgentState(
-                name, port, directory, description;
-                auto_start=auto_start, restart_policy=restart_policy
+                name,
+                port,
+                directory,
+                description;
+                auto_start = auto_start,
+                restart_policy = restart_policy,
             )
 
             register_agent!(registry, agent)

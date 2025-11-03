@@ -7,7 +7,7 @@ Pkg.activate(".")
 # Clean slate
 config_dir = joinpath(pwd(), ".mcprepl")
 if isdir(config_dir)
-    rm(config_dir; recursive=true, force=true)
+    rm(config_dir; recursive = true, force = true)
 end
 
 using MCPRepl

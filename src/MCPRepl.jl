@@ -280,7 +280,7 @@ the user already sees code execution in their REPL.
 Logging macros (@error, @debug, @info, @warn) are only removed at the top level,
 not inside function definitions or other nested code.
 """
-function remove_println_calls(expr, toplevel::Bool=true)
+function remove_println_calls(expr, toplevel::Bool = true)
     if expr isa Expr
         # Check if this is a print-related call
         if expr.head == :call
@@ -292,10 +292,13 @@ function remove_println_calls(expr, toplevel::Bool=true)
                 return nothing
             end
             # Match qualified calls (Base.println, Main.print, etc.)
-            if (func isa Expr && func.head == :. &&
+            if (
+                func isa Expr &&
+                func.head == :. &&
                 length(func.args) >= 2 &&
                 func.args[end] isa QuoteNode &&
-                func.args[end].value in print_funcs)
+                func.args[end].value in print_funcs
+            )
                 return nothing
             end
         elseif expr.head == :macrocall
@@ -306,15 +309,19 @@ function remove_println_calls(expr, toplevel::Bool=true)
             end
             # Remove logging macros ONLY at top level
             if toplevel
-                logging_macros = [Symbol("@error"), Symbol("@debug"), Symbol("@info"), Symbol("@warn")]
+                logging_macros =
+                    [Symbol("@error"), Symbol("@debug"), Symbol("@info"), Symbol("@warn")]
                 if macro_name in logging_macros
                     return nothing
                 end
                 # Also handle qualified logging macros
-                if (macro_name isa Expr && macro_name.head == :. &&
+                if (
+                    macro_name isa Expr &&
+                    macro_name.head == :. &&
                     length(macro_name.args) >= 2 &&
                     macro_name.args[end] isa QuoteNode &&
-                    macro_name.args[end].value in [:error, :debug, :info, :warn])
+                    macro_name.args[end].value in [:error, :debug, :info, :warn]
+                )
                     return nothing
                 end
             end
@@ -764,7 +771,10 @@ end
 Filter a vector of MCPTool objects based on the enabled tools set.
 If enabled_tools is `nothing`, returns all tools (backward compatibility).
 """
-function filter_tools_by_config(all_tools::Vector{MCPTool}, enabled_tools::Union{Set{Symbol},Nothing})
+function filter_tools_by_config(
+    all_tools::Vector{MCPTool},
+    enabled_tools::Union{Set{Symbol},Nothing},
+)
     if enabled_tools === nothing
         return all_tools
     end
@@ -823,16 +833,16 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
                         "agent_name" => agent_name,
                         "pid" => getpid(),
                         "status" => "healthy",
-                        "timestamp" => string(Dates.now())
-                    )
+                        "timestamp" => string(Dates.now()),
+                    ),
                 )
 
                 HTTP.post(
                     supervisor_url,
                     ["Content-Type" => "application/json"],
                     JSON.json(heartbeat);
-                    readtimeout=2,
-                    connect_timeout=1
+                    readtimeout = 2,
+                    connect_timeout = 1,
                 )
             catch e
                 # Silently ignore heartbeat failures (supervisor may not be running yet)
@@ -937,7 +947,10 @@ function start!(;
                 end
 
                 if auto_start_count > 0
-                    printstyled("   • Auto-started $auto_start_count agent(s)\n", color = :green)
+                    printstyled(
+                        "   • Auto-started $auto_start_count agent(s)\n",
+                        color = :green,
+                    )
                 end
                 println()
             end
@@ -1063,11 +1076,7 @@ Ensures agents understand:
                     "usage_quiz_questions.md"
                 end
 
-                quiz_path = joinpath(
-                    dirname(dirname(@__FILE__)),
-                    "prompts",
-                    filename,
-                )
+                quiz_path = joinpath(dirname(dirname(@__FILE__)), "prompts", filename)
 
                 if !isfile(quiz_path)
                     return "Error: $filename not found at $quiz_path"
@@ -1738,25 +1747,32 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 code = """
                 using JuliaFormatter
 
-                # Read the file before formatting to detect changes
-                before_content = read("$abs_path", String)
+                # Only detect changes for individual files, not directories
+                if isfile("$abs_path")
+                    # Read the file before formatting to detect changes
+                    before_content = read("$abs_path", String)
 
-                # Format the file
-                format_result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
+                    # Format the file
+                    format_result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
 
-                # Read after to see if changes were made
-                after_content = read("$abs_path", String)
-                changes_made = before_content != after_content
+                    # Read after to see if changes were made
+                    after_content = read("$abs_path", String)
+                    changes_made = before_content != after_content
 
-                if changes_made
-                    println("✅ File was reformatted: $abs_path")
-                elseif format_result
-                    println("ℹ️  File was already properly formatted: $abs_path")
+                    if changes_made
+                        println("✅ File was reformatted: $abs_path")
+                    elseif format_result
+                        println("ℹ️  File was already properly formatted: $abs_path")
+                    else
+                        println("⚠️  Formatting completed but check for errors: $abs_path")
+                    end
+
+                    changes_made || format_result
                 else
-                    println("⚠️  Formatting completed but check for errors: $abs_path")
+                    # For directories, just format and return result (verbose output shows individual files)
+                    format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
+                    nothing  # Suppress output for directories
                 end
-
-                changes_made || format_result
                 """
 
                 execute_repllike(
@@ -1812,25 +1828,33 @@ Use this to discover which commands are available for the `execute_vscode_comman
                         if pkg_name === nothing
                             println("❌ No package name found in Project.toml")
                         else
-                            println("Running Aqua tests for package: \$pkg_name")
+                            println("Running Aqua tests for package: " * pkg_name)
                             # Load the package
-                            @eval using \$(Symbol(pkg_name))
+                            Base.eval(Main, Expr(:using, Expr(:., Symbol(pkg_name))))
                             # Run Aqua tests
-                            Aqua.test_all(\$(Symbol(pkg_name)))
-                            println("✅ All Aqua tests passed for \$pkg_name")
+                            pkg_mod = Base.eval(Main, Symbol(pkg_name))
+                            Aqua.test_all(pkg_mod)
+                            println("✅ All Aqua tests passed for " * pkg_name)
                         end
                     end
                     """
                 else
-                    # Construct code with package name - interpolate at this level
-                    pkg_symbol = Symbol(pkg_name)
-                    code = """
-                    using Aqua
-                    @eval using $pkg_symbol
-                    println("Running Aqua tests for package: $pkg_name")
-                    Aqua.test_all($pkg_symbol)
-                    println("✅ All Aqua tests passed for $pkg_name")
-                    """
+                    # Construct code with package name - build string without dollar sign interpolation
+                    code =
+                        "using Aqua\n" *
+                        "Base.eval(Main, Expr(:using, Expr(:., Symbol(\"" *
+                        pkg_name *
+                        "\"))))\n" *
+                        "println(\"Running Aqua tests for package: " *
+                        pkg_name *
+                        "\")\n" *
+                        "pkg_mod = Base.eval(Main, Symbol(\"" *
+                        pkg_name *
+                        "\"))\n" *
+                        "Aqua.test_all(pkg_mod)\n" *
+                        "println(\"✅ All Aqua tests passed for " *
+                        pkg_name *
+                        "\")"
                 end
 
                 execute_repllike(
@@ -2325,10 +2349,10 @@ Terminates the active debug session and returns to normal execution.
             "properties" => Dict(
                 "agent_name" => Dict(
                     "type" => "string",
-                    "description" => "Name of the agent to start"
-                )
+                    "description" => "Name of the agent to start",
+                ),
             ),
-            "required" => ["agent_name"]
+            "required" => ["agent_name"],
         ),
         function (args)
             if SUPERVISOR_REGISTRY[] === nothing
@@ -2369,15 +2393,15 @@ Terminates the active debug session and returns to normal execution.
             "properties" => Dict(
                 "agent_name" => Dict(
                     "type" => "string",
-                    "description" => "Name of the agent to stop"
+                    "description" => "Name of the agent to stop",
                 ),
                 "force" => Dict(
                     "type" => "boolean",
                     "description" => "Force kill the agent (default: false)",
-                    "default" => false
-                )
+                    "default" => false,
+                ),
             ),
-            "required" => ["agent_name"]
+            "required" => ["agent_name"],
         ),
         function (args)
             if SUPERVISOR_REGISTRY[] === nothing
@@ -2402,7 +2426,7 @@ Terminates the active debug session and returns to normal execution.
                 return "Agent '$agent_name' is already stopped"
             end
 
-            success = Supervisor.stop_agent(agent; force=force)
+            success = Supervisor.stop_agent(agent; force = force)
 
             if success
                 return "Agent '$agent_name' stopped successfully"
@@ -2420,10 +2444,10 @@ Terminates the active debug session and returns to normal execution.
             "properties" => Dict(
                 "agent_name" => Dict(
                     "type" => "string",
-                    "description" => "Name of the agent to restart"
-                )
+                    "description" => "Name of the agent to restart",
+                ),
             ),
-            "required" => ["agent_name"]
+            "required" => ["agent_name"],
         ),
         function (args)
             if SUPERVISOR_REGISTRY[] === nothing
@@ -2561,7 +2585,7 @@ function stop!()
     # Stop supervisor if running
     if SUPERVISOR_REGISTRY[] !== nothing
         println("Stopping supervisor...")
-        Supervisor.stop_supervisor(SUPERVISOR_REGISTRY[]; stop_agents=true)
+        Supervisor.stop_supervisor(SUPERVISOR_REGISTRY[]; stop_agents = true)
         SUPERVISOR_REGISTRY[] = nothing
     end
 end
@@ -2854,11 +2878,8 @@ function tool_help(tool_id::Symbol; extended::Bool = false)
 
     # Try to load extended documentation if requested
     if extended
-        extended_help_path = joinpath(
-            dirname(dirname(@__FILE__)),
-            "extended-help",
-            "$(string(tool_id)).md",
-        )
+        extended_help_path =
+            joinpath(dirname(dirname(@__FILE__)), "extended-help", "$(string(tool_id)).md")
 
         if isfile(extended_help_path)
             println("\n" * "="^70)

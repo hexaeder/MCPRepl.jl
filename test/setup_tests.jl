@@ -198,7 +198,6 @@ using JSON
                 content = read(startup_path, String)
                 @test contains(content, "using MCPRepl")
                 @test contains(content, "MCPRepl.start!")
-                @test contains(content, "JULIA_MCP_PORT")
                 # Note: Port is read dynamically from security.json, not hardcoded in file
 
                 # Test 4: Check has startup script

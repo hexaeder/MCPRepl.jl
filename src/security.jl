@@ -55,7 +55,11 @@ end
 Load security configuration from workspace .mcprepl/security.json file.
 Returns nothing if no configuration exists.
 """
-function load_security_config(workspace_dir::String = pwd(), agent_name::String = "", supervisor::Bool = false)
+function load_security_config(
+    workspace_dir::String = pwd(),
+    agent_name::String = "",
+    supervisor::Bool = false,
+)
     config_path = get_security_config_path(workspace_dir)
 
     # Try to load from agents.json if in agent or supervisor mode
@@ -66,7 +70,8 @@ function load_security_config(workspace_dir::String = pwd(), agent_name::String 
         if isfile(agents_config_path)
             try
                 agents_config = TOML.parsefile(agents_config_path)
-                if haskey(agents_config, "agents") && haskey(agents_config["agents"], agent_name)
+                if haskey(agents_config, "agents") &&
+                   haskey(agents_config["agents"], agent_name)
                     agent_config = agents_config["agents"][agent_name]
 
                     mode = Symbol(get(agent_config, "mode", "lax"))

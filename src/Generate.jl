@@ -271,11 +271,11 @@ function create_tools_config(project_path::String)
         "properties" => Dict(
             "_comment" => Dict(
                 "type" => "string",
-                "description" => "Optional comment about the configuration"
+                "description" => "Optional comment about the configuration",
             ),
             "_total_tokens" => Dict(
                 "type" => "string",
-                "description" => "Total token count information"
+                "description" => "Total token count information",
             ),
             "tool_sets" => Dict(
                 "type" => "object",
@@ -286,35 +286,33 @@ function create_tools_config(project_path::String)
                         "properties" => Dict(
                             "enabled" => Dict(
                                 "type" => "boolean",
-                                "description" => "Whether this tool set is enabled"
+                                "description" => "Whether this tool set is enabled",
                             ),
                             "description" => Dict(
                                 "type" => "string",
-                                "description" => "Description of this tool set"
+                                "description" => "Description of this tool set",
                             ),
                             "tokens" => Dict(
                                 "type" => "string",
-                                "description" => "Approximate token count for this tool set"
+                                "description" => "Approximate token count for this tool set",
                             ),
                             "tools" => Dict(
                                 "type" => "array",
                                 "description" => "List of tool names in this set",
-                                "items" => Dict("type" => "string")
-                            )
+                                "items" => Dict("type" => "string"),
+                            ),
                         ),
-                        "required" => ["enabled", "description", "tools"]
-                    )
-                )
+                        "required" => ["enabled", "description", "tools"],
+                    ),
+                ),
             ),
             "individual_overrides" => Dict(
                 "type" => "object",
                 "description" => "Override individual tools regardless of their tool_set setting",
-                "patternProperties" => Dict(
-                    "^[a-z_]+\$" => Dict("type" => "boolean")
-                )
-            )
+                "patternProperties" => Dict("^[a-z_]+\$" => Dict("type" => "boolean")),
+            ),
         ),
-        "required" => ["tool_sets"]
+        "required" => ["tool_sets"],
     )
 
     schema_path = joinpath(config_dir, "tools-schema.json")
@@ -330,70 +328,98 @@ function create_tools_config(project_path::String)
                 "enabled" => true,
                 "description" => "Essential tools for basic MCP server operation",
                 "tokens" => "~600",
-                "tools" => ["ping", "usage_instructions", "investigate_environment", "tool_help", "restart_repl"]
+                "tools" => [
+                    "ping",
+                    "usage_instructions",
+                    "investigate_environment",
+                    "tool_help",
+                    "restart_repl",
+                ],
             ),
             "execution" => Dict(
                 "enabled" => true,
                 "description" => "REPL code execution",
                 "tokens" => "~500",
-                "tools" => ["ex"]
+                "tools" => ["ex"],
             ),
             "code-analysis" => Dict(
                 "enabled" => true,
                 "description" => "Basic code introspection (types, methods, names)",
                 "tokens" => "~200",
-                "tools" => ["type_info", "search_methods", "list_names"]
+                "tools" => ["type_info", "search_methods", "list_names"],
             ),
             "advanced-analysis" => Dict(
                 "enabled" => false,
                 "description" => "Advanced code inspection (macros, IR, profiling)",
                 "tokens" => "~300",
-                "tools" => ["macro_expand", "code_lowered", "code_typed", "profile_code"]
+                "tools" => ["macro_expand", "code_lowered", "code_typed", "profile_code"],
             ),
             "code-quality" => Dict(
                 "enabled" => true,
                 "description" => "Code formatting and linting",
                 "tokens" => "~100",
-                "tools" => ["format_code", "lint_package"]
+                "tools" => ["format_code", "lint_package"],
             ),
             "lsp" => Dict(
                 "enabled" => false,
                 "description" => "Language Server Protocol integrations",
                 "tokens" => "~400",
-                "tools" => ["lsp_document_symbols", "lsp_workspace_symbols", "lsp_goto_definition", "lsp_find_references", "lsp_code_actions", "lsp_rename"]
+                "tools" => [
+                    "lsp_document_symbols",
+                    "lsp_workspace_symbols",
+                    "lsp_goto_definition",
+                    "lsp_find_references",
+                    "lsp_code_actions",
+                    "lsp_rename",
+                ],
             ),
             "debugging" => Dict(
                 "enabled" => false,
                 "description" => "Interactive debugging tools",
                 "tokens" => "~1,000",
-                "tools" => ["start_debug_session", "debug_step_over", "debug_step_into", "debug_step_out", "debug_continue", "debug_stop", "open_file_and_set_breakpoint", "add_watch_expression", "copy_debug_value"]
+                "tools" => [
+                    "start_debug_session",
+                    "debug_step_over",
+                    "debug_step_into",
+                    "debug_step_out",
+                    "debug_continue",
+                    "debug_stop",
+                    "open_file_and_set_breakpoint",
+                    "add_watch_expression",
+                    "copy_debug_value",
+                ],
             ),
             "package-management" => Dict(
                 "enabled" => true,
                 "description" => "Julia package installation and removal",
                 "tokens" => "~100",
-                "tools" => ["pkg_add", "pkg_rm"]
+                "tools" => ["pkg_add", "pkg_rm"],
             ),
             "vscode" => Dict(
                 "enabled" => false,
                 "description" => "VS Code editor integration",
                 "tokens" => "~200",
-                "tools" => ["execute_vscode_command", "list_vscode_commands"]
+                "tools" => ["execute_vscode_command", "list_vscode_commands"],
             ),
             "education" => Dict(
                 "enabled" => true,
                 "description" => "Learning and quiz tools",
                 "tokens" => "~1,000",
-                "tools" => ["usage_quiz"]
+                "tools" => ["usage_quiz"],
             ),
             "supervisor" => Dict(
                 "enabled" => false,
                 "description" => "Multi-agent process supervision and management",
                 "tokens" => "~200",
-                "tools" => ["supervisor_status", "supervisor_start_agent", "supervisor_stop_agent", "supervisor_restart_agent"]
-            )
+                "tools" => [
+                    "supervisor_status",
+                    "supervisor_start_agent",
+                    "supervisor_stop_agent",
+                    "supervisor_restart_agent",
+                ],
+            ),
         ),
-        "individual_overrides" => Dict()
+        "individual_overrides" => Dict(),
     )
 
     tools_path = joinpath(config_dir, "tools.json")
@@ -474,72 +500,71 @@ if !isempty(agent_name)
 
     @info "Agent '\$agent_name' checking dependencies" mcprepl_installed=mcprepl_installed
 
-    if !mcprepl_installed
-        @info "Agent '\$agent_name': Syncing dependencies from supervisor environment..."
+    # Always sync/update MCPRepl from supervisor to ensure we have the latest version
+    @info "Agent '\$agent_name': Syncing dependencies from supervisor environment..."
 
-        # Find supervisor project (parent directory)
-        supervisor_project_path = joinpath(dirname(pwd()), "Project.toml")
+    # Find supervisor project (parent directory)
+    supervisor_project_path = joinpath(dirname(pwd()), "Project.toml")
 
-        if isfile(supervisor_project_path)
-            using TOML
-            supervisor_project = TOML.parsefile(supervisor_project_path)
-            supervisor_deps = get(supervisor_project, "deps", Dict())
+    if isfile(supervisor_project_path)
+        using TOML
+        supervisor_project = TOML.parsefile(supervisor_project_path)
+        supervisor_deps = get(supervisor_project, "deps", Dict())
 
-            # Check if supervisor is using dev version
-            supervisor_manifest_path = joinpath(dirname(pwd()), "Manifest.toml")
-            mcprepl_info = nothing
+        # Check if supervisor is using dev version
+        supervisor_manifest_path = joinpath(dirname(pwd()), "Manifest.toml")
+        mcprepl_info = nothing
 
-            if isfile(supervisor_manifest_path)
-                supervisor_manifest = TOML.parsefile(supervisor_manifest_path)
+        if isfile(supervisor_manifest_path)
+            supervisor_manifest = TOML.parsefile(supervisor_manifest_path)
 
-                # Manifest format: deps[PackageName] is an array of version entries
-                if haskey(supervisor_manifest, "deps") && haskey(supervisor_manifest["deps"], "MCPRepl")
-                    mcprepl_entries = supervisor_manifest["deps"]["MCPRepl"]
-                    # Take the first entry (usually only one)
-                    if !isempty(mcprepl_entries)
-                        mcprepl_info = mcprepl_entries[1]
-                    end
+            # Manifest format: deps[PackageName] is an array of version entries
+            if haskey(supervisor_manifest, "deps") && haskey(supervisor_manifest["deps"], "MCPRepl")
+                mcprepl_entries = supervisor_manifest["deps"]["MCPRepl"]
+                # Take the first entry (usually only one)
+                if !isempty(mcprepl_entries)
+                    mcprepl_info = mcprepl_entries[1]
                 end
             end
-
-            # Sync MCPRepl (required)
-            if mcprepl_info !== nothing && haskey(mcprepl_info, "path")
-                # Dev version - use the same path
-                dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
-                @info "  Using MCPRepl dev version from: \$dev_path"
-                Pkg.develop(path=dev_path)
-            elseif mcprepl_info !== nothing && haskey(mcprepl_info, "repo-url")
-                # Git repository version
-                repo_url = mcprepl_info["repo-url"]
-                if haskey(mcprepl_info, "repo-rev")
-                    # Specific branch/rev
-                    repo_rev = mcprepl_info["repo-rev"]
-                    @info "  Adding MCPRepl from: \$repo_url#\$repo_rev"
-                    Pkg.add(url=repo_url, rev=repo_rev)
-                else
-                    @info "  Adding MCPRepl from: \$repo_url"
-                    Pkg.add(url=repo_url)
-                end
-            else
-                # Registered version or no manifest info - just add it
-                @info "  Adding MCPRepl package"
-                Pkg.add("MCPRepl")
-            end
-
-            # Sync Revise if supervisor has it (optional but recommended)
-            if haskey(supervisor_deps, "Revise")
-                @info "  Adding Revise package (for hot reloading)"
-                Pkg.add("Revise")
-            end
-
-            # Instantiate to ensure all dependencies are ready
-            Pkg.instantiate()
-        else
-            @warn "Could not find supervisor Project.toml at \$supervisor_project_path"
-            @info "  Adding MCPRepl package anyway"
-            Pkg.add("MCPRepl")
-            Pkg.instantiate()
         end
+
+        # Sync MCPRepl (required)
+        if mcprepl_info !== nothing && haskey(mcprepl_info, "path")
+            # Dev version - use the same path
+            dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
+            @info "  Using MCPRepl dev version from: \$dev_path"
+            Pkg.develop(path=dev_path)
+        elseif mcprepl_info !== nothing && haskey(mcprepl_info, "repo-url")
+            # Git repository version
+            repo_url = mcprepl_info["repo-url"]
+            if haskey(mcprepl_info, "repo-rev")
+                # Specific branch/rev
+                repo_rev = mcprepl_info["repo-rev"]
+                @info "  Adding/updating MCPRepl from: \$repo_url#\$repo_rev"
+                Pkg.add(url=repo_url, rev=repo_rev)
+            else
+                @info "  Adding/updating MCPRepl from: \$repo_url"
+                Pkg.add(url=repo_url)
+            end
+        else
+            # Registered version or no manifest info - just add it
+            @info "  Adding MCPRepl package"
+            Pkg.add("MCPRepl")
+        end
+
+        # Sync Revise if supervisor has it (optional but recommended)
+        if haskey(supervisor_deps, "Revise")
+            @info "  Adding Revise package (for hot reloading)"
+            Pkg.add("Revise")
+        end
+
+        # Instantiate to ensure all dependencies are ready
+        Pkg.instantiate()
+    else
+        @warn "Could not find supervisor Project.toml at \$supervisor_project_path"
+        @info "  Adding MCPRepl package anyway"
+        Pkg.add("MCPRepl")
+        Pkg.instantiate()
     end
 end
 
@@ -816,7 +841,7 @@ end
 
 function create_claude_config_template(
     project_path::String,
-    port::Int,
+    _port::Int,
     api_key::Union{String,Nothing} = nothing,
 )
     println("🤖 Creating Claude Desktop config template...")
@@ -856,7 +881,7 @@ end
 
 function create_gemini_config_template(
     project_path::String,
-    port::Int,
+    _port::Int,
     api_key::Union{String,Nothing} = nothing,
 )
     println("💎 Creating Gemini config...")
