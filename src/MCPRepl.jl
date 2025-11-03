@@ -962,12 +962,17 @@ function start!(;
                 agent_count = length(registry.agents)
                 printstyled("   • Managing $agent_count agent(s)\n", color = :green)
 
-                # Start auto-start agents
+                # Start auto-start agents with staggered delays to avoid package lock conflicts
                 auto_start_count = 0
-                for (name, agent) in Supervisor.get_all_agents(registry)
+                for (i, (name, agent)) in enumerate(Supervisor.get_all_agents(registry))
                     if agent.auto_start
                         if Supervisor.start_agent(agent)
                             auto_start_count += 1
+                            # Wait between agent starts to avoid simultaneous package operations
+                            # This prevents git lock conflicts during Pkg.instantiate()
+                            if i < length(registry.agents)
+                                sleep(5)  # 5 second delay to allow package operations to complete
+                            end
                         end
                     end
                 end
