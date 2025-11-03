@@ -10,8 +10,10 @@ catch e
     @info "ℹ Revise not loaded (optional - install with: Pkg.add(\"Revise\"))"
 end
 using MCPRepl
+using HTTP
+using JSON
 
-# Start MCP REPL server for VS Code Copilot integration
+# Start MCP REPL server for AI agent integration
 try
     if Threads.threadid() == 1
         Threads.@spawn begin
@@ -20,6 +22,10 @@ try
 
                 # Check if supervisor mode is enabled via environment variable
                 supervisor_enabled = get(ENV, "JULIA_MCP_SUPERVISOR", "false") == "true"
+
+                # Check if running as an agent
+                agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
+                is_agent_mode = !isempty(agent_name)
 
                 # Port is determined by:
                 # 1. JULIA_MCP_PORT environment variable (highest priority)
@@ -30,6 +36,58 @@ try
                 sleep(0.5)
 
                 @info "✓ MCP REPL server started 🐉"
+
+                # Start heartbeat loop if in agent mode
+                if is_agent_mode
+                    @info "Agent mode: sending heartbeats as '$agent_name'"
+
+                    # Read supervisor configuration
+                    config_path = joinpath(dirname(dirname(pwd())), "agents.json")
+                    supervisor_port = 3000  # Default
+
+                    if isfile(config_path)
+                        try
+                            config = JSON.parsefile(config_path)
+                            supervisor_port = get(get(config, "supervisor", Dict()), "port", 3000)
+                        catch e
+                            @warn "Could not read supervisor config" exception=e
+                        end
+                    end
+
+                    supervisor_url = "http://localhost:\$supervisor_port/"
+
+                    # Start heartbeat task
+                    Threads.@spawn begin
+                        while true
+                            try
+                                heartbeat = Dict(
+                                    "jsonrpc" => "2.0",
+                                    "method" => "supervisor/heartbeat",
+                                    "id" => 1,
+                                    "params" => Dict(
+                                        "agent_name" => agent_name,
+                                        "pid" => getpid(),
+                                        "status" => "healthy",
+                                        "timestamp" => string(Dates.now())
+                                    )
+                                )
+
+                                HTTP.post(
+                                    supervisor_url,
+                                    ["Content-Type" => "application/json"],
+                                    JSON.json(heartbeat);
+                                    readtimeout=2,
+                                    connect_timeout=1
+                                )
+                            catch e
+                                # Silently ignore heartbeat failures (supervisor may not be running yet)
+                            end
+
+                            sleep(1)  # Send heartbeat every second
+                        end
+                    end
+                end
+
                 # Refresh the prompt to ensure clean display after test completes
                 if isdefined(Base, :active_repl)
                     try

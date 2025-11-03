@@ -23,6 +23,8 @@ Create an `agents.json` file in your project root:
 ```json
 {
   "supervisor": {
+    "port": 3000,
+    "api_key": "",
     "heartbeat_interval_seconds": 1,
     "heartbeat_timeout_count": 5,
     "max_restarts_per_hour": 10
@@ -30,6 +32,7 @@ Create an `agents.json` file in your project root:
   "agents": {
     "test-fixer": {
       "port": 3001,
+      "api_key": "",
       "directory": "agents/test-fixer",
       "description": "Analyzes and fixes test failures",
       "auto_start": true,
@@ -37,6 +40,7 @@ Create an `agents.json` file in your project root:
     },
     "performance-optimizer": {
       "port": 3002,
+      "api_key": "",
       "directory": "agents/performance-optimizer",
       "description": "Profiles code and optimizes performance",
       "auto_start": true,
@@ -46,48 +50,61 @@ Create an `agents.json` file in your project root:
 }
 ```
 
+**Note**: The configuration now includes ports and API keys for both supervisor and agents. Leave `api_key` empty for lax security mode (localhost only).
+
 ### 2. Create Agent Directories
 
-Each agent needs its own directory with a `repl` launcher script:
+Create agent directories with standard MCPRepl project structure:
 
 ```bash
-mkdir -p agents/test-fixer
-mkdir -p agents/performance-optimizer
+mkdir -p agents/test-fixer/src
+mkdir -p agents/performance-optimizer/src
 ```
 
-Create `agents/test-fixer/repl`:
+Each agent directory should contain:
+- `Project.toml` - Julia project file
+- `src/` - Agent source code
+- `.julia-startup.jl` - Startup script (created automatically)
 
+### 3. Launch Agents
+
+The unified `repl` script in the project root handles all modes:
+
+**Start supervisor:**
 ```bash
-#!/usr/bin/env bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$SCRIPT_DIR"
-exec julia --project=. --load=.julia-startup.jl "$@"
+./repl --supervisor
 ```
 
-Make it executable:
+**Start an agent:**
 ```bash
-chmod +x agents/test-fixer/repl
+./repl --agent test-fixer
+./repl --agent performance-optimizer
 ```
 
-Create a `.julia-startup.jl` in each agent directory that:
-1. Activates the agent's environment
-2. Starts MCPRepl on the agent's port
-3. Sends heartbeats to the supervisor
-
-### 3. Start Supervisor
-
-Start MCPRepl with supervisor mode enabled:
-
-```julia
-using MCPRepl
-MCPRepl.start!(supervisor=true, agents_config="agents.json")
+**Normal mode:**
+```bash
+./repl
 ```
 
-The supervisor will:
-- Load agent configurations
-- Start the supervisor monitor loop
-- Auto-start agents with `auto_start: true`
-- Monitor heartbeats and restart failed agents
+The `repl` script automatically:
+- Reads `agents.json` configuration
+- Sets environment variables (`JULIA_MCP_PORT`, `JULIA_MCP_API_KEY`, `JULIA_MCP_AGENT_NAME`)
+- Changes to agent directory
+- Starts Julia with agent-specific Project.toml
+- Begins sending heartbeats to supervisor (in agent mode)
+
+### 4. How It Works
+
+When you start an agent with `./repl --agent test-fixer`:
+
+1. Script reads `agents.json` and extracts agent configuration
+2. Sets `JULIA_MCP_PORT=3001`, `JULIA_MCP_AGENT_NAME=test-fixer`
+3. Changes to `agents/test-fixer/`
+4. Starts Julia with `.julia-startup.jl`
+5. Startup script detects agent mode and starts heartbeat loop
+6. Agent sends heartbeats to supervisor every second
+
+The supervisor monitors heartbeats and automatically restarts agents that become unresponsive
 
 ## Agent Configuration
 

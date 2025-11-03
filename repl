@@ -2,15 +2,14 @@
 
 # Start Julia REPL with MCPRepl project and auto-load startup script
 # This script launches Julia in the project and loads the recommended startup
-# script. Environment configuration is expected to be stored in project
-# configuration (.mcprepl/security.json) or a project .env file managed by
-# the project tools — the launcher intentionally does not alter environment
-# variables.
+# script. Configuration is read from agents.json in the project root.
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+CONFIG_FILE="$SCRIPT_DIR/agents.json"
 
 # Parse options
 SUPERVISOR_MODE=false
+AGENT_NAME=""
 JULIA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -19,6 +18,10 @@ while [[ $# -gt 0 ]]; do
       SUPERVISOR_MODE=true
       shift
       ;;
+    --agent)
+      AGENT_NAME="$2"
+      shift 2
+      ;;
     *)
       JULIA_ARGS+=("$1")
       shift
@@ -26,13 +29,91 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Export supervisor flag for Julia startup script
-export JULIA_MCP_SUPERVISOR="$SUPERVISOR_MODE"
-
-echo "Starting Julia REPL with MCPRepl project..."
-if [ "$SUPERVISOR_MODE" = true ]; then
-  echo "  Supervisor mode: enabled"
+# Check for jq (required for JSON parsing)
+if ! command -v jq &> /dev/null; then
+    echo "Error: jq is required for parsing agents.json"
+    echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
+    exit 1
 fi
+
+# Handle agent mode
+if [ -n "$AGENT_NAME" ]; then
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Configuration file not found: $CONFIG_FILE"
+    exit 1
+  fi
+
+  # Extract agent configuration
+  AGENT_CONFIG=$(jq -r ".agents[\"$AGENT_NAME\"]" "$CONFIG_FILE")
+
+  if [ "$AGENT_CONFIG" = "null" ]; then
+    echo "Error: Agent '$AGENT_NAME' not found in $CONFIG_FILE"
+    echo ""
+    echo "Available agents:"
+    jq -r '.agents | keys[]' "$CONFIG_FILE" 2>/dev/null || echo "  (none)"
+    exit 1
+  fi
+
+  # Extract agent settings
+  AGENT_PORT=$(echo "$AGENT_CONFIG" | jq -r '.port')
+  AGENT_DIR=$(echo "$AGENT_CONFIG" | jq -r '.directory')
+  AGENT_API_KEY=$(echo "$AGENT_CONFIG" | jq -r '.api_key // empty')
+  AGENT_DESC=$(echo "$AGENT_CONFIG" | jq -r '.description // ""')
+
+  # Resolve agent directory (relative to project root)
+  AGENT_FULL_DIR="$SCRIPT_DIR/$AGENT_DIR"
+
+  if [ ! -d "$AGENT_FULL_DIR" ]; then
+    echo "Error: Agent directory not found: $AGENT_FULL_DIR"
+    exit 1
+  fi
+
+  # Set environment variables for agent
+  export JULIA_MCP_PORT="$AGENT_PORT"
+  export JULIA_MCP_AGENT_NAME="$AGENT_NAME"
+
+  if [ -n "$AGENT_API_KEY" ]; then
+    export JULIA_MCP_API_KEY="$AGENT_API_KEY"
+  fi
+
+  # Change to agent directory
+  cd "$AGENT_FULL_DIR" || exit 1
+
+  echo "Starting Julia REPL for agent: $AGENT_NAME"
+  echo "  Description: $AGENT_DESC"
+  echo "  Port: $AGENT_PORT"
+  echo "  Directory: $AGENT_DIR"
+  echo ""
+
+  exec julia --project="$AGENT_FULL_DIR" --load="$AGENT_FULL_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
+fi
+
+# Handle supervisor mode
+if [ "$SUPERVISOR_MODE" = true ]; then
+  export JULIA_MCP_SUPERVISOR="true"
+
+  # Extract supervisor port from config if available
+  if [ -f "$CONFIG_FILE" ]; then
+    SUPERVISOR_PORT=$(jq -r '.supervisor.port // empty' "$CONFIG_FILE")
+    if [ -n "$SUPERVISOR_PORT" ]; then
+      export JULIA_MCP_PORT="$SUPERVISOR_PORT"
+    fi
+
+    SUPERVISOR_API_KEY=$(jq -r '.supervisor.api_key // empty' "$CONFIG_FILE")
+    if [ -n "$SUPERVISOR_API_KEY" ]; then
+      export JULIA_MCP_API_KEY="$SUPERVISOR_API_KEY"
+    fi
+  fi
+
+  echo "Starting Julia REPL with MCPRepl project..."
+  echo "  Supervisor mode: enabled"
+  echo ""
+
+  exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
+fi
+
+# Normal mode
+echo "Starting Julia REPL with MCPRepl project..."
 echo ""
 
 exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
