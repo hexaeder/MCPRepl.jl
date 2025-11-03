@@ -457,14 +457,14 @@ using Pkg
 Pkg.activate(".")
 import Base.Threads
 
-# If running as agent, ensure MCPRepl is synced from supervisor environment
+# If running as agent, ensure MCPRepl and other dependencies are synced from supervisor
 agent_name = get(ENV, "JULIA_MCP_AGENT_NAME", "")
 if !isempty(agent_name)
     # Check if MCPRepl is in this agent's environment
     agent_deps = Pkg.project().dependencies
 
     if !haskey(agent_deps, "MCPRepl")
-        @info "Agent '\$agent_name': Syncing MCPRepl from supervisor environment..."
+        @info "Agent '\$agent_name': Syncing dependencies from supervisor environment..."
 
         # Find supervisor project (parent directory)
         supervisor_project_path = joinpath(dirname(pwd()), "Project.toml")
@@ -472,36 +472,43 @@ if !isempty(agent_name)
         if isfile(supervisor_project_path)
             using TOML
             supervisor_project = TOML.parsefile(supervisor_project_path)
+            supervisor_deps = get(supervisor_project, "deps", Dict())
 
             # Check if supervisor is using dev version
             supervisor_manifest_path = joinpath(dirname(pwd()), "Manifest.toml")
+            supervisor_manifest = nothing
             if isfile(supervisor_manifest_path)
                 supervisor_manifest = TOML.parsefile(supervisor_manifest_path)
+            end
 
-                # Look for MCPRepl in manifest
-                if haskey(supervisor_manifest, "deps") && haskey(supervisor_manifest["deps"], "MCPRepl")
-                    mcprepl_info = supervisor_manifest["deps"]["MCPRepl"]
+            # Sync MCPRepl (required)
+            if supervisor_manifest !== nothing &&
+               haskey(supervisor_manifest, "deps") &&
+               haskey(supervisor_manifest["deps"], "MCPRepl")
 
-                    # Check if it's a dev dependency (has path)
-                    if haskey(mcprepl_info, "path")
-                        # Dev version - use the same path
-                        dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
-                        @info "  Using dev version from: \$dev_path"
-                        Pkg.develop(path=dev_path)
-                    else
-                        # Registered version - add it (will sync via Manifest)
-                        @info "  Adding MCPRepl package"
-                        Pkg.add("MCPRepl")
-                    end
+                mcprepl_info = supervisor_manifest["deps"]["MCPRepl"]
+
+                # Check if it's a dev dependency (has path)
+                if haskey(mcprepl_info, "path")
+                    # Dev version - use the same path
+                    dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
+                    @info "  Using MCPRepl dev version from: \$dev_path"
+                    Pkg.develop(path=dev_path)
                 else
-                    # Fallback: just add MCPRepl
+                    # Registered version - add it
                     @info "  Adding MCPRepl package"
                     Pkg.add("MCPRepl")
                 end
             else
-                # No manifest, just add it
+                # Fallback: just add MCPRepl
                 @info "  Adding MCPRepl package"
                 Pkg.add("MCPRepl")
+            end
+
+            # Sync Revise if supervisor has it (optional but recommended)
+            if haskey(supervisor_deps, "Revise")
+                @info "  Adding Revise package (for hot reloading)"
+                Pkg.add("Revise")
             end
 
             # Instantiate to ensure all dependencies are ready
