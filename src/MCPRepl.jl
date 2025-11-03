@@ -14,10 +14,17 @@ export @mcp_tool
 # Version tracking - gets git commit hash at runtime
 function version_info()
     try
-        commit = readchomp(`git -C $(pkgdir(@__MODULE__)) rev-parse --short HEAD`)
-        dirty = success(`git -C $(pkgdir(@__MODULE__)) diff --quiet`) ? "" : "-dirty"
-        return "$(commit)$(dirty)"
-    catch
+        pkg_dir = pkgdir(@__MODULE__)
+        # Check if it's a git repo first
+        if isdir(joinpath(pkg_dir, ".git"))
+            commit = readchomp(`git -C $(pkg_dir) rev-parse --short HEAD`)
+            dirty = success(`git -C $(pkg_dir) diff --quiet`) ? "" : "-dirty"
+            return "$(commit)$(dirty)"
+        else
+            # Not a git repo (installed package), try to read from Project.toml
+            return "installed"
+        end
+    catch e
         return "unknown"
     end
 end
@@ -886,6 +893,7 @@ function start!(;
     # Load or prompt for security configuration
     # Pass agent_name and supervisor flag so it can load from agents.json if needed
     # Use workspace_dir (project root) not pwd() (which may be agent dir)
+    @info "Loading security config" workspace_dir=workspace_dir agent_name=agent_name supervisor=supervisor
     security_config = load_security_config(workspace_dir, agent_name, supervisor)
 
     if security_config === nothing
@@ -895,6 +903,8 @@ function start!(;
         println("Run MCPRepl.setup() to configure API keys and security settings.")
         println()
         error("Security configuration required. Run MCPRepl.setup() first.")
+    else
+        @info "Security config loaded successfully" port=security_config.port mode=security_config.mode
     end
 
     # Determine port: priority is function arg > supervisor config > security config
