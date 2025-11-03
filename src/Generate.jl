@@ -462,7 +462,7 @@ import Base.Threads
 agent_name = ""
 for arg in ARGS
     if startswith(arg, "--agent=")
-        agent_name = split(arg, "=", limit=2)[2]
+        global agent_name = split(arg, "=", limit=2)[2]
         break
     end
 end
