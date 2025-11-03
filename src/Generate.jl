@@ -471,10 +471,14 @@ try
         Threads.@spawn begin
             try
                 sleep(1)
+
+                # Check if supervisor mode is enabled via environment variable
+                supervisor_enabled = get(ENV, "JULIA_MCP_SUPERVISOR", "false") == "true"
+
                 # Port is determined by:
                 # 1. JULIA_MCP_PORT environment variable (highest priority)
                 # 2. .mcprepl/security.json port field (default)
-                MCPRepl.start!(verbose=false)
+                MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
@@ -517,10 +521,33 @@ function create_repl_script(project_path::String)
 
 SCRIPT_DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
 
+# Parse options
+SUPERVISOR_MODE=false
+JULIA_ARGS=()
+
+while [[ \$# -gt 0 ]]; do
+  case \$1 in
+    --supervisor)
+      SUPERVISOR_MODE=true
+      shift
+      ;;
+    *)
+      JULIA_ARGS+=("\$1")
+      shift
+      ;;
+  esac
+done
+
+# Export supervisor flag for Julia startup script
+export JULIA_MCP_SUPERVISOR="\$SUPERVISOR_MODE"
+
 echo "Starting Julia REPL with MCPRepl project..."
+if [ "\$SUPERVISOR_MODE" = true ]; then
+  echo "  Supervisor mode: enabled"
+fi
 echo ""
 
-exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\$@"
+exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 """
 
     repl_path = joinpath(project_path, "repl")

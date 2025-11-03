@@ -17,10 +17,14 @@ try
         Threads.@spawn begin
             try
                 sleep(1)
+
+                # Check if supervisor mode is enabled via environment variable
+                supervisor_enabled = get(ENV, "JULIA_MCP_SUPERVISOR", "false") == "true"
+
                 # Port is determined by:
                 # 1. JULIA_MCP_PORT environment variable (highest priority)
                 # 2. .mcprepl/security.json port field (default)
-                MCPRepl.start!(verbose=false)
+                MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)

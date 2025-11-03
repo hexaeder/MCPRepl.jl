@@ -9,7 +9,30 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+# Parse options
+SUPERVISOR_MODE=false
+JULIA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --supervisor)
+      SUPERVISOR_MODE=true
+      shift
+      ;;
+    *)
+      JULIA_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# Export supervisor flag for Julia startup script
+export JULIA_MCP_SUPERVISOR="$SUPERVISOR_MODE"
+
 echo "Starting Julia REPL with MCPRepl project..."
+if [ "$SUPERVISOR_MODE" = true ]; then
+  echo "  Supervisor mode: enabled"
+fi
 echo ""
 
-exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "$@"
+exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
