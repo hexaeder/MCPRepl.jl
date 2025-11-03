@@ -5,6 +5,7 @@
 using Random
 using SHA
 using JSON
+using TOML
 
 # Security configuration structure
 struct SecurityConfig
@@ -65,7 +66,6 @@ function load_security_config(workspace_dir::String = pwd())
         agents_config_path = joinpath(dirname(workspace_dir), ".mcprepl", "agents.json")
         if isfile(agents_config_path)
             try
-                using TOML
                 agents_config = TOML.parsefile(agents_config_path)
                 if haskey(agents_config, "agents") && haskey(agents_config["agents"], agent_name)
                     agent_config = agents_config["agents"][agent_name]
