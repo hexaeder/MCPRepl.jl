@@ -48,6 +48,18 @@ if !isempty(agent_name)
                 dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
                 @info "  Using MCPRepl dev version from: $dev_path"
                 Pkg.develop(path=dev_path)
+            elseif mcprepl_info !== nothing && haskey(mcprepl_info, "repo-url")
+                # Git repository version
+                repo_url = mcprepl_info["repo-url"]
+                if haskey(mcprepl_info, "repo-rev")
+                    # Specific branch/rev
+                    repo_rev = mcprepl_info["repo-rev"]
+                    @info "  Adding MCPRepl from: $repo_url#$repo_rev"
+                    Pkg.add(url=repo_url, rev=repo_rev)
+                else
+                    @info "  Adding MCPRepl from: $repo_url"
+                    Pkg.add(url=repo_url)
+                end
             else
                 # Registered version or no manifest info - just add it
                 @info "  Adding MCPRepl package"
