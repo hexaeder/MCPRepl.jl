@@ -69,7 +69,7 @@ function load_security_config(
     if !isempty(agent_name) && !isfile(config_path)
         if isfile(agents_config_path)
             try
-                agents_config = TOML.parsefile(agents_config_path)
+                agents_config = JSON.parsefile(agents_config_path)
                 if haskey(agents_config, "agents") &&
                    haskey(agents_config["agents"], agent_name)
                     agent_config = agents_config["agents"][agent_name]
@@ -92,7 +92,7 @@ function load_security_config(
     if supervisor && !isfile(config_path)
         if isfile(agents_config_path)
             try
-                agents_config = TOML.parsefile(agents_config_path)
+                agents_config = JSON.parsefile(agents_config_path)
                 if haskey(agents_config, "supervisor")
                     supervisor_config = agents_config["supervisor"]
 
