@@ -566,7 +566,15 @@ try
                 # Start MCPRepl with parsed arguments
                 # Port is determined by .mcprepl/security.json or agents.json
                 # Heartbeats are automatically started if agent_name is provided
-                MCPRepl.start!(verbose=false, supervisor=supervisor_enabled, agent_name=agent_name_arg)
+                # Check if agent_name parameter is supported (for backward compatibility)
+                start_methods = methods(MCPRepl.start!)
+                has_agent_name = any(m -> :agent_name in Base.kwarg_decl(m), start_methods)
+
+                if has_agent_name
+                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled, agent_name=agent_name_arg)
+                else
+                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
+                end
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
