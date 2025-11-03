@@ -990,7 +990,9 @@ function start!(;
 
     # Start heartbeat task if running as an agent
     if !isempty(agent_name)
-        start_agent_heartbeat(agent_name, agents_config, verbose)
+        # Use absolute path to agents_config so agent can find it from its own directory
+        agents_config_path = joinpath(workspace_dir, agents_config)
+        start_agent_heartbeat(agent_name, agents_config_path, verbose)
     end
 
     ping_tool = @mcp_tool(
