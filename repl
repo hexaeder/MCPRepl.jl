@@ -77,8 +77,8 @@ if [ -n "$AGENT_NAME" ]; then
   echo "  Directory: $AGENT_DIR"
   echo ""
 
-  # Pass agent name as script argument after --
-  exec julia --project="$AGENT_FULL_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}" -- --agent="$AGENT_NAME"
+  # Pass agent name via global variable set before loading startup script
+  exec julia --project="$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\"$AGENT_NAME\"" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
 fi
 
 # Handle supervisor mode
@@ -87,8 +87,8 @@ if [ "$SUPERVISOR_MODE" = true ]; then
   echo "  Supervisor mode: enabled"
   echo ""
 
-  # Pass supervisor flag as script argument
-  exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}" -- --supervisor
+  # Pass supervisor flag via global variable set before loading startup script
+  exec julia --project="$SCRIPT_DIR" -e "global MCPREPL_SUPERVISOR=true" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
 fi
 
 # Normal mode

@@ -458,13 +458,11 @@ Pkg.activate(".")
 import Base.Threads
 
 # If running as agent, ensure MCPRepl and other dependencies are synced from supervisor
-# Parse agent name from command line arguments (--agent=name)
-agent_name = ""
-for arg in ARGS
-    if startswith(arg, "--agent=")
-        global agent_name = split(arg, "=", limit=2)[2]
-        break
-    end
+# Check if agent name was set via -e flag (global MCPREPL_AGENT_NAME)
+agent_name = if isdefined(Main, :MCPREPL_AGENT_NAME)
+    String(Main.MCPREPL_AGENT_NAME)
+else
+    ""
 end
 if !isempty(agent_name)
     # Check if MCPRepl is actually installed (not just listed in Project.toml)
@@ -561,16 +559,9 @@ try
             try
                 sleep(1)
 
-                # Parse arguments from command line
-                supervisor_enabled = false
-                agent_name_arg = ""
-                for arg in ARGS
-                    if arg == "--supervisor"
-                        supervisor_enabled = true
-                    elseif startswith(arg, "--agent=")
-                        agent_name_arg = split(arg, "=", limit=2)[2]
-                    end
-                end
+                # Check if supervisor mode or agent name was set via -e flags
+                supervisor_enabled = isdefined(Main, :MCPREPL_SUPERVISOR) ? Main.MCPREPL_SUPERVISOR : false
+                agent_name_arg = isdefined(Main, :MCPREPL_AGENT_NAME) ? String(Main.MCPREPL_AGENT_NAME) : ""
 
                 # Start MCPRepl with parsed arguments
                 # Port is determined by .mcprepl/security.json or agents.json
@@ -687,8 +678,8 @@ if [ -n "\$AGENT_NAME" ]; then
   echo "  Directory: \$AGENT_DIR"
   echo ""
 
-  # Pass agent name as script argument after --
-  exec julia --project="\$AGENT_FULL_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}" -- --agent="\$AGENT_NAME"
+  # Pass agent name via global variable set before loading startup script
+  exec julia --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\"\$AGENT_NAME\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
 
 # Handle supervisor mode
@@ -697,8 +688,8 @@ if [ "\$SUPERVISOR_MODE" = true ]; then
   echo "  Supervisor mode: enabled"
   echo ""
 
-  # Pass supervisor flag as script argument
-  exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}" -- --supervisor
+  # Pass supervisor flag via global variable set before loading startup script
+  exec julia --project="\$SCRIPT_DIR" -e "global MCPREPL_SUPERVISOR=true" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
 
 # Normal mode
