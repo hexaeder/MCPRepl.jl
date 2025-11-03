@@ -498,7 +498,7 @@ end
 # ============================================================================
 
 """
-    load_agents_config(path::String="agents.json")
+    load_agents_config(path::String=".mcprepl/agents.json")
 
 Load agents configuration from JSON file.
 
@@ -522,7 +522,7 @@ Example agents.json:
 }
 ```
 """
-function load_agents_config(path::String="agents.json")::Union{AgentRegistry,Nothing}
+function load_agents_config(path::String=".mcprepl/agents.json")::Union{AgentRegistry,Nothing}
     if !isfile(path)
         @warn "Agents config file not found" path=path
         return nothing

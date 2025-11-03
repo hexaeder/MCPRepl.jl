@@ -793,7 +793,7 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
     # Spawn heartbeat task on a separate thread
     Threads.@spawn begin
         # Read supervisor configuration
-        config_path = joinpath(".mcprepl", agents_config)
+        config_path = agents_config  # Already includes .mcprepl/ prefix
         supervisor_port = 3000  # Default
 
         if isfile(config_path)
@@ -848,7 +848,7 @@ function start!(;
     verbose::Bool = true,
     security_mode::Union{Symbol,Nothing} = nothing,
     supervisor::Bool = false,
-    agents_config::String = "agents.json",
+    agents_config::String = ".mcprepl/agents.json",
 )
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
