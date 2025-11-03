@@ -97,8 +97,8 @@ function load_security_config(
         end
     end
 
-    # If supervisor mode and no local security.json, try reading supervisor config from agents.json
-    if supervisor && !isfile(config_path)
+    # If supervisor mode, ALWAYS use agents.json (never security.json)
+    if supervisor
         if isfile(agents_config_path)
             try
                 agents_config = JSON.parsefile(agents_config_path)
@@ -118,13 +118,16 @@ function load_security_config(
                     @info "Loaded security config for supervisor from agents.json" mode=mode port=port
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
                 else
-                    @warn "Supervisor config not found in agents.json" path=agents_config_path
+                    error("Supervisor config not found in agents.json at $agents_config_path")
                 end
             catch e
-                @warn "Failed to load supervisor config from agents.json" path=agents_config_path exception=e
+                if e isa ErrorException && contains(e.msg, "Supervisor config not found")
+                    rethrow(e)  # Re-throw our specific error
+                end
+                error("Failed to load supervisor config from agents.json: $e")
             end
         else
-            @warn "Agents config file not found for supervisor" path=agents_config_path
+            error("Agents config file not found for supervisor at $agents_config_path")
         end
     end
 
