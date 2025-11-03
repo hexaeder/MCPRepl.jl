@@ -907,31 +907,13 @@ function start!(;
         @info "Security config loaded successfully" port=security_config.port mode=security_config.mode
     end
 
-    # Determine port: priority is function arg > supervisor config > security config
+    # Determine port: function arg overrides config, otherwise use what load_security_config() found
     actual_port = if port !== nothing
         @info "Using port from function argument" port=port
         port
-    elseif supervisor
-        # In supervisor mode, read port from agents config (use absolute path)
-        agents_config_path = joinpath(workspace_dir, agents_config)
-        if isfile(agents_config_path)
-            try
-                config = JSON.parsefile(agents_config_path)
-                supervisor_config = get(config, "supervisor", Dict())
-                if !haskey(supervisor_config, "port")
-                    error("Supervisor mode requires 'port' field in $agents_config_path under 'supervisor' section")
-                end
-                sup_port = supervisor_config["port"]
-                @info "Using port from supervisor config in agents.json" port=sup_port path=agents_config_path
-                sup_port
-            catch e
-                error("Failed to read supervisor port from $agents_config_path: $e")
-            end
-        else
-            error("Supervisor mode requires $agents_config_path file with supervisor.port configuration")
-        end
     else
-        @info "Using port from security config" port=security_config.port agent_name=agent_name
+        # load_security_config already loaded the right port based on mode (agent/supervisor/normal)
+        @info "Using port from loaded config" port=security_config.port mode=(supervisor ? "supervisor" : (agent_name != "" ? "agent:$agent_name" : "normal"))
         security_config.port
     end
 

@@ -65,8 +65,8 @@ function load_security_config(
     # Try to load from agents.json if in agent or supervisor mode
     agents_config_path = joinpath(workspace_dir, ".mcprepl", "agents.json")
 
-    # If agent mode and no local security.json, try reading from agents.json
-    if !isempty(agent_name) && !isfile(config_path)
+    # If agent mode, ALWAYS use agents.json (never security.json)
+    if !isempty(agent_name)
         if isfile(agents_config_path)
             try
                 agents_config = JSON.parsefile(agents_config_path)
@@ -87,13 +87,16 @@ function load_security_config(
                     @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port path=agents_config_path
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
                 else
-                    @warn "Agent not found in agents.json" agent=agent_name path=agents_config_path available_agents=collect(keys(get(agents_config, "agents", Dict())))
+                    error("Agent '$agent_name' not found in agents.json at $agents_config_path. Available agents: $(collect(keys(get(agents_config, "agents", Dict()))))")
                 end
             catch e
-                @warn "Failed to load agent config from agents.json" agent=agent_name path=agents_config_path exception=e
+                if e isa ErrorException && contains(e.msg, "not found in agents.json")
+                    rethrow(e)  # Re-throw our specific error
+                end
+                error("Failed to load agent config from agents.json: $e")
             end
         else
-            @warn "Agents config file not found for agent" agent=agent_name path=agents_config_path
+            error("Agents config file not found for agent '$agent_name' at $agents_config_path")
         end
     end
 
