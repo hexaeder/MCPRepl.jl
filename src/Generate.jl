@@ -679,7 +679,7 @@ if [ -n "\$AGENT_NAME" ]; then
   echo ""
 
   # Pass agent name via global variable set before loading startup script
-  exec julia --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\\\"\$AGENT_NAME\\\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+  exec julia -i --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\\\"\$AGENT_NAME\\\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
 
 # Handle supervisor mode
@@ -689,14 +689,14 @@ if [ "\$SUPERVISOR_MODE" = true ]; then
   echo ""
 
   # Pass supervisor flag via global variable set before loading startup script
-  exec julia --project="\$SCRIPT_DIR" -e "global MCPREPL_SUPERVISOR=true" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+  exec julia -i --project="\$SCRIPT_DIR" -e "global MCPREPL_SUPERVISOR=true" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 fi
 
 # Normal mode
 echo "Starting Julia REPL with MCPRepl project..."
 echo ""
 
-exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+exec julia -i --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 """
 
     repl_path = joinpath(project_path, "repl")
