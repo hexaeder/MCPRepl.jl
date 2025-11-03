@@ -376,15 +376,33 @@ function supervisor_monitor_loop(registry::AgentRegistry)
             agents = get_all_agents(registry)
 
             for (name, agent) in agents
-                # Skip if agent is intentionally stopped or still starting
-                # Agents in :starting status haven't sent their first heartbeat yet
-                if agent.status == :stopped || agent.status == :starting
+                # Skip if agent is intentionally stopped
+                if agent.status == :stopped
+                    continue
+                end
+
+                # For agents in :starting status, check if they've been starting too long
+                if agent.status == :starting
+                    if agent.uptime_start !== nothing
+                        startup_duration = now() - agent.uptime_start
+                        startup_seconds = Dates.value(startup_duration) ÷ 1000
+                        # Give agents 60 seconds to start and send first heartbeat
+                        if startup_seconds > 60
+                            @warn "Agent stuck in starting state" name=name startup_seconds=startup_seconds
+                            lock(registry.lock) do
+                                agent.status = :dead
+                                if should_restart(agent, registry)
+                                    restart_agent(agent)
+                                end
+                            end
+                        end
+                    end
                     continue
                 end
 
                 # Calculate heartbeat age
                 age = now() - agent.last_heartbeat
-                age_seconds = div(age, Second(1))
+                age_seconds = Dates.value(age) ÷ 1000  # Convert milliseconds to seconds
 
                 # Check if heartbeat is late
                 if age_seconds > registry.heartbeat_interval
