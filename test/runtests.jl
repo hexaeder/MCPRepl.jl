@@ -1,6 +1,8 @@
 using Test
 
 @testset "MCPRepl Tests" begin
+    include("version_tests.jl")
+    include("supervisor_tests.jl")
     include("security_tests.jl")
     include("setup_tests.jl")
     include("server_tests.jl")

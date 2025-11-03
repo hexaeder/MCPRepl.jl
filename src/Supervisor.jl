@@ -89,8 +89,9 @@ function uptime_string(state::AgentState)::String
     end
 
     duration = now() - state.uptime_start
-    hours = div(duration, Hour(1))
-    mins = div(duration - Hour(hours), Minute(1))
+    total_seconds = Dates.value(duration) ÷ 1000  # Convert milliseconds to seconds
+    hours = total_seconds ÷ 3600
+    mins = (total_seconds % 3600) ÷ 60
 
     if hours > 0
         return "$(hours)h $(mins)m"

@@ -15,16 +15,32 @@ export @mcp_tool
 function version_info()
     try
         pkg_dir = pkgdir(@__MODULE__)
-        # Check if it's a git repo first
-        if isdir(joinpath(pkg_dir, ".git"))
-            commit = readchomp(`git -C $(pkg_dir) rev-parse --short HEAD`)
-            dirty = success(`git -C $(pkg_dir) diff --quiet`) ? "" : "-dirty"
-            return "$(commit)$(dirty)"
-        else
-            # Not a git repo (installed package), try to read from Project.toml
-            return "installed"
+        git_dir = joinpath(pkg_dir, ".git")
+
+        # Check if it's a git repo first (dev package)
+        if isdir(git_dir)
+            try
+                commit = readchomp(`git -C $(pkg_dir) rev-parse --short HEAD`)
+                dirty = success(`git -C $(pkg_dir) diff --quiet`) ? "" : "-dirty"
+                return "$(commit)$(dirty)"
+            catch git_error
+                @warn "Failed to get git version" exception=git_error
+                # Fall through to read from Project.toml
+            end
         end
+
+        # Read version from Project.toml
+        project_file = joinpath(pkg_dir, "Project.toml")
+        if isfile(project_file)
+            project = TOML.parsefile(project_file)
+            if haskey(project, "version")
+                return "v$(project["version"])"
+            end
+        end
+
+        return "unknown"
     catch e
+        @warn "Failed to get version info" exception=e
         return "unknown"
     end
 end
