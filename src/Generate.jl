@@ -900,7 +900,7 @@ function create_gemini_config_template(
 {
   "mcpServers": {
     "julia-repl": {
-      "url": "http://localhost:\${JULIA_MCP_PORT}"
+      "httpUrl": "http://localhost:\${JULIA_MCP_PORT}"
     }
   }
 }
@@ -910,7 +910,7 @@ function create_gemini_config_template(
 {
   "mcpServers": {
     "julia-repl": {
-      "url": "http://localhost:\${JULIA_MCP_PORT}",
+      "httpUrl": "http://localhost:\${JULIA_MCP_PORT}",
       "headers": {
         "Authorization": "Bearer \${JULIA_MCP_API_KEY}"
       }
@@ -920,17 +920,13 @@ function create_gemini_config_template(
 """
     end
 
-    # Write to both locations: project template and user's .gemini directory
-    template_path = joinpath(project_path, "gemini-settings.json")
-    write(template_path, config_template)
-
-    # Also write to ~/.gemini/settings.json
-    gemini_dir = joinpath(homedir(), ".gemini")
+    # Write to project's .gemini directory only
+    gemini_dir = joinpath(project_path, ".gemini")
     mkpath(gemini_dir)
     gemini_config_path = joinpath(gemini_dir, "settings.json")
     write(gemini_config_path, config_template)
 
-    println("   ✓ Written to ~/.gemini/settings.json")
+    println("   ✓ Written to .gemini/settings.json")
     return true
 end
 
