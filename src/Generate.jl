@@ -446,52 +446,10 @@ end
 function create_startup_script(project_path::String, port::Int, emoticon::String = "🐉")
     println("📝 Creating Julia startup script...")
 
-    startup_content = """
-using Pkg
-Pkg.activate(".")
-import Base.Threads
-
-# Load Revise for hot reloading (optional but recommended)
-try
-    using Revise
-    @info "✓ Revise loaded - code changes will be tracked and auto-reloaded"
-catch e
-    @info "ℹ Revise not loaded (optional - install with: Pkg.add(\\"Revise\\"))"
-end
-using MCPRepl
-# Start MCP REPL server for AI agent integration
-try
-    if Threads.threadid() == 1
-        Threads.@spawn begin
-            try
-                sleep(1)
-                # Port is determined by:
-                # 1. JULIA_MCP_PORT environment variable (highest priority)
-                # 2. .mcprepl/security.json port field (default)
-                MCPRepl.start!(verbose=false)
-
-                # Wait a moment for server to fully initialize
-                sleep(0.5)
-
-                @info "✓ MCP REPL server started $emoticon"
-                # Refresh the prompt to ensure clean display
-                if isdefined(Base, :active_repl)
-                    try
-                        println()  # Add clean newline
-                        REPL.LineEdit.refresh_line(Base.active_repl.mistate)
-                    catch
-                        # Ignore if REPL isn't ready yet
-                    end
-                end
-            catch e
-                @warn "Could not start MCP REPL server" exception=e
-            end
-        end
-    end
-catch e
-    @warn "Could not start MCP REPL server" exception=e
-end
-"""
+    startup_content = render_template(
+        "julia-startup.jl";
+        emoticon = emoticon
+    )
 
     startup_path = joinpath(project_path, ".julia-startup.jl")
     write(startup_path, startup_content)
@@ -539,14 +497,12 @@ function create_env_file(
 )
     println("🔐 Creating .env file...")
 
-    env_content = "# MCPRepl Environment Configuration\n"
-    env_content *= "# This file contains sensitive information - DO NOT COMMIT\n\n"
-
-    if api_key !== nothing
-        env_content *= "JULIA_MCP_API_KEY=$api_key\n"
-    end
-
-    env_content *= "JULIA_MCP_PORT=$port\n"
+    env_content = render_template(
+        "env";
+        has_api_key = api_key !== nothing,
+        api_key = api_key,
+        port = port
+    )
 
     env_path = joinpath(project_path, ".env")
     write(env_path, env_content)
@@ -564,18 +520,15 @@ function create_claude_env_settings(
     claude_dir = joinpath(project_path, ".claude")
     mkpath(claude_dir)
 
-    settings =
-        Dict("env" => Dict{String,String}(), "enabledMcpjsonServers" => ["julia-repl"])
-
-    if api_key !== nothing
-        settings["env"]["JULIA_MCP_API_KEY"] = api_key
-    end
-
-    # Always add the port
-    settings["env"]["JULIA_MCP_PORT"] = string(port)
+    settings_content = render_template(
+        "claude-settings.local.json";
+        has_api_key = api_key !== nothing,
+        api_key = api_key,
+        port = string(port)
+    )
 
     settings_path = joinpath(claude_dir, "settings.local.json")
-    write(settings_path, JSON.json(settings, 2))
+    write(settings_path, settings_content)
 
     return true
 end
@@ -593,17 +546,15 @@ function create_vscode_config(
     # Build server config with hardcoded values
     # NOTE: Claude Code does not support environment variable expansion in mcp.json
     # So we hardcode the values here and add the file to .gitignore
-    server_config = Dict{String,Any}("type" => "http", "url" => "http://localhost:$port")
-
-    # Add Authorization header if api_key is provided
-    if api_key !== nothing
-        server_config["headers"] = Dict{String,Any}("Authorization" => "Bearer $api_key")
-    end
-
-    mcp_config = Dict("servers" => Dict("julia-repl" => server_config), "inputs" => [])
+    mcp_content = render_template(
+        "vscode-mcp.json";
+        port = port,
+        has_api_key = api_key !== nothing,
+        api_key = api_key
+    )
 
     mcp_path = joinpath(vscode_dir, "mcp.json")
-    write(mcp_path, JSON.json(mcp_config, 2))
+    write(mcp_path, mcp_content)
 
     return true
 end
@@ -614,59 +565,39 @@ function create_vscode_settings(project_path::String)
     vscode_dir = joinpath(project_path, ".vscode")
     mkpath(vscode_dir)
 
-    settings = Dict(
-        "julia.environmentPath" => "\${workspaceFolder}",
-        "julia.additionalArgs" => ["--load=\${workspaceFolder}/.julia-startup.jl"],
-        "vscode-remote-control.allowedCommands" => VSCODE_ALLOWED_COMMANDS,
+    # Convert VSCODE_ALLOWED_COMMANDS to JSON string
+    allowed_commands_json = JSON.json(VSCODE_ALLOWED_COMMANDS)
+
+    settings_content = render_template(
+        "vscode-settings.json";
+        allowed_commands_json = allowed_commands_json
     )
 
     settings_path = joinpath(vscode_dir, "settings.json")
-    write(settings_path, JSON.json(settings, 2))
+    write(settings_path, settings_content)
 end
 
 function create_claude_config_template(
     project_path::String,
-    port::Int,
+    _port::Int,  # Unused - template uses ${JULIA_MCP_PORT} placeholder
     api_key::Union{String,Nothing} = nothing,
 )
     println("🤖 Creating Claude Desktop config template...")
 
-    config_template = if api_key === nothing
-        """
-{
-  "mcpServers": {
-    "julia-repl": {
-      "type": "http",
-      "url": "http://localhost:\${JULIA_MCP_PORT}"
-    }
-  }
-}
-"""
-    else
-        """
-{
-  "mcpServers": {
-    "julia-repl": {
-      "type": "http",
-      "url": "http://localhost:\${JULIA_MCP_PORT}",
-      "headers": {
-        "Authorization": "Bearer \${JULIA_MCP_API_KEY}"
-      }
-    }
-  }
-}
-"""
-    end
+    config_content = render_template(
+        "claude-mcp-config.json";
+        has_api_key = api_key !== nothing
+    )
 
     template_path = joinpath(project_path, ".mcp.json")
-    write(template_path, config_template)
+    write(template_path, config_content)
 
     return true
 end
 
 function create_gemini_config_template(
     project_path::String,
-    port::Int,
+    _port::Int,  # Unused - template uses ${JULIA_MCP_PORT} placeholder
     api_key::Union{String,Nothing} = nothing,
 )
     println("💎 Creating Gemini config...")

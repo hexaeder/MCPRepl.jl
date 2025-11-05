@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "julia-repl": {
+      "type": "http",
+      "url": "http://localhost:{{port}}"{{#if has_api_key}},
+      "headers": {
+        "Authorization": "Bearer {{api_key}}"
+      }{{/if}}
+    }
+  },
+  "inputs": []
+}
