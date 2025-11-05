@@ -1,3 +1,4 @@
+
 module MCPRepl
 
 using REPL
@@ -1010,35 +1011,95 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
         end
     )
 
-    restart_repl_tool = @mcp_tool(
-        :restart_repl,
-        "Restart the Julia REPL. Returns immediately, then server restarts (wait 5s, retry every 2s).",
-        Dict("type" => "object", "properties" => Dict(), "required" => []),
+    manage_repl_tool = @mcp_tool(
+        :manage_repl,
+        """Manage the Julia REPL (restart or shutdown).
+
+**Commands:**
+- `restart`: Restart the Julia REPL (auto-restart will continue)
+- `shutdown`: Shutdown the Julia REPL and disable auto-restart
+
+**Restart Behavior:**
+After restart, the REPL will automatically restart again unless a shutdown was requested.
+Returns immediately, then server restarts (wait 5s, retry every 2s).
+
+**Shutdown Behavior:**
+Creates a flag file that prevents auto-restart, then triggers a clean shutdown.
+The REPL will exit and stay stopped until manually restarted.""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "command" => Dict(
+                    "type" => "string",
+                    "enum" => ["restart", "shutdown"],
+                    "description" => "Command to execute: 'restart' or 'shutdown'",
+                ),
+            ),
+            "required" => ["command"],
+        ),
         (args, stream_channel = nothing) -> begin
             try
+                command = get(args, "command", "")
+                
+                if isempty(command)
+                    return "Error: command parameter is required (must be 'restart' or 'shutdown')"
+                end
+                
                 # Get the current server port (before restart)
                 server_port = SERVER[] !== nothing ? SERVER[].port : 3000
+                
+                if command == "shutdown" || command == "restart"
+                    if command == "shutdown"
+                        # Create the no-restart flag file
+                        mcprepl_dir = joinpath(pwd(), ".mcprepl")
+                        flag_file = joinpath(mcprepl_dir, ".no-restart")
+                        
+                        # Ensure .mcprepl directory exists
+                        if !isdir(mcprepl_dir)
+                            mkdir(mcprepl_dir)
+                        end
+                        
+                        # Create flag file
+                        touch(flag_file)
+                    end
+                    # Get the PID of the current process
+                    pid = getpid()
 
-                # Execute the restart command using the vscode URI trigger
-                restart_uri = build_vscode_uri(
-                    "language-julia.restartREPL";
-                    mcp_port = server_port,
-                )
-                trigger_vscode_uri(restart_uri)
+                    @async begin
+                        # Small delay to allow response to be sent back
+                        sleep(0.5)
+                        exit()
+                    end
+                    if command == "shutdown"
+                        return """✓ Julia REPL shutdown initiated.
 
-                # Return immediately - the server will be restarting
-                return """✓ Julia REPL restart initiated on port $server_port.
+    🛑 Auto-restart has been disabled.
 
-⏳ The MCP server will be temporarily offline during restart.
+    **What happens next:**
+    1. The Julia REPL will exit cleanly
+    2. The repl script will detect the shutdown flag and exit
+    3. The REPL will NOT automatically restart
 
-**AI Agent Instructions:**
-1. Wait 5 seconds before making any requests
-2. Then retry every 2 seconds until connection is reestablished
-3. Typical restart time: 5-10 seconds (may be longer if packages need recompilation)
+    **To restart manually:**
+    Run the `./repl` script again from your terminal.
+    Auto-restart will be re-enabled on the next start."""
+                    else                    
+                        return """✓ Julia REPL restart initiated on port $server_port.
 
-The server will automatically restart and be ready when the Julia REPL finishes loading."""
+    ⏳ The MCP server will be temporarily offline during restart.
+
+    **AI Agent Instructions:**
+    1. Wait 5 seconds before making any requests
+    2. Then retry every 2 seconds until connection is reestablished
+    3. Typical restart time: 5-10 seconds (may be longer if packages need recompilation)
+
+    The server will automatically restart and be ready when the Julia REPL finishes loading."""
+                    end
+                else
+                    return "Error: Invalid command '$command'. Must be 'restart' or 'shutdown'"
+                end
             catch e
-                return "Error initiating REPL restart: $e"
+                return "Error managing REPL: $e"
             end
         end
     )
@@ -1284,11 +1345,6 @@ Use this to discover which commands are available for the `execute_vscode_comman
         args -> begin
             try
                 query = get(args, "query", "")
-                if isempty(query)
-                    return "Error: query parameter is required"
-                end
-
-                # Try to evaluate the query to get the actual function/type
                 code = """
                 using InteractiveUtils
                 target = $query
@@ -2168,7 +2224,7 @@ Terminates the active debug session and returns to normal execution.
         usage_quiz_tool,
         tool_help_tool,
         repl_tool,
-        restart_repl_tool,
+        manage_repl_tool,
         vscode_command_tool,
         list_vscode_commands_tool,
         investigate_tool,
@@ -2563,6 +2619,13 @@ function tool_help(tool_id::Symbol; extended::Bool = false)
     end
 
     return tool
+end
+
+function restart()
+    call_tool(:manage_repl, Dict("command" => "restart"))
+end
+function shutdown()
+    call_tool(:manage_repl, Dict("command" => "shutdown"))
 end
 
 # Export public API functions

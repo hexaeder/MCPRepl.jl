@@ -2,14 +2,104 @@
 
 # Start Julia REPL with MCPRepl project and auto-load startup script
 # This script launches Julia in the project and loads the recommended startup
-# script. Environment configuration is expected to be stored in project
+# script with automatic restart on exit (unless crashing repeatedly).
+# Environment configuration is expected to be stored in project
 # configuration (.mcprepl/security.json) or a project .env file managed by
 # the project tools — the launcher intentionally does not alter environment
 # variables.
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-echo "Starting Julia REPL with MCPRepl project..."
+# Parse command line arguments
+AUTO_RESTART=true
+for arg in "$@"; do
+    if [ "$arg" = "--no-restart" ]; then
+        AUTO_RESTART=false
+        # Remove --no-restart from args to pass to julia
+        set -- "${@/$arg/}"
+    fi
+done
+
+# Crash protection: track restart times to detect crash loops
+MAX_CRASHES=5          # Maximum crashes allowed
+CRASH_WINDOW=30       # Time window in seconds
+declare -a RESTART_TIMES=()
+
+# Flag file for controlled shutdown
+NO_RESTART_FLAG="$SCRIPT_DIR/.mcprepl/.no-restart"
+
+if [ "$AUTO_RESTART" = true ]; then
+    echo "Starting Julia REPL with MCPRepl project (auto-restart enabled)..."
+else
+    echo "Starting Julia REPL with MCPRepl project (auto-restart disabled)..."
+fi
 echo ""
 
-exec julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "$@"
+# If --no-restart flag is used, run once and exit
+if [ "$AUTO_RESTART" = false ]; then
+    julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "$@"
+    exit $?
+fi
+
+# Trap SIGTERM signal for graceful shutdown
+trap "echo '✓ SIGTERM received - exiting'; exit 0" SIGTERM
+
+# Otherwise, run with auto-restart loop
+while true; do
+    # Check for shutdown flag before starting
+    if [ -f "$NO_RESTART_FLAG" ]; then
+        echo ""
+        echo "✓ Shutdown requested - removing restart flag and exiting"
+        rm -f "$NO_RESTART_FLAG"
+        exit 0
+    fi
+    
+    # Record restart time
+    CURRENT_TIME=$(date +%s)
+    RESTART_TIMES+=("$CURRENT_TIME")
+    
+    # Keep only the last MAX_CRASHES timestamps
+    if [ ${#RESTART_TIMES[@]} -gt $MAX_CRASHES ]; then
+        RESTART_TIMES=("${RESTART_TIMES[@]:1}")
+    fi
+    
+    # Check if we have MAX_CRASHES restarts within CRASH_WINDOW seconds
+    if [ ${#RESTART_TIMES[@]} -eq $MAX_CRASHES ]; then
+        OLDEST_TIME=${RESTART_TIMES[0]}
+        TIME_DIFF=$((CURRENT_TIME - OLDEST_TIME))
+        
+        if [ $TIME_DIFF -lt $CRASH_WINDOW ]; then
+            echo ""
+            echo "ERROR: Julia REPL crashed $MAX_CRASHES times in $TIME_DIFF seconds"
+            echo "Auto-restart disabled to prevent crash loop. Please investigate the issue."
+            exit 1
+        fi
+    fi
+    
+    # Start Julia
+    julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "$@"
+    EXIT_CODE=$?
+    
+    # Check for shutdown flag after exit
+    if [ -f "$NO_RESTART_FLAG" ]; then
+        echo ""
+        echo "✓ Shutdown requested - removing restart flag and exiting"
+        rm -f "$NO_RESTART_FLAG"
+        exit 0
+    fi
+    
+    # Check exit code
+    if [ $EXIT_CODE -eq 0 ]; then
+        echo ""
+        echo "Julia REPL exited normally. Restarting in 2 seconds..."
+        sleep 2
+    else
+        echo ""
+        echo "Julia REPL exited with code $EXIT_CODE. Restarting in 3 seconds..."
+        sleep 3
+    fi
+    
+    echo ""
+    echo "---"
+    echo ""
+done

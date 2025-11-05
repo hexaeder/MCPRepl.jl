@@ -11,7 +11,7 @@
         "usage_instructions",
         "investigate_environment",
         "tool_help",
-        "restart_repl"
+        "manage_repl"
       ]
     },
     "execution": {

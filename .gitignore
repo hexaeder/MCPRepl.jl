@@ -18,3 +18,5 @@ Manifest.toml
 # MCPRepl security configuration (contains API keys)
 .mcprepl/security.json
 **/.DS_Store
+.kilocode/mcp.json
+crush.json
