@@ -17,6 +17,7 @@ using JSON
 using SHA
 using Dates
 using Suppressor
+using OteraEngine
 
 # Import the parent module to access its functions
 import ..MCPRepl
@@ -441,6 +442,15 @@ function create_security_config(project_path::String, mode::Symbol, port::Int)
         println("   ✓ Generated API key: $(first(api_keys))")
         println("   ⚠️  Store this key securely - you'll need it for client configuration")
     end
+end
+
+function render_template(template_name::String; kwargs...)
+    template_path = abspath(joinpath(@__DIR__, "..", "templates", template_name * ".tmpl"))
+    if !isfile(template_path)
+        error("Template file not found: $template_path")
+    end
+    tmp = Template(template_path)
+    tmp(init=Dict(kwargs))
 end
 
 function create_startup_script(project_path::String, port::Int, emoticon::String = "🐉")
