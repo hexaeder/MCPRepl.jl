@@ -31,90 +31,36 @@ export create_claude_env_settings, create_tools_config
 # Export the VS Code commands constant for testing
 export VSCODE_ALLOWED_COMMANDS
 
+"""
+    load_vscode_allowed_commands()
+
+Load the list of allowed VS Code commands from the template file.
+
+This function reads the vscode-allowed-commands.txt file from the templates directory
+and returns an array of command strings. Each line in the file represents one command.
+"""
+function load_vscode_allowed_commands()
+    template_path = joinpath(@__DIR__, "..", "templates", "vscode-allowed-commands.txt")
+    if !isfile(template_path)
+        error("VS Code allowed commands template file not found at: $template_path")
+    end
+    
+    # Read file and filter out empty lines
+    commands = String[]
+    for line in eachline(template_path)
+        stripped = strip(line)
+        if !isempty(stripped) 
+            push!(commands, stripped)
+        end
+    end
+    
+    return commands
+end
+
 # VS Code Remote Control allowed commands list
 # This list is used in generated .vscode/settings.json files
-const VSCODE_ALLOWED_COMMANDS = [
-    "editor.action.goToLocations",
-    "editor.debug.action.conditionalBreakpoint",
-    "editor.debug.action.toggleBreakpoint",
-    "editor.debug.action.toggleInlineBreakpoint",
-    "git.branchFrom",
-    "git.commit",
-    "git.fetch",
-    "git.pull",
-    "git.push",
-    "git.refresh",
-    "git.sync",
-    "language-julia.restartREPL",
-    "language-julia.startREPL",
-    "testing.cancelRun",
-    "testing.debugAll",
-    "testing.debugAtCursor",
-    "testing.debugCurrentFile",
-    "testing.openOutputPeek",
-    "testing.reRunFailedTests",
-    "testing.reRunLastRun",
-    "testing.runAll",
-    "testing.runAtCursor",
-    "testing.runCurrentFile",
-    "testing.showMostRecentOutput",
-    "testing.toggleTestingView",
-    "vscode.open",
-    "vscode.openWith",
-    "workbench.action.closeAllEditors",
-    "workbench.action.debug.addWatch",
-    "workbench.action.debug.continue",
-    "workbench.action.debug.pause",
-    "workbench.action.debug.removeWatch",
-    "workbench.action.debug.restart",
-    "workbench.action.debug.run",
-    "workbench.action.debug.start",
-    "workbench.action.debug.stepBack",
-    "workbench.action.debug.stepInto",
-    "workbench.action.debug.stepOut",
-    "workbench.action.debug.stepOver",
-    "workbench.action.debug.stop",
-    "workbench.action.files.openFile",
-    "workbench.action.files.saveAll",
-    "workbench.action.findInFiles",
-    "workbench.action.focusActiveEditorGroup",
-    "workbench.action.gotoLine",
-    "workbench.action.navigateToLastEditLocation",
-    "workbench.action.quickOpen",
-    "workbench.action.reloadWindow",
-    "workbench.action.replaceInFiles",
-    "workbench.action.showAllSymbols",
-    "workbench.action.splitEditor",
-    "workbench.action.tasks.runTask",
-    "workbench.action.terminal.focus",
-    "workbench.action.terminal.kill",
-    "workbench.action.terminal.new",
-    "workbench.action.terminal.sendSequence",
-    "workbench.action.togglePanel",
-    "workbench.action.toggleSidebarVisibility",
-    "workbench.debug.action.copyValue",
-    "workbench.debug.action.focusBreakpointsView",
-    "workbench.debug.action.focusCallStackView",
-    "workbench.debug.action.focusVariablesView",
-    "workbench.debug.action.focusWatchView",
-    "workbench.debug.viewlet.action.addFunctionBreakpoint",
-    "workbench.debug.viewlet.action.disableAllBreakpoints",
-    "workbench.debug.viewlet.action.enableAllBreakpoints",
-    "workbench.debug.viewlet.action.removeAllBreakpoints",
-    "workbench.extensions.installExtension",
-    "workbench.files.action.focusFilesExplorer",
-    "workbench.view.debug",
-    "workbench.view.testing.focus",
-    # VS Code LSP command providers (used by LSP tools)
-    "vscode.executeCodeActionProvider",
-    "vscode.executeDefinitionProvider",
-    "vscode.executeDocumentRenameProvider",
-    "vscode.executeDocumentSymbolProvider",
-    "vscode.executeFormatDocumentProvider",
-    "vscode.executeFormatRangeProvider",
-    "vscode.executeReferenceProvider",
-    "vscode.executeWorkspaceSymbolProvider",
-]
+# Commands are loaded from templates/vscode-allowed-commands.txt
+const VSCODE_ALLOWED_COMMANDS = load_vscode_allowed_commands()
 
 """
     generate(project_name::String; 
