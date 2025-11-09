@@ -65,4 +65,36 @@ using MCPRepl
         @test :create_gemini_config_template in exported_names
         @test :create_gitignore in exported_names
     end
+
+    @testset "Project Generation" begin
+        # Create a temporary directory for the test project
+        mktempdir() do tmpdir
+            project_name = "TestProject"
+            # The generate function appends .jl to the project name for the directory
+            project_path = joinpath(tmpdir, project_name * ".jl")
+
+            # Run the generate function
+            MCPRepl.Generate.generate(project_name, path=tmpdir, security_mode=:lax)
+
+            # Check if the main project directory was created
+            @test isdir(project_path)
+
+            # Check for key directories
+            @test isdir(joinpath(project_path, "src"))
+            @test isdir(joinpath(project_path, "test"))
+            @test isdir(joinpath(project_path, ".mcprepl"))
+            @test isdir(joinpath(project_path, ".vscode"))
+
+            # Check for key files
+            @test isfile(joinpath(project_path, "Project.toml"))
+            @test isfile(joinpath(project_path, ".julia-startup.jl"))
+            @test isfile(joinpath(project_path, "repl"))
+            @test isfile(joinpath(project_path, "README.md"))
+            @test isfile(joinpath(project_path, "AGENTS.md"))
+            @test isfile(joinpath(project_path, ".gitignore"))
+            @test isfile(joinpath(project_path, ".mcprepl", "security.json"))
+            @test isfile(joinpath(project_path, ".vscode", "mcp.json"))
+            @test isfile(joinpath(project_path, ".vscode", "settings.json"))
+        end
+    end
 end
