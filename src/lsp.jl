@@ -419,7 +419,7 @@ Create MCP tools for LSP operations that can be added to the server.
 function create_lsp_tools()
     goto_definition_tool = @mcp_tool(
         :lsp_goto_definition,
-        "Find the definition of a symbol using Julia LSP.",
+        "Find the definition of a symbol using Julia LSP. Navigates to the source code location where a given symbol is defined.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -476,7 +476,7 @@ function create_lsp_tools()
 
     find_references_tool = @mcp_tool(
         :lsp_find_references,
-        "Find all references to a symbol using Julia LSP.",
+        "Find all references to a symbol using Julia LSP. Lists all locations in the workspace where a given symbol is referenced.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -539,7 +539,7 @@ function create_lsp_tools()
 
     document_symbols_tool = @mcp_tool(
         :lsp_document_symbols,
-        "List all symbols in a file using Julia LSP.",
+        "List all symbols in a file using Julia LSP. Returns a list of symbols defined within a specific document, such as functions, classes, and variables.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -583,7 +583,7 @@ function create_lsp_tools()
 
     workspace_symbols_tool = @mcp_tool(
         :lsp_workspace_symbols,
-        "Search for symbols across the workspace using Julia LSP.",
+        "Search for symbols across the workspace using Julia LSP. Allows searching for symbols by name across the entire workspace.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -624,7 +624,7 @@ function create_lsp_tools()
     # Rename symbol tool
     rename_tool = @mcp_tool(
         :lsp_rename,
-        "Rename a symbol across the workspace using Julia LSP.",
+        "Rename a symbol across the workspace using Julia LSP. Renames a symbol (e.g., variable, function) and updates all references to it throughout the workspace.",
         Dict(
             "type" => "object",
             "properties" => Dict(
@@ -693,7 +693,7 @@ function create_lsp_tools()
     # Code actions tool
     code_actions_tool = @mcp_tool(
         :lsp_code_actions,
-        "Get available code actions and quick fixes using Julia LSP.",
+        "Get available code actions and quick fixes using Julia LSP. Retrieves a list of available code actions, such as quick fixes and refactorings, at a given position in a file.",
         Dict(
             "type" => "object",
             "properties" => Dict(
