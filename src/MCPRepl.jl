@@ -9,6 +9,10 @@ using HTTP
 using Random
 using SHA
 using Dates
+using Coverage
+using ReTest
+using CodeTracking
+using Pkg
 
 export @mcp_tool
 
@@ -2211,6 +2215,117 @@ Terminates the active debug session and returns to normal execution.
         end
     )
 
+    run_tests_tool = @mcp_tool(
+        :run_tests,
+        """Run tests and optionally generate coverage reports.
+
+This tool provides comprehensive test execution with optional coverage analysis.
+
+# Parameters
+
+- `pattern`: Optional test pattern to filter which tests to run (ReTest pattern syntax)
+- `coverage`: Boolean flag to enable coverage collection (default: false)
+- `verbose`: Verbosity level for test output (default: 1.0)
+
+# Examples
+
+Run all tests:
+```julia
+{"pattern": ""}
+```
+
+Run specific tests matching a pattern:
+```julia
+{"pattern": "security", "verbose": true}
+```
+
+Run tests with coverage:
+```julia
+{"coverage": true}
+```
+
+# Returns
+
+Test results summary including:
+- Number of tests passed/failed
+- Coverage percentage (if coverage=true)
+- Detailed failure information (if any)
+""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "pattern" => Dict(
+                    "type" => "string",
+                    "description" =>
+                        "Optional test regex to filter tests (ReTest pattern syntax, e.g., 'security' or 'generate'). Leave empty to run all tests.",
+                ),
+                "coverage" => Dict(
+                    "type" => "boolean",
+                    "description" =>
+                        "Enable coverage collection and reporting (default: false)",
+                    "default" => false,
+                ),
+                "verbose" => Dict(
+                    "type" => "integer",
+                    "description" => "Enable verbose test output (default: false)",
+                    "default" => 1,
+                ),
+            ),
+            "required" => [],
+        ),
+        function (args)
+            pattern = get(args, "pattern", ".*")
+            coverage_enabled = get(args, "coverage", false)
+            verbose = parse(Int, get(args, "verbose", "1"))
+
+            out_buf = IOBuffer()
+            try
+                if coverage_enabled
+                    println(out_buf, "🧪 Running tests with coverage collection...\n")
+                    # Clear any previous coverage data
+                    Coverage.clean_folder("src")
+                    Coverage.clean_folder("test")
+                else
+                    println(out_buf, "🧪 Running tests...\n")
+                end
+                    
+                hasReTest = "ReTest" in [p.name for p in values(Pkg.dependencies())]
+
+                try
+                    if hasReTest
+                        ReTest.hijack(Pkg.project().name)
+                        output = retest(Regex(pattern); verbose=verbose)
+                    else
+                        output = Pkg.test(coverage=coverage_enabled)
+                    end
+                    test_ran = true
+                    print(out_buf, output)
+                catch e
+                    print(out_buf, "Error running tests: $e")
+                end
+
+                if coverage_enabled
+                    println(out_buf, "\n📊 Processing coverage data...\n")
+
+                    coverage = process_folder("src")
+                    covered_lines, total_lines = get_summary(coverage)
+                    coverage_pct = total_lines > 0 ? round(100 * covered_lines / total_lines, digits=2) : 0.0
+                    
+                    println(out_buf, "Coverage Summary:")
+                    println(out_buf, "  Lines covered: \$covered_lines / \$total_lines")
+                    println(out_buf, "  Coverage: \$(coverage_pct)%")
+
+                    # Generate LCOV report
+                    LCOV.writefile("coverage-lcov.info", coverage)
+                    println(out_buf, "\n✅ Coverage report written to: coverage-lcov.info")
+                end
+                return String(take!(out_buf))
+            catch e
+                return "Error running tests: $e\n$(sprint(showerror, e, catch_backtrace()))"
+            end
+        end
+    )
+
     # Create LSP tools
     lsp_tools = create_lsp_tools()
 
@@ -2248,6 +2363,7 @@ Terminates the active debug session and returns to normal execution.
         debug_stop_tool,
         pkg_add_tool,
         pkg_rm_tool,
+        run_tests_tool,
         lsp_tools...,  # Add all LSP tools
     ]
 

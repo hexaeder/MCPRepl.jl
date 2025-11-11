@@ -321,6 +321,12 @@ function create_tools_config(project_path::String)
                 "tokens" => "~100",
                 "tools" => ["pkg_add", "pkg_rm"]
             ),
+            "testing" => Dict(
+                "enabled" => true,
+                "description" => "Test execution and coverage reporting",
+                "tokens" => "~200",
+                "tools" => ["run_tests"]
+            ),
             "vscode" => Dict(
                 "enabled" => false,
                 "description" => "VS Code editor integration",

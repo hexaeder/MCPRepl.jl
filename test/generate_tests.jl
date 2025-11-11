@@ -1,4 +1,4 @@
-using Test
+using ReTest
 using MCPRepl
 
 @testset "Generate Module" begin

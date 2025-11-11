@@ -90,6 +90,14 @@
         "pkg_rm"
       ]
     },
+    "testing": {
+      "enabled": true,
+      "description": "Test execution and coverage reporting",
+      "tokens": "~200",
+      "tools": [
+        "run_tests"
+      ]
+    },
     "vscode": {
       "enabled": false,
       "description": "VS Code editor integration",
