@@ -108,14 +108,55 @@ end
     dashboard_html()
 
 Generate the main dashboard HTML page.
+Serves React app if built, otherwise falls back to template.
 """
 function dashboard_html()
+    # Try to serve React build first
+    react_dist = abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist", "index.html"))
+    if isfile(react_dist)
+        return read(react_dist, String)
+    end
+    
+    # Fallback to template
     template_path = abspath(joinpath(@__DIR__, "..", "templates", "dashboard.html.tmpl"))
     if !isfile(template_path)
         error("Dashboard template not found: $template_path")
     end
     tmp = Template(template_path, config=Dict("autoescape" => false))
     return tmp(init=Dict())
+end
+
+"""
+    serve_static_file(filepath::String)
+
+Serve a static file from the React build directory with proper MIME type.
+"""
+function serve_static_file(filepath::String)
+    react_dist = abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
+    fullpath = joinpath(react_dist, filepath)
+    
+    if !isfile(fullpath) || !startswith(abspath(fullpath), react_dist)
+        return HTTP.Response(404, "Not Found")
+    end
+    
+    # Determine MIME type
+    mime_types = Dict(
+        ".html" => "text/html",
+        ".js" => "application/javascript",
+        ".mjs" => "application/javascript",
+        ".css" => "text/css",
+        ".json" => "application/json",
+        ".png" => "image/png",
+        ".jpg" => "image/jpeg",
+        ".svg" => "image/svg+xml",
+        ".ico" => "image/x-icon"
+    )
+    
+    ext = lowercase(splitext(fullpath)[2])
+    mime_type = get(mime_types, ext, "application/octet-stream")
+    
+    content = read(fullpath)
+    return HTTP.Response(200, ["Content-Type" => mime_type], body=content)
 end
 
 end # module Dashboard

@@ -400,6 +400,12 @@ function handle_request(req::HTTP.Request)
             return HTTP.Response(200, ["Content-Type" => "text/html"], html)
         end
 
+        # Dashboard static assets (React build)
+        if startswith(path, "/dashboard/") && !startswith(path, "/dashboard/api/")
+            asset_path = replace(path, r"^/dashboard/" => "")
+            return Dashboard.serve_static_file(asset_path)
+        end
+
         # Dashboard API: Get all agents
         if path == "/dashboard/api/agents"
             agents = Dict{String,Any}()
