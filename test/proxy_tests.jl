@@ -236,4 +236,86 @@ end
         @test all(h -> h isa Pair{<:AbstractString,<:AbstractString}, headers)
         @test body_str isa AbstractString
     end
+
+    @testset "Actual HTTP.post call with exact proxy pattern" begin
+        # Start a simple echo server to test against
+        echo_port = 9999
+        echo_server = HTTP.serve!(echo_port; verbose=false) do req
+            # Echo back the request body
+            return HTTP.Response(200, req.body)
+        end
+
+        try
+            # Test the exact pattern used in route_to_repl
+            backend_url = "http://127.0.0.1:$echo_port/"
+            headers = ["Content-Type" => "application/json"]
+            request_dict = Dict("jsonrpc" => "2.0", "id" => 1, "method" => "test")
+            body_str = JSON.json(request_dict)
+
+            println("\nActual HTTP.post test:")
+            println("  Making real HTTP.post call...")
+
+            # This is the EXACT call from route_to_repl
+            response = HTTP.post(
+                backend_url,
+                headers,
+                body_str;
+                readtimeout=5,
+                connect_timeout=2
+            )
+
+            @test response.status == 200
+            @test String(response.body) == body_str
+            println("  ✓ HTTP.post succeeded!")
+
+        finally
+            close(echo_server)
+        end
+    end
+
+    @testset "Full handle_request → route_to_repl → HTTP.post integration" begin
+        # This tests the COMPLETE flow from handle_request to actual backend call
+        echo_port = 9998
+        echo_server = HTTP.serve!(echo_port; verbose=false) do req
+            # Return a mock MCP response
+            mock_response = Dict(
+                "jsonrpc" => "2.0",
+                "id" => 1,
+                "result" => Dict("tools" => [Dict("name" => "test_tool")])
+            )
+            return HTTP.Response(200, JSON.json(mock_response))
+        end
+
+        try
+            # Register a REPL pointing to our echo server
+            empty!(Proxy.REPL_REGISTRY)
+            Proxy.register_repl("integration-test", echo_port; pid=Int(getpid()))
+
+            # Create HTTP request exactly as it would come from a client
+            request_body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""
+            req = HTTP.Request("POST", "/",
+                ["Content-Type" => "application/json", "X-MCPRepl-Target" => "integration-test"],
+                request_body)
+
+            println("\nFull integration test:")
+            println("  Request body: $request_body")
+            println("  Calling Proxy.handle_request...")
+
+            # Call handle_request - this should parse, route, and make HTTP.post call
+            response = Proxy.handle_request(req)
+
+            println("  Response status: $(response.status)")
+            response_body = String(response.body)
+            println("  Response body: $(response_body[1:min(100, length(response_body))])")
+
+            @test response.status == 200
+            parsed_response = JSON.parse(response_body)
+            @test haskey(parsed_response, "result")
+            @test parsed_response["result"]["tools"][1]["name"] == "test_tool"
+            println("  ✓ Full routing succeeded!")
+
+        finally
+            close(echo_server)
+        end
+    end
 end

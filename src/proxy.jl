@@ -286,12 +286,14 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
     # Forward request to backend REPL
     try
         backend_url = "http://127.0.0.1:$(repl.port)/"
-        headers = ["Content-Type" => "application/json"]
+        request_headers = ["Content-Type" => "application/json"]
         body_str = JSON.json(request)
-        @debug "Forwarding to backend" url = backend_url headers = headers body_length = length(body_str)
-        response = HTTP.post(
+
+        @debug "Forwarding to backend" url = backend_url headers = request_headers body_length = length(body_str)
+        response = HTTP.request(
+            "POST",
             backend_url,
-            headers,
+            request_headers,
             body_str;
             readtimeout=30,
             connect_timeout=5
@@ -300,7 +302,7 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
         # Update last heartbeat
         update_repl_status(target_id, :ready)
 
-        return HTTP.Response(response.status, response.body)
+        return response
     catch e
         # Capture full error with stack trace
         io = IOBuffer()
