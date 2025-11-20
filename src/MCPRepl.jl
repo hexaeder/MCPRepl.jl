@@ -730,7 +730,7 @@ function start!(;
     # Check for persistent proxy server
     proxy_port = 3000  # Default proxy port
     proxy_running = Proxy.is_server_running(proxy_port)
-    
+
     if proxy_running
         proxy_pid = Proxy.get_server_pid(proxy_port)
         if verbose
@@ -743,7 +743,7 @@ function start!(;
             printstyled("🚀 Starting Persistent Proxy Server...\n", color=:cyan, bold=true)
         end
         Proxy.start_server(proxy_port; background=true)
-        
+
         # Verify it started
         if Proxy.is_server_running(proxy_port)
             proxy_pid = Proxy.get_server_pid(proxy_port)
@@ -2489,6 +2489,82 @@ Terminates the active debug session and returns to normal execution.
         verbose=verbose,
         security_config=security_config,
     )
+
+    # Register this REPL with the proxy if proxy is running
+    if Proxy.is_server_running(proxy_port)
+        try
+            # Determine REPL ID
+            repl_id = if !isempty(agent_name)
+                "agent-$agent_name"
+            elseif supervisor
+                "supervisor"
+            else
+                basename(workspace_dir)
+            end
+
+            # Register with proxy
+            registration = Dict(
+                "jsonrpc" => "2.0",
+                "id" => 1,
+                "method" => "proxy/register",
+                "params" => Dict(
+                    "id" => repl_id,
+                    "port" => actual_port,
+                    "pid" => getpid(),
+                    "metadata" => Dict(
+                        "workspace" => workspace_dir,
+                        "supervisor" => supervisor,
+                        "agent_name" => agent_name
+                    )
+                )
+            )
+
+            response = HTTP.post(
+                "http://127.0.0.1:$proxy_port/",
+                ["Content-Type" => "application/json"],
+                JSON.json(registration);
+                readtimeout=5
+            )
+
+            if response.status == 200
+                if verbose
+                    printstyled("📝 Registered with proxy as '$repl_id'\n", color=:green, bold=true)
+                end
+
+                # Start heartbeat task to keep proxy updated
+                @async begin
+                    while SERVER[] !== nothing
+                        try
+                            sleep(5)  # Send heartbeat every 5 seconds
+                            if SERVER[] !== nothing && Proxy.is_server_running(proxy_port)
+                                heartbeat = Dict(
+                                    "jsonrpc" => "2.0",
+                                    "id" => rand(1:1000000),
+                                    "method" => "proxy/heartbeat",
+                                    "params" => Dict("id" => repl_id)
+                                )
+                                HTTP.post(
+                                    "http://127.0.0.1:$proxy_port/",
+                                    ["Content-Type" => "application/json"],
+                                    JSON.json(heartbeat);
+                                    readtimeout=5,
+                                    connect_timeout=2
+                                )
+                            end
+                        catch e
+                            # Ignore heartbeat errors, they're not critical
+                            if verbose
+                                @debug "Heartbeat failed" exception = e
+                            end
+                        end
+                    end
+                end
+            end
+        catch e
+            @warn "Failed to register with proxy" exception = e
+        end
+    end
+
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
         # Refresh the prompt to show the new prefix and clear any leftover output

@@ -11,10 +11,24 @@ using JSON
 using Sockets
 using Dates
 
+# REPL Connection tracking
+mutable struct REPLConnection
+    id::String                          # Unique identifier (project name, agent name)
+    port::Int                           # REPL's MCP server port
+    pid::Union{Int,Nothing}            # REPL process ID
+    status::Symbol                      # :ready, :restarting, :stopped
+    last_heartbeat::DateTime            # Last time we heard from this REPL
+    metadata::Dict{String,Any}         # Additional info (project path, etc.)
+    last_error::Union{String,Nothing}  # Last error message if any
+    missed_heartbeats::Int             # Counter for consecutive missed heartbeats
+end
+
 # Global state
 const SERVER = Ref{Union{HTTP.Server,Nothing}}(nothing)
 const SERVER_PORT = Ref{Int}(3000)
 const SERVER_PID_FILE = Ref{String}("")
+const REPL_REGISTRY = Dict{String,REPLConnection}()
+const REPL_REGISTRY_LOCK = ReentrantLock()
 
 """
     is_server_running(port::Int=3000) -> Bool
@@ -106,10 +120,227 @@ function remove_pid_file(port::Int=3000)
     rm(pid_file, force=true)
 end
 
+# ============================================================================
+# REPL Registry Management
+# ============================================================================
+
+"""
+    register_repl(id::String, port::Int; pid::Union{Int,Nothing}=nothing, metadata::Dict=Dict())
+
+Register a REPL with the proxy server so it can route requests to it.
+
+# Arguments
+- `id::String`: Unique identifier for this REPL (e.g., "project-a", "agent-1")
+- `port::Int`: Port where the REPL's MCP server is listening
+- `pid::Union{Int,Nothing}=nothing`: Process ID of the REPL (optional)
+- `metadata::Dict=Dict()`: Additional metadata (project path, etc.)
+"""
+function register_repl(id::String, port::Int; pid::Union{Int,Nothing}=nothing, metadata::Dict=Dict())
+    lock(REPL_REGISTRY_LOCK) do
+        REPL_REGISTRY[id] = REPLConnection(
+            id,
+            port,
+            pid,
+            :ready,
+            now(),
+            metadata,
+            nothing,
+            0
+        )
+        @info "REPL registered with proxy" id = id port = port pid = pid
+    end
+end
+
+"""
+    unregister_repl(id::String)
+
+Remove a REPL from the proxy registry.
+"""
+function unregister_repl(id::String)
+    lock(REPL_REGISTRY_LOCK) do
+        if haskey(REPL_REGISTRY, id)
+            delete!(REPL_REGISTRY, id)
+            @info "REPL unregistered from proxy" id = id
+        end
+    end
+end
+
+"""
+    get_repl(id::String) -> Union{REPLConnection, Nothing}
+
+Get a REPL connection by ID.
+"""
+function get_repl(id::String)
+    lock(REPL_REGISTRY_LOCK) do
+        get(REPL_REGISTRY, id, nothing)
+    end
+end
+
+"""
+    list_repls() -> Vector{REPLConnection}
+
+List all registered REPLs.
+"""
+function list_repls()
+    lock(REPL_REGISTRY_LOCK) do
+        collect(values(REPL_REGISTRY))
+    end
+end
+
+"""  
+    update_repl_status(id::String, status::Symbol; error::Union{String,Nothing}=nothing)
+
+Update the status of a registered REPL, optionally storing error information.
+"""
+function update_repl_status(id::String, status::Symbol; error::Union{String,Nothing}=nothing)
+    lock(REPL_REGISTRY_LOCK) do
+        if haskey(REPL_REGISTRY, id)
+            REPL_REGISTRY[id].status = status
+            REPL_REGISTRY[id].last_heartbeat = now()
+            if error !== nothing
+                REPL_REGISTRY[id].last_error = error
+                # Increment missed heartbeats counter on errors
+                REPL_REGISTRY[id].missed_heartbeats += 1
+            elseif status == :ready
+                # Clear error and reset counter when back to ready
+                REPL_REGISTRY[id].last_error = nothing
+                REPL_REGISTRY[id].missed_heartbeats = 0
+            end
+        end
+    end
+end
+
+"""
+    route_to_repl(request::Dict, original_req::HTTP.Request) -> HTTP.Response
+
+Route a request to the appropriate backend REPL.
+
+Uses the X-MCPRepl-Target header to determine which REPL to route to.
+If no header is present, routes to the first available REPL.
+"""
+function route_to_repl(request::Dict, original_req::HTTP.Request)
+    # Determine target REPL
+    header_value = HTTP.header(original_req, "X-MCPRepl-Target")
+    # HTTP.header returns a SubString{String} or String
+    target_id = isempty(header_value) ? nothing : String(header_value)
+
+    if target_id === nothing
+        # No target specified, try to use first available REPL
+        repls = list_repls()
+        if isempty(repls)
+            return HTTP.Response(503, JSON.json(Dict(
+                "jsonrpc" => "2.0",
+                "id" => get(request, "id", nothing),
+                "error" => Dict(
+                    "code" => -32001,
+                    "message" => "No REPLs registered with proxy. Please start a REPL with MCPRepl.start!()"
+                )
+            )))
+        end
+        target_id = first(repls).id
+    end
+
+    # Get the REPL connection
+    repl = get_repl(target_id)
+
+    if repl === nothing
+        return HTTP.Response(404, JSON.json(Dict(
+            "jsonrpc" => "2.0",
+            "id" => get(request, "id", nothing),
+            "error" => Dict(
+                "code" => -32002,
+                "message" => "REPL not found: $target_id"
+            )
+        )))
+    end
+
+    if repl.status != :ready
+        # If stopped, try one recovery attempt by marking as ready
+        # (maybe the REPL recovered but we didn't know)
+        if repl.status == :stopped
+            @info "Attempting recovery for stopped REPL" id = target_id
+            update_repl_status(target_id, :ready)
+            repl = get_repl(target_id)
+            if repl === nothing || repl.status != :ready
+                return HTTP.Response(503, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" => Dict(
+                        "code" => -32003,
+                        "message" => "REPL not ready: $(repl.status)"
+                    )
+                )))
+            end
+        else
+            return HTTP.Response(503, JSON.json(Dict(
+                "jsonrpc" => "2.0",
+                "id" => get(request, "id", nothing),
+                "error" => Dict(
+                    "code" => -32003,
+                    "message" => "REPL not ready: $(repl.status)"
+                )
+            )))
+        end
+    end
+
+    # Forward request to backend REPL
+    try
+        backend_url = "http://127.0.0.1:$(repl.port)/"
+        headers = ["Content-Type" => "application/json"]
+        body_str = JSON.json(request)
+        @debug "Forwarding to backend" url = backend_url headers = headers body_length = length(body_str)
+        response = HTTP.post(
+            backend_url,
+            headers,
+            body_str;
+            readtimeout=30,
+            connect_timeout=5
+        )
+
+        # Update last heartbeat
+        update_repl_status(target_id, :ready)
+
+        return HTTP.Response(response.status, response.body)
+    catch e
+        # Capture full error with stack trace
+        io = IOBuffer()
+        showerror(io, e, catch_backtrace())
+        error_msg = String(take!(io))
+        @error "Error forwarding request to REPL" target = target_id exception = e
+
+        # Store the error and increment missed heartbeat counter
+        error_summary = length(error_msg) > 500 ? error_msg[1:500] * "..." : error_msg
+
+        # Only mark as stopped after 3 consecutive failures
+        lock(REPL_REGISTRY_LOCK) do
+            if haskey(REPL_REGISTRY, target_id)
+                REPL_REGISTRY[target_id].last_error = error_summary
+                REPL_REGISTRY[target_id].missed_heartbeats += 1
+
+                if REPL_REGISTRY[target_id].missed_heartbeats >= 3
+                    REPL_REGISTRY[target_id].status = :stopped
+                    @warn "REPL marked as stopped after 3 consecutive failures" id = target_id
+                else
+                    @info "REPL error ($(REPL_REGISTRY[target_id].missed_heartbeats)/3 failures)" id = target_id
+                end
+            end
+        end
+
+        return HTTP.Response(502, JSON.json(Dict(
+            "jsonrpc" => "2.0",
+            "id" => get(request, "id", nothing),
+            "error" => Dict(
+                "code" => -32004,
+                "message" => "Failed to connect to REPL: $(sprint(showerror, e))"
+            )
+        )))
+    end
+end
+
 """
     handle_request(req::HTTP.Request) -> HTTP.Response
 
-Handle incoming MCP requests. Currently just a health check endpoint.
+Handle incoming MCP requests. Routes to appropriate backend REPL or handles proxy commands.
 """
 function handle_request(req::HTTP.Request)
     try
@@ -131,7 +362,10 @@ function handle_request(req::HTTP.Request)
         request = JSON.parse(body)
 
         # Handle proxy-specific methods
-        if get(request, "method", "") == "proxy/status"
+        method = get(request, "method", "")
+
+        if method == "proxy/status"
+            repls = list_repls()
             return HTTP.Response(200, JSON.json(Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, "id", nothing),
@@ -139,21 +373,110 @@ function handle_request(req::HTTP.Request)
                     "status" => "running",
                     "pid" => getpid(),
                     "port" => SERVER_PORT[],
-                    "connected_repls" => 0,  # TODO: track connections
+                    "connected_repls" => length(repls),
+                    "repls" => [Dict(
+                        "id" => r.id,
+                        "port" => r.port,
+                        "status" => string(r.status),
+                        "pid" => r.pid,
+                        "last_error" => r.last_error
+                    ) for r in repls],
                     "uptime" => time()
                 )
             )))
-        end
+        elseif method == "proxy/register"
+            # Register a new REPL
+            params = get(request, "params", Dict())
+            id = get(params, "id", nothing)
+            port = get(params, "port", nothing)
+            pid = get(params, "pid", nothing)
+            metadata_raw = get(params, "metadata", Dict())
 
-        # TODO: Route to backend REPL
-        return HTTP.Response(501, JSON.json(Dict(
-            "jsonrpc" => "2.0",
-            "id" => get(request, "id", nothing),
-            "error" => Dict(
-                "code" => -32601,
-                "message" => "Method not implemented yet - routing to backend REPL coming soon"
-            )
-        )))
+            # Convert JSON.Object to Dict if needed
+            metadata = metadata_raw isa Dict ? metadata_raw : Dict(String(k) => v for (k, v) in pairs(metadata_raw))
+
+            if id === nothing || port === nothing
+                return HTTP.Response(400, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" => Dict(
+                        "code" => -32602,
+                        "message" => "Invalid params: 'id' and 'port' are required"
+                    )
+                )))
+            end
+
+            register_repl(id, port; pid=pid, metadata=metadata)
+
+            return HTTP.Response(200, JSON.json(Dict(
+                "jsonrpc" => "2.0",
+                "id" => get(request, "id", nothing),
+                "result" => Dict("status" => "registered", "id" => id)
+            )))
+        elseif method == "proxy/unregister"
+            # Unregister a REPL
+            params = get(request, "params", Dict())
+            id = get(params, "id", nothing)
+
+            if id === nothing
+                return HTTP.Response(400, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" => Dict(
+                        "code" => -32602,
+                        "message" => "Invalid params: 'id' is required"
+                    )
+                )))
+            end
+
+            unregister_repl(id)
+
+            return HTTP.Response(200, JSON.json(Dict(
+                "jsonrpc" => "2.0",
+                "id" => get(request, "id", nothing),
+                "result" => Dict("status" => "unregistered", "id" => id)
+            )))
+        elseif method == "proxy/heartbeat"
+            # REPL sends heartbeat to indicate it's alive
+            params = get(request, "params", Dict())
+            id = get(params, "id", nothing)
+
+            if id === nothing
+                return HTTP.Response(400, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" => Dict(
+                        "code" => -32602,
+                        "message" => "Invalid params: 'id' is required"
+                    )
+                )))
+            end
+
+            # Update heartbeat and recover from stopped state
+            lock(REPL_REGISTRY_LOCK) do
+                if haskey(REPL_REGISTRY, id)
+                    REPL_REGISTRY[id].last_heartbeat = now()
+                    REPL_REGISTRY[id].missed_heartbeats = 0  # Reset counter on successful heartbeat
+                    # Automatically recover from stopped state on heartbeat
+                    if REPL_REGISTRY[id].status == :stopped
+                        REPL_REGISTRY[id].status = :ready
+                        REPL_REGISTRY[id].last_error = nothing
+                        @info "REPL recovered from stopped state via heartbeat" id = id
+                    end
+                end
+            end
+
+            return HTTP.Response(200, JSON.json(Dict(
+                "jsonrpc" => "2.0",
+                "id" => get(request, "id", nothing),
+                "result" => Dict("status" => "ok")
+            )))
+        else
+            # Route to backend REPL
+            # Convert JSON.Object to Dict if needed
+            request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
+            return route_to_repl(request_dict, req)
+        end
 
     catch e
         @error "Error handling request" exception = (e, catch_backtrace())
