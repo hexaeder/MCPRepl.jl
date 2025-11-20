@@ -20,3 +20,5 @@ Manifest.toml
 **/.DS_Store
 .kilocode/mcp.json
 crush.json
+**/coverage-lcov.info
+

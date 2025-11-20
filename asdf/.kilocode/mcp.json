@@ -1,0 +1,49 @@
+{
+  "mcpServers": {
+    "julia-repl": {
+      "type": "streamable-http",
+      "url": "http://localhost:34",
+      "alwaysAllow": [
+                  [
+    "ping",
+    "usage_instructions",
+    "usage_quiz",
+    "tool_help",
+    "ex",
+    "manage_repl",
+    "execute_vscode_command",
+    "list_vscode_commands",
+    "investigate_environment",
+    "search_methods",
+    "macro_expand",
+    "type_info",
+    "profile_code",
+    "list_names",
+    "code_lowered",
+    "code_typed",
+    "format_code",
+    "lint_package",
+    "open_file_and_set_breakpoint",
+    "start_debug_session",
+    "add_watch_expression",
+    "copy_debug_value",
+    "debug_step_over",
+    "debug_step_into",
+    "debug_step_out",
+    "debug_continue",
+    "debug_stop",
+    "pkg_add",
+    "pkg_rm",
+    "run_tests",
+    "lsp_goto_definition",
+    "lsp_find_references",
+    "lsp_document_symbols",
+    "lsp_workspace_symbols",
+    "lsp_rename",
+    "lsp_code_actions"
+]
+      ],
+      "disabled": false
+    }
+  }
+}

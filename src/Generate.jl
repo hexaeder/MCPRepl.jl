@@ -179,11 +179,12 @@ function generate(
     create_vscode_settings(project_path)
     create_claude_config_template(project_path, port, api_key)
     create_gemini_config_template(project_path, port, api_key)
-    _create_readme(project_path, project_name, security_mode, port)
-    _create_agents_guide(project_path, project_name)
+    create_kilocode_config(project_path, port, String[], api_key)
+    create_readme(project_path, project_name, security_mode, port)
+    create_agents_guide(project_path, project_name)
     create_gitignore(project_path)
-    _enhance_test_file(project_path, project_name)  # Do this before Pkg operations
-    _add_mcprepl_dependency(project_path)
+    enhance_test_file(project_path, project_name)  # Do this before Pkg operations
+    add_mcprepl_dependency(project_path)
 
     println()
     println("✅ Project generated successfully!")
@@ -401,7 +402,7 @@ function render_template(template_name::String; kwargs...)
     if !isfile(template_path)
         error("Template file not found: $template_path")
     end
-    tmp = Template(template_path)
+    tmp = Template(template_path, config=Dict("autoescape"=>false))
     tmp(init=Dict(kwargs))
 end
 
@@ -599,7 +600,34 @@ function create_gemini_config_template(
     return true
 end
 
-function _create_readme(project_path::String, project_name::String, mode::Symbol, port::Int)
+function create_kilocode_config(project_path::String, port::Int, tools::Vector{String}, api_key::Union{String,Nothing} = nothing)
+    println("🧩 Creating KiloCode config...")
+
+    kilocode_dir = joinpath(project_path, ".kilocode")
+    mkpath(kilocode_dir)
+
+    # Generate list of all available tool names
+    # This would be populated from the actual tool registry, but for template generation
+    # we'll use a placeholder that the user can customize
+    tool_names = String["ex", "ping", "investigate_environment", "tool_help", "usage_instructions"]
+    tools_json = JSON.json(tool_names, 4)
+    
+    config_content = render_template(
+        "kilocode-mcp-config.json";
+        has_api_key = api_key !== nothing,
+        api_key = api_key,
+        port = port,
+        tool_list = tools_json
+    )
+
+    config_path = joinpath(kilocode_dir, "mcp.json")
+    write(config_path, config_content)
+
+    println("   ✓ Written to .kilocode/mcp.json")
+    return true
+end
+
+function create_readme(project_path::String, project_name::String, mode::Symbol, port::Int)
     println("📖 Creating README.md...")
 
     # Load security config for API key
@@ -688,7 +716,7 @@ $(isfile(joinpath(project_path, "LICENSE")) ? "[MIT License](LICENSE)" : "See LI
     write(readme_path, readme_content)
 end
 
-function _create_agents_guide(project_path::String, project_name::String)
+function create_agents_guide(project_path::String, project_name::String)
     println("🤖 Creating AGENTS.md...")
 
     agents_content = """
@@ -1053,7 +1081,7 @@ Thumbs.db
     write(gitignore_path, gitignore_content)
 end
 
-function _add_mcprepl_dependency(project_path::String)
+function add_mcprepl_dependency(project_path::String)
     println("📦 Adding MCPRepl dependency...")
 
     # Activate the project and add MCPRepl
@@ -1085,7 +1113,7 @@ function _add_mcprepl_dependency(project_path::String)
     end
 end
 
-function _enhance_test_file(project_path::String, project_name::String)
+function enhance_test_file(project_path::String, project_name::String)
     println("🧪 Enhancing test file...")
 
     test_content = """

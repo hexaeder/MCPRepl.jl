@@ -5,15 +5,6 @@ using JSON
 import ..MCPRepl:
     SecurityConfig, extract_api_key, validate_api_key, get_client_ip, validate_ip
 
-# Tool definition structure
-struct MCPTool
-    id::Symbol                    # Internal identifier (:exec_repl)
-    name::String                  # JSON-RPC name ("exec_repl")
-    description::String
-    parameters::Dict{String,Any}
-    handler::Function
-end
-
 # Server with tool registry
 struct MCPServer
     port::Int
@@ -470,18 +461,6 @@ function create_handler(
     end
 end
 
-# Convenience function to create a simple text parameter schema
-function text_parameter(name::String, description::String, required::Bool = true)
-    schema = Dict(
-        "type" => "object",
-        "properties" =>
-            Dict(name => Dict("type" => "string", "description" => description)),
-    )
-    if required
-        schema["required"] = [name]
-    end
-    return schema
-end
 
 function start_mcp_server(
     tools::Vector{MCPTool},
