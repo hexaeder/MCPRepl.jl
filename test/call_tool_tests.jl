@@ -66,10 +66,7 @@ using MCPRepl: MCPTool
 
             try
                 # Test tool with args signature
-                result = MCPRepl.call_tool(
-                    :ex,
-                    Dict("e" => "2 + 2", "s" => true),
-                )
+                result = MCPRepl.call_tool(:ex, Dict("e" => "2 + 2", "s" => true))
                 @test result isa String
 
                 # Test tool with (args) only signature

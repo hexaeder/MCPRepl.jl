@@ -15,8 +15,10 @@ example-project/
 .env
 Manifest.toml
 
-# MCPRepl security configuration (contains API keys)
+# MCPRepl configuration (contains API keys and security settings)
 .mcprepl/security.json
+.mcprepl/agents.json
+
 **/.DS_Store
 .kilocode/mcp.json
 crush.json

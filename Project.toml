@@ -20,6 +20,7 @@ ReTest = "e0db7c4e-2690-44b9-bad6-7687da720f89"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 Suppressor = "fd094767-a336-5f1f-9728-57cf17d0bbfb"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [compat]
 Aqua = "0.8"
@@ -39,6 +40,7 @@ Random = "1.10"
 ReTest = "0.3.4"
 SHA = "0.7"
 Suppressor = "0.2.8"
+TOML = "1.0"
 Test = "1.10"
 julia = "1.10"
 

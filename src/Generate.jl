@@ -44,16 +44,16 @@ function load_vscode_allowed_commands()
     if !isfile(template_path)
         error("VS Code allowed commands template file not found at: $template_path")
     end
-    
+
     # Read file and filter out empty lines
     commands = String[]
     for line in eachline(template_path)
         stripped = strip(line)
-        if !isempty(stripped) 
+        if !isempty(stripped)
             push!(commands, stripped)
         end
     end
-    
+
     return commands
 end
 
@@ -111,10 +111,10 @@ MCPRepl.Generate.generate("MyProject", path="/Users/name/projects")
 """
 function generate(
     project_name::String;
-    security_mode::Symbol = :lax,
-    port::Int = 3000,
-    path::String = pwd(),
-    emoticon::String = "🐉",
+    security_mode::Symbol=:lax,
+    port::Int=3000,
+    path::String=pwd(),
+    emoticon::String="🐉",
 )
     # Validate inputs
     if !(security_mode in [:strict, :relaxed, :lax])
@@ -219,11 +219,11 @@ function create_tools_config(project_path::String)
         "properties" => Dict(
             "_comment" => Dict(
                 "type" => "string",
-                "description" => "Optional comment about the configuration"
+                "description" => "Optional comment about the configuration",
             ),
             "_total_tokens" => Dict(
                 "type" => "string",
-                "description" => "Total token count information"
+                "description" => "Total token count information",
             ),
             "tool_sets" => Dict(
                 "type" => "object",
@@ -234,35 +234,33 @@ function create_tools_config(project_path::String)
                         "properties" => Dict(
                             "enabled" => Dict(
                                 "type" => "boolean",
-                                "description" => "Whether this tool set is enabled"
+                                "description" => "Whether this tool set is enabled",
                             ),
                             "description" => Dict(
                                 "type" => "string",
-                                "description" => "Description of this tool set"
+                                "description" => "Description of this tool set",
                             ),
                             "tokens" => Dict(
                                 "type" => "string",
-                                "description" => "Approximate token count for this tool set"
+                                "description" => "Approximate token count for this tool set",
                             ),
                             "tools" => Dict(
                                 "type" => "array",
                                 "description" => "List of tool names in this set",
-                                "items" => Dict("type" => "string")
-                            )
+                                "items" => Dict("type" => "string"),
+                            ),
                         ),
-                        "required" => ["enabled", "description", "tools"]
-                    )
-                )
+                        "required" => ["enabled", "description", "tools"],
+                    ),
+                ),
             ),
             "individual_overrides" => Dict(
                 "type" => "object",
                 "description" => "Override individual tools regardless of their tool_set setting",
-                "patternProperties" => Dict(
-                    "^[a-z_]+\$" => Dict("type" => "boolean")
-                )
-            )
+                "patternProperties" => Dict("^[a-z_]+\$" => Dict("type" => "boolean")),
+            ),
         ),
-        "required" => ["tool_sets"]
+        "required" => ["tool_sets"],
     )
 
     schema_path = joinpath(config_dir, "tools-schema.json")
@@ -278,49 +276,72 @@ function create_tools_config(project_path::String)
                 "enabled" => true,
                 "description" => "Essential tools for basic MCP server operation",
                 "tokens" => "~600",
-                "tools" => ["ping", "usage_instructions", "investigate_environment", "tool_help", "restart_repl"]
+                "tools" => [
+                    "ping",
+                    "usage_instructions",
+                    "investigate_environment",
+                    "tool_help",
+                    "restart_repl",
+                ],
             ),
             "execution" => Dict(
                 "enabled" => true,
                 "description" => "REPL code execution",
                 "tokens" => "~500",
-                "tools" => ["ex"]
+                "tools" => ["ex"],
             ),
             "code-analysis" => Dict(
                 "enabled" => true,
                 "description" => "Basic code introspection (types, methods, names)",
                 "tokens" => "~200",
-                "tools" => ["type_info", "search_methods", "list_names"]
+                "tools" => ["type_info", "search_methods", "list_names"],
             ),
             "advanced-analysis" => Dict(
                 "enabled" => false,
                 "description" => "Advanced code inspection (macros, IR, profiling)",
                 "tokens" => "~300",
-                "tools" => ["macro_expand", "code_lowered", "code_typed", "profile_code"]
+                "tools" => ["macro_expand", "code_lowered", "code_typed", "profile_code"],
             ),
             "code-quality" => Dict(
                 "enabled" => true,
                 "description" => "Code formatting and linting",
                 "tokens" => "~100",
-                "tools" => ["format_code", "lint_package"]
+                "tools" => ["format_code", "lint_package"],
             ),
             "lsp" => Dict(
                 "enabled" => false,
                 "description" => "Language Server Protocol integrations",
                 "tokens" => "~400",
-                "tools" => ["lsp_document_symbols", "lsp_workspace_symbols", "lsp_goto_definition", "lsp_find_references", "lsp_code_actions", "lsp_rename"]
+                "tools" => [
+                    "lsp_document_symbols",
+                    "lsp_workspace_symbols",
+                    "lsp_goto_definition",
+                    "lsp_find_references",
+                    "lsp_code_actions",
+                    "lsp_rename",
+                ],
             ),
             "debugging" => Dict(
                 "enabled" => false,
                 "description" => "Interactive debugging tools",
                 "tokens" => "~1,000",
-                "tools" => ["start_debug_session", "debug_step_over", "debug_step_into", "debug_step_out", "debug_continue", "debug_stop", "open_file_and_set_breakpoint", "add_watch_expression", "copy_debug_value"]
+                "tools" => [
+                    "start_debug_session",
+                    "debug_step_over",
+                    "debug_step_into",
+                    "debug_step_out",
+                    "debug_continue",
+                    "debug_stop",
+                    "open_file_and_set_breakpoint",
+                    "add_watch_expression",
+                    "copy_debug_value",
+                ],
             ),
             "package-management" => Dict(
                 "enabled" => true,
                 "description" => "Julia package installation and removal",
                 "tokens" => "~100",
-                "tools" => ["pkg_add", "pkg_rm"]
+                "tools" => ["pkg_add", "pkg_rm"],
             ),
             "testing" => Dict(
                 "enabled" => true,
@@ -332,16 +353,27 @@ function create_tools_config(project_path::String)
                 "enabled" => false,
                 "description" => "VS Code editor integration",
                 "tokens" => "~200",
-                "tools" => ["execute_vscode_command", "list_vscode_commands"]
+                "tools" => ["execute_vscode_command", "list_vscode_commands"],
             ),
             "education" => Dict(
                 "enabled" => true,
                 "description" => "Learning and quiz tools",
                 "tokens" => "~1,000",
-                "tools" => ["usage_quiz"]
-            )
+                "tools" => ["usage_quiz"],
+            ),
+            "supervisor" => Dict(
+                "enabled" => false,
+                "description" => "Multi-agent process supervision and management",
+                "tokens" => "~200",
+                "tools" => [
+                    "supervisor_status",
+                    "supervisor_start_agent",
+                    "supervisor_stop_agent",
+                    "supervisor_restart_agent",
+                ],
+            ),
         ),
-        "individual_overrides" => Dict()
+        "individual_overrides" => Dict(),
     )
 
     tools_path = joinpath(config_dir, "tools.json")
@@ -402,16 +434,17 @@ function render_template(template_name::String; kwargs...)
     if !isfile(template_path)
         error("Template file not found: $template_path")
     end
-    tmp = Template(template_path, config=Dict("autoescape"=>false))
+    tmp = Template(template_path, config=Dict("autoescape" => false))
     tmp(init=Dict(kwargs))
 end
 
-function create_startup_script(project_path::String, port::Int, emoticon::String = "🐉")
+function create_startup_script(project_path::String, port::Int, emoticon::String="🐉")
     println("📝 Creating Julia startup script...")
 
+    # Use template rendering for startup script
     startup_content = render_template(
         "julia-startup.jl";
-        emoticon = emoticon
+        emoticon=emoticon
     )
 
     startup_path = joinpath(project_path, ".julia-startup.jl")
@@ -425,17 +458,104 @@ function create_repl_script(project_path::String)
 
 # Start Julia REPL with MCPRepl project and auto-load startup script
 # This script launches Julia in the project and loads the recommended startup
-# script. Environment configuration is expected to be stored in project
-# configuration (.mcprepl/security.json) or a project .env file managed by
-# the project tools — the launcher intentionally does not alter environment
-# variables.
+# script. Configuration is read from agents.json in the project root.
 
 SCRIPT_DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+CONFIG_FILE="\$SCRIPT_DIR/.mcprepl/agents.json"
 
+# Parse options
+SUPERVISOR_MODE=false
+AGENT_NAME=""
+JULIA_ARGS=()
+
+while [[ \$# -gt 0 ]]; do
+  case \$1 in
+    --supervisor)
+      SUPERVISOR_MODE=true
+      shift
+      ;;
+    --agent)
+      AGENT_NAME="\$2"
+      shift 2
+      ;;
+    *)
+      JULIA_ARGS+=("\$1")
+      shift
+      ;;
+  esac
+done
+
+# Check for jq (required for JSON parsing)
+if ! command -v jq &> /dev/null; then
+    echo "Error: jq is required for parsing agents.json"
+    echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
+    exit 1
+fi
+
+# Handle agent mode
+if [ -n "\$AGENT_NAME" ]; then
+  if [ ! -f "\$CONFIG_FILE" ]; then
+    echo "Error: Configuration file not found: \$CONFIG_FILE"
+    exit 1
+  fi
+
+  # Extract agent configuration
+  AGENT_CONFIG=\$(jq -r ".agents[\\"\$AGENT_NAME\\"]" "\$CONFIG_FILE")
+
+  if [ "\$AGENT_CONFIG" = "null" ]; then
+    echo "Error: Agent '\$AGENT_NAME' not found in \$CONFIG_FILE"
+    echo ""
+    echo "Available agents:"
+    jq -r '.agents | keys[]' "\$CONFIG_FILE" 2>/dev/null || echo "  (none)"
+    exit 1
+  fi
+
+  # Extract agent settings
+  AGENT_PORT=\$(echo "\$AGENT_CONFIG" | jq -r '.port')
+  AGENT_DIR=\$(echo "\$AGENT_CONFIG" | jq -r '.directory')
+  AGENT_API_KEY=\$(echo "\$AGENT_CONFIG" | jq -r '.api_key // empty')
+  AGENT_DESC=\$(echo "\$AGENT_CONFIG" | jq -r '.description // ""')
+
+  # Resolve agent directory (relative to project root)
+  AGENT_FULL_DIR="\$SCRIPT_DIR/\$AGENT_DIR"
+
+  if [ ! -d "\$AGENT_FULL_DIR" ]; then
+    echo "Error: Agent directory not found: \$AGENT_FULL_DIR"
+    exit 1
+  fi
+
+  # Change to agent directory
+  cd "\$AGENT_FULL_DIR" || exit 1
+
+  echo "Starting Julia REPL for agent: \$AGENT_NAME"
+  echo "  Description: \$AGENT_DESC"
+  echo "  Port: \$AGENT_PORT"
+  echo "  Directory: \$AGENT_DIR"
+  echo ""
+
+  # Update agent packages BEFORE starting Julia to ensure latest code is loaded
+  echo "Updating agent packages..."
+  julia --project="\$AGENT_FULL_DIR" -e "using Pkg; Pkg.update()"
+
+  # Pass agent name and project root via global variables set before loading startup script
+  exec julia -i --project="\$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\\\"\$AGENT_NAME\\\"; global MCPREPL_PROJECT_ROOT=\\\"\$SCRIPT_DIR\\\"" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+fi
+
+# Handle supervisor mode
+if [ "\$SUPERVISOR_MODE" = true ]; then
+  echo "Starting Julia REPL with MCPRepl project..."
+  echo "  Supervisor mode: enabled"
+  echo ""
+
+  # Pass supervisor flag via global variable set before loading startup script
+  exec julia -i --project="\$SCRIPT_DIR" -e "global MCPREPL_SUPERVISOR=true" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
+fi
+
+# Normal mode
 echo "Starting Julia REPL with MCPRepl project..."
 echo ""
 
-exec julia --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\$@"
+exec julia -i --project="\$SCRIPT_DIR" --load="\$SCRIPT_DIR/.julia-startup.jl" "\${JULIA_ARGS[@]}"
 """
 
     repl_path = joinpath(project_path, "repl")
@@ -456,15 +576,15 @@ end
 function create_env_file(
     project_path::String,
     port::Int,
-    api_key::Union{String,Nothing} = nothing,
+    api_key::Union{String,Nothing}=nothing,
 )
     println("🔐 Creating .env file...")
 
     env_content = render_template(
         "env";
-        has_api_key = api_key !== nothing,
-        api_key = api_key,
-        port = port
+        has_api_key=api_key !== nothing,
+        api_key=api_key,
+        port=port
     )
 
     env_path = joinpath(project_path, ".env")
@@ -476,7 +596,7 @@ end
 function create_claude_env_settings(
     project_path::String,
     port::Int,
-    api_key::Union{String,Nothing} = nothing,
+    api_key::Union{String,Nothing}=nothing,
 )
     println("🔐 Creating .claude/settings.local.json...")
 
@@ -485,9 +605,9 @@ function create_claude_env_settings(
 
     settings_content = render_template(
         "claude-settings.local.json";
-        has_api_key = api_key !== nothing,
-        api_key = api_key,
-        port = string(port)
+        has_api_key=api_key !== nothing,
+        api_key=api_key,
+        port=string(port)
     )
 
     settings_path = joinpath(claude_dir, "settings.local.json")
@@ -499,7 +619,7 @@ end
 function create_vscode_config(
     project_path::String,
     port::Int,
-    api_key::Union{String,Nothing} = nothing,
+    api_key::Union{String,Nothing}=nothing,
 )
     println("⚙️  Creating VS Code MCP configuration...")
 
@@ -511,9 +631,9 @@ function create_vscode_config(
     # So we hardcode the values here and add the file to .gitignore
     mcp_content = render_template(
         "vscode-mcp.json";
-        port = port,
-        has_api_key = api_key !== nothing,
-        api_key = api_key
+        port=port,
+        has_api_key=api_key !== nothing,
+        api_key=api_key
     )
 
     mcp_path = joinpath(vscode_dir, "mcp.json")
@@ -533,7 +653,7 @@ function create_vscode_settings(project_path::String)
 
     settings_content = render_template(
         "vscode-settings.json";
-        allowed_commands_json = allowed_commands_json
+        allowed_commands_json=allowed_commands_json
     )
 
     settings_path = joinpath(vscode_dir, "settings.json")
@@ -543,13 +663,13 @@ end
 function create_claude_config_template(
     project_path::String,
     _port::Int,  # Unused - template uses ${JULIA_MCP_PORT} placeholder
-    api_key::Union{String,Nothing} = nothing,
+    api_key::Union{String,Nothing}=nothing,
 )
     println("🤖 Creating Claude Desktop config template...")
 
     config_content = render_template(
         "claude-mcp-config.json";
-        has_api_key = api_key !== nothing
+        has_api_key=api_key !== nothing
     )
 
     template_path = joinpath(project_path, ".mcp.json")
@@ -561,7 +681,7 @@ end
 function create_gemini_config_template(
     project_path::String,
     _port::Int,  # Unused - template uses ${JULIA_MCP_PORT} placeholder
-    api_key::Union{String,Nothing} = nothing,
+    api_key::Union{String,Nothing}=nothing,
 )
     println("💎 Creating Gemini config...")
 
@@ -600,7 +720,7 @@ function create_gemini_config_template(
     return true
 end
 
-function create_kilocode_config(project_path::String, port::Int, tools::Vector{String}, api_key::Union{String,Nothing} = nothing)
+function create_kilocode_config(project_path::String, port::Int, tools::Vector{String}, api_key::Union{String,Nothing}=nothing)
     println("🧩 Creating KiloCode config...")
 
     kilocode_dir = joinpath(project_path, ".kilocode")
@@ -611,13 +731,13 @@ function create_kilocode_config(project_path::String, port::Int, tools::Vector{S
     # we'll use a placeholder that the user can customize
     tool_names = String["ex", "ping", "investigate_environment", "tool_help", "usage_instructions"]
     tools_json = JSON.json(tool_names, 4)
-    
+
     config_content = render_template(
         "kilocode-mcp-config.json";
-        has_api_key = api_key !== nothing,
-        api_key = api_key,
-        port = port,
-        tool_list = tools_json
+        has_api_key=api_key !== nothing,
+        api_key=api_key,
+        port=port,
+        tool_list=tools_json
     )
 
     config_path = joinpath(kilocode_dir, "mcp.json")
@@ -1095,7 +1215,7 @@ function add_mcprepl_dependency(project_path::String)
             @suppress Pkg.add("MCPRepl")
         catch
             # If not registered, add from GitHub
-            @suppress Pkg.add(url = "https://github.com/kahliburke/MCPRepl.jl")
+            @suppress Pkg.add(url="https://github.com/kahliburke/MCPRepl.jl")
         end
 
         # Add recommended development tools

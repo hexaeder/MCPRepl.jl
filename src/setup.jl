@@ -85,7 +85,7 @@ function check_vscode_status()
     return :not_configured
 end
 
-function add_vscode_mcp_server(transport_type::String)
+function add_vscode_mcp_server(_transport_type::String)
     # Load security config to get port and check if API key is required
     security_config = load_security_config()
 

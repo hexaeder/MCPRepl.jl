@@ -19,6 +19,40 @@ export start!, stop!, test_server
 
 include("tools.jl")
 
+# Version tracking - gets git commit hash at runtime
+function version_info()
+    try
+        pkg_dir = pkgdir(@__MODULE__)
+        git_dir = joinpath(pkg_dir, ".git")
+
+        # Check if it's a git repo first (dev package)
+        if isdir(git_dir)
+            try
+                commit = readchomp(`git -C $(pkg_dir) rev-parse --short HEAD`)
+                dirty = success(`git -C $(pkg_dir) diff --quiet`) ? "" : "-dirty"
+                return "$(commit)$(dirty)"
+            catch git_error
+                @warn "Failed to get git version" exception = git_error
+                # Fall through to read from Project.toml
+            end
+        end
+
+        # Read version from Project.toml
+        project_file = joinpath(pkg_dir, "Project.toml")
+        if isfile(project_file)
+            project = TOML.parsefile(project_file)
+            if haskey(project, "version")
+                return "v$(project["version"])"
+            end
+        end
+
+        return "unknown"
+    catch e
+        @warn "Failed to get version info" exception = e
+        return "unknown"
+    end
+end
+
 # ============================================================================
 # Tool Definition Macros
 # ============================================================================
@@ -71,6 +105,7 @@ include("security.jl")
 include("security_wizard.jl")
 include("repl_status.jl")
 include("tool_definitions.jl")
+include("Supervisor.jl")
 include("MCPServer.jl")
 include("setup.jl")
 include("vscode.jl")
@@ -96,6 +131,9 @@ const VSCODE_NONCES = Dict{String,Tuple{String,Float64}}()
 # Lock for thread-safe access to nonces dictionary
 const VSCODE_NONCE_LOCK = ReentrantLock()
 
+# Global reference to supervisor registry (if supervisor mode is enabled)
+const SUPERVISOR_REGISTRY = Ref{Union{Supervisor.AgentRegistry,Nothing}}(nothing)
+
 """
     store_vscode_response(request_id::String, result, error::Union{Nothing,String})
 
@@ -117,8 +155,8 @@ Automatically cleans up the stored response after retrieval.
 """
 function retrieve_vscode_response(
     request_id::String;
-    timeout::Float64 = 5.0,
-    poll_interval::Float64 = 0.1,
+    timeout::Float64=5.0,
+    poll_interval::Float64=0.1,
 )
     start_time = time()
 
@@ -147,7 +185,7 @@ end
 Remove responses older than `max_age` seconds to prevent memory leaks.
 Should be called periodically.
 """
-function cleanup_old_vscode_responses(max_age::Float64 = 60.0)
+function cleanup_old_vscode_responses(max_age::Float64=60.0)
     current_time = time()
     lock(VSCODE_RESPONSE_LOCK) do
         for (request_id, (_, _, timestamp)) in collect(VSCODE_RESPONSES)
@@ -210,7 +248,7 @@ end
 Remove nonces older than `max_age` seconds to prevent memory leaks.
 Should be called periodically.
 """
-function cleanup_old_nonces(max_age::Float64 = 60.0)
+function cleanup_old_nonces(max_age::Float64=60.0)
     current_time = time()
     lock(VSCODE_NONCE_LOCK) do
         for (request_id, (_, timestamp)) in collect(VSCODE_NONCES)
@@ -241,12 +279,12 @@ end
 # Helper function to build VS Code command URI
 function build_vscode_uri(
     command::String;
-    args::Union{Nothing,String} = nothing,
-    request_id::Union{Nothing,String} = nothing,
-    mcp_port::Int = 3000,
-    nonce::Union{Nothing,String} = nothing,
-    publisher::String = "MCPRepl",
-    name::String = "vscode-remote-control",
+    args::Union{Nothing,String}=nothing,
+    request_id::Union{Nothing,String}=nothing,
+    mcp_port::Int=3000,
+    nonce::Union{Nothing,String}=nothing,
+    publisher::String="MCPRepl",
+    name::String="vscode-remote-control",
 )
     uri = "vscode://$(publisher).$(name)?cmd=$(command)"
     if args !== nothing
@@ -299,10 +337,13 @@ function remove_println_calls(expr, toplevel::Bool=true)
                 return nothing
             end
             # Match qualified calls (Base.println, Main.print, etc.)
-            if (func isa Expr && func.head == :. &&
+            if (
+                func isa Expr &&
+                func.head == :. &&
                 length(func.args) >= 2 &&
                 func.args[end] isa QuoteNode &&
-                func.args[end].value in print_funcs)
+                func.args[end].value in print_funcs
+            )
                 return nothing
             end
         elseif expr.head == :macrocall
@@ -313,15 +354,19 @@ function remove_println_calls(expr, toplevel::Bool=true)
             end
             # Remove logging macros ONLY at top level
             if toplevel
-                logging_macros = [Symbol("@error"), Symbol("@debug"), Symbol("@info"), Symbol("@warn")]
+                logging_macros =
+                    [Symbol("@error"), Symbol("@debug"), Symbol("@info"), Symbol("@warn")]
                 if macro_name in logging_macros
                     return nothing
                 end
                 # Also handle qualified logging macros
-                if (macro_name isa Expr && macro_name.head == :. &&
+                if (
+                    macro_name isa Expr &&
+                    macro_name.head == :. &&
                     length(macro_name.args) >= 2 &&
                     macro_name.args[end] isa QuoteNode &&
-                    macro_name.args[end].value in [:error, :debug, :info, :warn])
+                    macro_name.args[end].value in [:error, :debug, :info, :warn]
+                )
                     return nothing
                 end
             end
@@ -350,9 +395,9 @@ end
 
 function execute_repllike(
     str;
-    silent::Bool = false,
-    quiet::Bool = true,
-    description::Union{String,Nothing} = nothing,
+    silent::Bool=false,
+    quiet::Bool=true,
+    description::Union{String,Nothing}=nothing,
 )
     # Check for Pkg.activate usage
     if contains(str, "activate(") && !contains(str, r"#.*overwrite no-activate-rule")
@@ -385,7 +430,7 @@ function execute_repllike(
 
     # Only print the agent prompt if not silent
     if !silent
-        printstyled("\nagent> ", color = :red, bold = :true)
+        printstyled("\nagent> ", color=:red, bold=:true)
         if description !== nothing
             println(description)
         else
@@ -421,7 +466,7 @@ function execute_repllike(
     stdout_task = @async begin
         try
             while !eof(stdout_read)
-                line = readline(stdout_read; keep = true)
+                line = readline(stdout_read; keep=true)
                 push!(stdout_content, line)
                 # Show real-time output unless silent mode
                 if !silent
@@ -431,7 +476,7 @@ function execute_repllike(
             end
         catch e
             if !isa(e, EOFError)
-                @debug "stdout read error" exception=e
+                @debug "stdout read error" exception = e
             end
         end
     end
@@ -439,7 +484,7 @@ function execute_repllike(
     stderr_task = @async begin
         try
             while !eof(stderr_read)
-                line = readline(stderr_read; keep = true)
+                line = readline(stderr_read; keep=true)
                 push!(stderr_content, line)
                 # Show real-time output unless silent mode
                 if !silent
@@ -449,7 +494,7 @@ function execute_repllike(
             end
         catch e
             if !isa(e, EOFError)
-                @debug "stderr read error" exception=e
+                @debug "stderr read error" exception = e
             end
         end
     end
@@ -530,8 +575,8 @@ The configuration supports:
 
 If the config file doesn't exist, returns `nothing` to indicate all tools should be enabled.
 """
-function load_tools_config(config_path::String = ".mcprepl/tools.json")
-    full_path = joinpath(pwd(), config_path)
+function load_tools_config(config_path::String=".mcprepl/tools.json", workspace_dir::String=pwd())
+    full_path = joinpath(workspace_dir, config_path)
 
     # If config doesn't exist, enable all tools (backward compatibility)
     if !isfile(full_path)
@@ -539,7 +584,7 @@ function load_tools_config(config_path::String = ".mcprepl/tools.json")
     end
 
     try
-        config = JSON.parsefile(full_path; dicttype = Dict{String,Any})
+        config = JSON.parsefile(full_path; dicttype=Dict{String,Any})
         enabled_tools = Set{Symbol}()
 
         # First, process tool sets
@@ -590,31 +635,120 @@ function filter_tools_by_config(enabled_tools::Union{Set{Symbol},Nothing})
     return filter(tool -> tool.id in enabled_tools, ALL_TOOLS[])
 end
 
+"""
+    start_agent_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
+
+Start a background task that sends periodic heartbeats to the supervisor.
+
+This function spawns a separate thread that:
+1. Reads supervisor configuration from agents.json
+2. Sends HTTP POST heartbeats every second
+3. Silently ignores failures (supervisor may not be running yet)
+
+The heartbeat task runs indefinitely until the Julia process exits.
+"""
+function start_agent_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
+    if verbose
+        printstyled("💓 Agent Heartbeat: ", color=:cyan, bold=true)
+        printstyled("Enabled for '$agent_name'\n", color=:green, bold=true)
+    end
+
+    # Spawn heartbeat task on a separate thread
+    Threads.@spawn begin
+        # Read supervisor configuration
+        config_path = agents_config  # Already includes .mcprepl/ prefix
+        supervisor_port = nothing
+
+        if isfile(config_path)
+            try
+                config = JSON.parsefile(config_path)
+                supervisor_port = get(get(config, "supervisor", Dict()), "port", nothing)
+                if supervisor_port === nothing
+                    @warn "Supervisor port not found in $config_path, heartbeat disabled"
+                    return
+                end
+            catch e
+                @warn "Could not read supervisor config from $config_path" exception = e
+                return
+            end
+        else
+            @warn "Agents config file not found at $config_path, heartbeat disabled"
+            return
+        end
+
+        supervisor_url = "http://localhost:$supervisor_port/"
+
+        if verbose
+            printstyled("   • Sending to: $supervisor_url\n", color=:green)
+            println()
+        end
+
+        # Heartbeat loop
+        while true
+            try
+                heartbeat = Dict(
+                    "jsonrpc" => "2.0",
+                    "method" => "supervisor/heartbeat",
+                    "id" => 1,
+                    "params" => Dict(
+                        "agent_name" => agent_name,
+                        "pid" => getpid(),
+                        "status" => "healthy",
+                        "timestamp" => string(Dates.now()),
+                    ),
+                )
+
+                HTTP.post(
+                    supervisor_url,
+                    ["Content-Type" => "application/json"],
+                    JSON.json(heartbeat);
+                    readtimeout=2,
+                    connect_timeout=1,
+                )
+            catch e
+                # Silently ignore heartbeat failures (supervisor may not be running yet)
+            end
+
+            sleep(1)  # Send heartbeat every second
+        end
+    end
+end
+
 function start!(;
-    port::Union{Int,Nothing} = nothing,
-    verbose::Bool = true,
-    security_mode::Union{Symbol,Nothing} = nothing,
+    port::Union{Int,Nothing}=nothing,
+    verbose::Bool=true,
+    security_mode::Union{Symbol,Nothing}=nothing,
+    supervisor::Bool=false,
+    agents_config::String=".mcprepl/agents.json",
+    agent_name::String="",
+    workspace_dir::String=pwd(),
 )
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     # Load or prompt for security configuration
-    security_config = load_security_config()
+    # Pass agent_name and supervisor flag so it can load from agents.json if needed
+    # Use workspace_dir (project root) not pwd() (which may be agent dir)
+    @info "Loading security config" workspace_dir = workspace_dir agent_name = agent_name supervisor = supervisor
+    security_config = load_security_config(workspace_dir, agent_name, supervisor)
 
     if security_config === nothing
-        printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color = :red, bold = true)
+        printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color=:red, bold=true)
         println()
         println("MCPRepl requires security configuration before starting.")
         println("Run MCPRepl.setup() to configure API keys and security settings.")
         println()
         error("Security configuration required. Run MCPRepl.setup() first.")
+    else
+        @info "Security config loaded successfully" port = security_config.port mode = security_config.mode
     end
 
-    # Determine port: priority is ENV var > function arg > config file
-    actual_port = if haskey(ENV, "JULIA_MCP_PORT")
-        parse(Int, ENV["JULIA_MCP_PORT"])
-    elseif port !== nothing
+    # Determine port: function arg overrides config, otherwise use what load_security_config() found
+    actual_port = if port !== nothing
+        @info "Using port from function argument" port = port
         port
     else
+        # load_security_config already loaded the right port based on mode (agent/supervisor/normal)
+        @info "Using port from loaded config" port = security_config.port mode = (supervisor ? "supervisor" : (agent_name != "" ? "agent:$agent_name" : "normal"))
         security_config.port
     end
 
@@ -634,8 +768,8 @@ function start!(;
 
     # Show security status if verbose
     if verbose
-        printstyled("\n🔒 Security Mode: ", color = :cyan, bold = true)
-        printstyled("$(security_config.mode)\n", color = :green, bold = true)
+        printstyled("\n🔒 Security Mode: ", color=:cyan, bold=true)
+        printstyled("$(security_config.mode)\n", color=:green, bold=true)
         if security_config.mode == :strict
             println("   • API key required + IP allowlist enforced")
         elseif security_config.mode == :relaxed
@@ -643,18 +777,1629 @@ function start!(;
         elseif security_config.mode == :lax
             println("   • Localhost only + no API key required")
         end
-        printstyled("📡 Server Port: ", color = :cyan, bold = true)
-        printstyled("$actual_port\n", color = :green, bold = true)
+        printstyled("📡 Server Port: ", color=:cyan, bold=true)
+        printstyled("$actual_port\n", color=:green, bold=true)
         println()
     end
+
+    # Initialize supervisor if requested
+    if supervisor
+        if verbose
+            printstyled("👁️  Supervisor Mode: ", color=:cyan, bold=true)
+            printstyled("Enabled\n", color=:green, bold=true)
+        end
+
+        # Load agents configuration (use absolute path)
+        agents_config_path = joinpath(workspace_dir, agents_config)
+        registry = Supervisor.load_agents_config(agents_config_path)
+
+        if registry === nothing
+            @warn "Failed to load agents configuration from $agents_config. Supervisor mode disabled."
+        else
+            # Store registry globally
+            SUPERVISOR_REGISTRY[] = registry
+
+            # Start supervisor monitor loop
+            Supervisor.start_supervisor(registry)
+
+            agent_count = length(registry.agents)
+            if verbose
+                printstyled("   • Managing $agent_count agent(s)\n", color=:green)
+            end
+
+            # Start auto-start agents with staggered delays to avoid package lock conflicts
+            auto_start_count = 0
+            for (i, (name, agent)) in enumerate(Supervisor.get_all_agents(registry))
+                @info "Checking agent for auto-start" name = name auto_start = agent.auto_start status = agent.status
+                if agent.auto_start
+                    @info "Starting agent" name = name
+                    if Supervisor.start_agent(agent)
+                        auto_start_count += 1
+                        @info "Agent started successfully" name = name
+                        # Wait between agent starts to avoid simultaneous package operations
+                        # This prevents git lock conflicts during Pkg.instantiate()
+                        if i < length(registry.agents)
+                            sleep(5)  # 5 second delay to allow package operations to complete
+                        end
+                    else
+                        @warn "Failed to start agent" name = name
+                    end
+                end
+            end
+
+            if verbose
+                if auto_start_count > 0
+                    printstyled(
+                        "   • Auto-started $auto_start_count agent(s)\n",
+                        color=:green,
+                    )
+                else
+                    @warn "No agents were auto-started"
+                end
+                println()
+            end
+        end
+    end
+
+    # Start heartbeat task if running as an agent
+    if !isempty(agent_name)
+        # Use absolute path to agents_config so agent can find it from its own directory
+        agents_config_path = joinpath(workspace_dir, agents_config)
+        start_agent_heartbeat(agent_name, agents_config_path, verbose)
+    end
+
+    ping_tool = @mcp_tool(
+        :ping,
+        "Check if the MCP server is responsive and return Revise.jl status.",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        args -> begin
+            status = "✓ MCP Server is healthy and responsive\n"
+            status *= "Version: $(version_info())\n"
+
+            # Check Revise status
+            if isdefined(Main, :Revise)
+                revise_errors = Main.Revise.errors()
+                if revise_errors === nothing
+                    status *= "Revise: active (no errors)"
+                else
+                    status *= "Revise: active (has errors - call Revise.errors() for details)"
+                end
+            else
+                status *= "Revise: not loaded"
+            end
+
+            return status
+        end
+    )
+
+    usage_instructions_tool =
+        @mcp_tool :usage_instructions "Get Julia REPL usage instructions and best practices for AI agents." Dict(
+            "type" => "object",
+            "properties" => Dict(),
+            "required" => [],
+        ) (
+            args -> begin
+                try
+                    workflow_path = joinpath(
+                        dirname(dirname(@__FILE__)),
+                        "prompts",
+                        "julia_repl_workflow.md",
+                    )
+
+                    if !isfile(workflow_path)
+                        return "Error: julia_repl_workflow.md not found at $workflow_path"
+                    end
+
+                    return read(workflow_path, String)
+                catch e
+                    return "Error reading usage instructions: $e"
+                end
+            end
+        )
+
+    usage_quiz_tool = @mcp_tool(
+        :usage_quiz,
+        """Test your understanding of MCPRepl usage patterns with a self-graded quiz.
+
+This tool helps AI agents verify they understand the correct usage patterns for the `ex` tool
+and the shared REPL model before working with users.
+
+# Modes
+
+**Default (no arguments):** Returns quiz questions
+- 6 questions testing understanding of:
+  - Shared REPL model
+  - When to use q=false vs q=true (default)
+  - Communication channels (TEXT vs code vs println)
+  - Token efficiency
+  - Real-world scenarios
+- Agent should answer questions and output responses to user
+
+**With show_sols=true:** Returns solutions and grading instructions
+- Canonical answers for all questions
+- Point values and grading rubrics
+- Instructions to self-grade and report score to user
+- If score < 75, agent must review usage_instructions and retake
+
+# Usage
+
+```julia
+# Take the quiz
+usage_quiz()
+# [Agent answers questions in their response to user]
+
+# Check answers and grade yourself
+usage_quiz(show_sols=true)
+# [Agent compares answers, calculates score, reports to user]
+```
+
+# Purpose
+
+Ensures agents understand:
+- NOT to use println for communication (user sees REPL output directly)
+- Default to q=true (quiet mode) - only use q=false when you need return values for decisions
+- Token efficiency (70-90% savings with correct usage)
+- Communication happens in TEXT responses, not code
+
+**Recommended:** New agents should take this quiz before starting work to verify understanding.""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "show_sols" => Dict(
+                    "type" => "boolean",
+                    "description" => "If true, return solutions and grading instructions. If false/omitted, return quiz questions.",
+                    "default" => false,
+                ),
+            ),
+            "required" => [],
+        ),
+        args -> begin
+            try
+                show_solutions = get(args, "show_sols", false)
+
+                filename = if show_solutions
+                    "usage_quiz_solutions.md"
+                else
+                    "usage_quiz_questions.md"
+                end
+
+                quiz_path = joinpath(dirname(dirname(@__FILE__)), "prompts", filename)
+
+                if !isfile(quiz_path)
+                    return "Error: $filename not found at $quiz_path"
+                end
+
+                return read(quiz_path, String)
+            catch e
+                return "Error reading quiz file: $e"
+            end
+        end
+    )
+
+    repl_tool = @mcp_tool(
+        :ex,
+        """Execute Julia code in a persistent REPL. User sees all code execute in real-time.
+
+Default (q=true): Returns only printed output/errors, suppresses return values (saves 70-90% tokens).
+Verbose (q=false): Returns full output including return value - use ONLY when you need the result to make a decision.
+
+Never use `julia` in bash. Call usage_instructions first for workflow guidance.""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "e" => Dict(
+                    "type" => "string",
+                    "description" => "Julia expression to evaluate (e.g., '2 + 3 * 4' or 'using Pkg; Pkg.status()')",
+                ),
+                "q" => Dict(
+                    "type" => "boolean",
+                    "description" => "Quiet mode: suppresses return value to save tokens (default: true). Set to false to see the computed result.",
+                ),
+                "s" => Dict(
+                    "type" => "boolean",
+                    "description" => "Silent mode: suppresses 'agent>' prompt and real-time output (default: false)",
+                ),
+            ),
+            "required" => ["e"],
+        ),
+        (args) -> begin
+            try
+                silent = get(args, "s", false)
+                quiet = get(args, "q", true)
+                expr_str = get(args, "e", "")
+
+                # Format long one-liners for readability (if JuliaFormatter available)
+                if length(expr_str) > 80 && isdefined(Main, :JuliaFormatter)
+                    try
+                        formatted = Main.JuliaFormatter.format_text(expr_str)
+                        # Only use formatted version if it's actually multiline
+                        if count('\n', formatted) > 0
+                            expr_str = formatted
+                        end
+                    catch
+                        # If formatting fails, use original
+                    end
+                end
+
+                execute_repllike(expr_str; silent=silent, quiet=quiet)
+            catch e
+                println("Error during execute_repllike", e)
+                "Apparently there was an **internal** error to the MCP server: $e"
+            end
+        end
+    )
+
+    restart_repl_tool = @mcp_tool(
+        :restart_repl,
+        "Restart the Julia REPL. Returns immediately, then server restarts (wait 5s, retry every 2s).",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        (args, stream_channel=nothing) -> begin
+            try
+                # Get the current server port (before restart)
+                server_port = SERVER[] !== nothing ? SERVER[].port : nothing
+
+                # Check if running in VS Code by looking for JULIA_VSCODE_INTERNAL variable
+                in_vscode =
+                    haskey(ENV, "JULIA_VSCODE_INTERNAL") ||
+                    haskey(ENV, "VSCODE_PID") ||
+                    isdefined(Main, :VSCodeServer)
+
+                port_msg = server_port !== nothing ? " on port $server_port" : ""
+
+                if in_vscode
+                    # Execute the restart command using the vscode URI trigger
+                    restart_uri = build_vscode_uri(
+                        "language-julia.restartREPL";
+                        mcp_port=server_port !== nothing ? server_port : 0,
+                    )
+                    trigger_vscode_uri(restart_uri)
+
+                    return """✓ Julia REPL restart initiated$port_msg.
+
+⏳ The MCP server will be temporarily offline during restart.
+
+**AI Agent Instructions:**
+1. Wait 5 seconds before making any requests
+2. Then retry every 2 seconds until connection is reestablished
+3. Typical restart time: 5-10 seconds (may be longer if packages need recompilation)
+
+The server will automatically restart and be ready when the Julia REPL finishes loading."""
+                else
+                    # Not in VS Code - use exit() approach
+                    # Schedule exit after a brief delay to allow response to be sent
+                    @async begin
+                        sleep(0.5)
+                        exit(0)
+                    end
+
+                    return """✓ Julia REPL restart initiated$port_msg.
+
+⏳ The MCP server will be temporarily offline during restart.
+
+**AI Agent Instructions:**
+1. Wait 5 seconds before making any requests
+2. Then retry every 2 seconds until connection is reestablished
+3. Typical restart time: 5-10 seconds (may be longer if packages need recompilation)
+
+**Note:** Running outside VS Code - Julia will exit and needs to be manually restarted.
+If Julia is started via the .julia-startup.jl script, it should restart automatically."""
+                end
+            catch e
+                return "Error initiating REPL restart: $e"
+            end
+        end
+    )
+
+    vscode_command_tool = @mcp_tool(
+        :execute_vscode_command,
+        """Execute any VS Code command via the Remote Control extension.
+
+This tool can trigger any VS Code command that has been allowlisted in the extension configuration.
+Useful for automating editor operations like saving files, running tasks, managing windows, etc.
+
+**Prerequisites:**
+- VS Code Remote Control extension must be installed (via MCPRepl.setup())
+- The command must be in the allowed commands list (see usage_instructions tool for complete list)
+
+**Bidirectional Communication:**
+- Set `wait_for_response=true` to wait for and return the command's result
+- Useful for commands that return values (e.g., getting debug variable values)
+- Default timeout is 5 seconds (configurable via `timeout` parameter)
+
+**Common Command Categories:**
+- REPL & Window Control: restartREPL, startREPL, reloadWindow
+- File Operations: saveAll, closeAllEditors, openFile
+- Navigation: terminal.focus, focusActiveEditorGroup, focusFilesExplorer, quickOpen
+- Terminal Operations: sendSequence (execute shell commands without approval dialogs)
+- Testing & Debugging: tasks.runTask, debug.start, debug.stop
+- Git: git.commit, git.refresh, git.sync
+- Search: findInFiles, replaceInFiles
+- Window Management: splitEditor, togglePanel, toggleSidebarVisibility
+- Extensions: installExtension
+
+**Examples:**
+```
+execute_vscode_command("workbench.action.files.saveAll")
+execute_vscode_command("workbench.action.terminal.focus")
+execute_vscode_command("workbench.action.tasks.runTask", ["test"])
+
+# Execute shell commands (RECOMMENDED for julia --project commands):
+execute_vscode_command("workbench.action.terminal.sendSequence",
+  ["{\"text\": \"julia --project -e 'using Pkg; Pkg.test()'\\r\"}"])
+
+# Get a value back from VS Code:
+execute_vscode_command("someCommand", wait_for_response=true, timeout=10.0)
+```
+
+For the complete list of available commands and their descriptions, call the usage_instructions tool.""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "command" => Dict(
+                    "type" => "string",
+                    "description" => "The VS Code command ID to execute (e.g., 'workbench.action.files.saveAll')",
+                ),
+                "args" => Dict(
+                    "type" => "array",
+                    "description" => "Optional array of arguments to pass to the command (JSON-encoded)",
+                    "items" => Dict("type" => "string"),
+                ),
+                "wait_for_response" => Dict(
+                    "type" => "boolean",
+                    "description" => "Wait for command result (default: false). Enable for commands that return values.",
+                    "default" => false,
+                ),
+                "timeout" => Dict(
+                    "type" => "number",
+                    "description" => "Timeout in seconds when wait_for_response=true (default: 5.0)",
+                    "default" => 5.0,
+                ),
+            ),
+            "required" => ["command"],
+        ),
+        args -> begin
+            try
+                cmd = get(args, "command", "")
+                if isempty(cmd)
+                    return "Error: command parameter is required"
+                end
+
+                wait_for_response = get(args, "wait_for_response", false)
+                timeout = get(args, "timeout", 5.0)
+
+                # Generate unique request ID if waiting for response
+                request_id =
+                    wait_for_response ? string(rand(UInt128), base=16) : nothing
+
+                # Build URI with command and optional args
+                args_param = nothing
+                if haskey(args, "args") && !isempty(args["args"])
+                    args_json = JSON.json(args["args"])
+                    args_param = HTTP.URIs.escapeuri(args_json)
+                end
+
+                uri = build_vscode_uri(cmd; args=args_param, request_id=request_id)
+                trigger_vscode_uri(uri)
+
+                # If waiting for response, poll for it
+                if wait_for_response
+                    try
+                        result, error =
+                            retrieve_vscode_response(request_id; timeout=timeout)
+
+                        if error !== nothing
+                            return "VS Code command '$(cmd)' failed: $error"
+                        end
+
+                        # Format result for display
+                        if result === nothing
+                            return "VS Code command '$(cmd)' executed successfully (no return value)"
+                        else
+                            # Pretty-print the result
+                            result_str = try
+                                JSON.json(result)
+                            catch
+                                string(result)
+                            end
+                            return "VS Code command '$(cmd)' result:\n$result_str"
+                        end
+                    catch e
+                        return "Error waiting for VS Code response: $e"
+                    end
+                else
+                    return "VS Code command '$(cmd)' executed successfully."
+                end
+            catch e
+                return "Error executing VS Code command: $e. Make sure the VS Code Remote Control extension is installed via MCPRepl.setup()"
+            end
+        end
+    )
+
+    list_vscode_commands_tool = @mcp_tool(
+        :list_vscode_commands,
+        """List all VS Code commands that are allowed for execution.
+
+Returns the list of commands configured in `.vscode/settings.json` under `vscode-remote-control.allowedCommands`.
+Use this to discover which commands are available for the `execute_vscode_command` tool.""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        args -> begin
+            try
+                settings = read_vscode_settings()
+                allowed_commands =
+                    get(settings, "vscode-remote-control.allowedCommands", nothing)
+
+                if allowed_commands === nothing || isempty(allowed_commands)
+                    return "No VS Code commands configured. Run MCPRepl.setup() to configure the Remote Control extension."
+                end
+
+                result = "📋 Allowed VS Code Commands ($(length(allowed_commands)))\n\n"
+                for cmd in sort(allowed_commands)
+                    result *= "  • $cmd\n"
+                end
+                return result
+            catch e
+                return "Error reading VS Code settings: $e"
+            end
+        end
+    )
+
+    tool_help_tool = @mcp_tool(
+        :tool_help,
+        "Get detailed help and examples for any MCP tool. Use extended=true for additional documentation.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "tool_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the tool to get help for",
+                ),
+                "extended" => Dict(
+                    "type" => "boolean",
+                    "description" => "If true, return extended documentation with additional examples (default: false)",
+                ),
+            ),
+            "required" => ["tool_name"],
+        ),
+        args -> begin
+            try
+                tool_name = get(args, "tool_name", "")
+                if isempty(tool_name)
+                    return "Error: tool_name parameter is required"
+                end
+
+                extended = get(args, "extended", false)
+                tool_id = Symbol(tool_name)
+
+                if SERVER[] === nothing
+                    return "Error: MCP server is not running"
+                end
+
+                server = SERVER[]
+                if !haskey(server.tools, tool_id)
+                    return "Error: Tool ':$tool_id' not found. Use list_tools() to see available tools."
+                end
+
+                tool = server.tools[tool_id]
+
+                result = "📖 Help for MCP Tool: $tool_name\n"
+                result *= "="^70 * "\n\n"
+                result *= tool.description * "\n"
+
+                # Try to load extended documentation if requested
+                if extended
+                    extended_help_path = joinpath(
+                        dirname(dirname(@__FILE__)),
+                        "extended-help",
+                        "$tool_name.md",
+                    )
+
+                    if isfile(extended_help_path)
+                        result *= "\n\n---\n\n## Extended Documentation\n\n"
+                        result *= read(extended_help_path, String)
+                    else
+                        result *= "\n\n(No extended documentation available for this tool)"
+                    end
+                end
+
+                return result
+            catch e
+                return "Error getting tool help: $e"
+            end
+        end
+    )
+
+    investigate_tool = @mcp_tool(
+        :investigate_environment,
+        "Get current Julia environment info: pwd, active project, packages, dev packages, and Revise status.",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        args -> begin
+            try
+                execute_repllike("MCPRepl.repl_status_report()"; quiet=false)
+            catch e
+                "Error investigating environment: $e"
+            end
+        end
+    )
+
+    search_methods_tool = @mcp_tool(
+        :search_methods,
+        "Search for all methods of a function or methods matching a type signature.",
+        MCPRepl.text_parameter(
+            "query",
+            "Function name or type to search (e.g., 'println', 'String', 'Base.sort')",
+        ),
+        args -> begin
+            try
+                query = get(args, "query", "")
+                if isempty(query)
+                    return "Error: query parameter is required"
+                end
+
+                # Try to evaluate the query to get the actual function/type
+                code = """
+                using InteractiveUtils
+                target = $query
+                if isa(target, Type)
+                    println("Methods with argument type \$target:")
+                    println("=" ^ 60)
+                    methodswith(target)
+                else
+                    println("Methods for \$target:")
+                    println("=" ^ 60)
+                    methods(target)
+                end
+                """
+                execute_repllike(
+                    code;
+                    description="[Searching methods for: $query]",
+                    quiet=false,
+                )
+            catch e
+                "Error searching methods: \$e"
+            end
+        end
+    )
+
+    macro_expand_tool = @mcp_tool(
+        :macro_expand,
+        "Expand a macro to see the generated code.",
+        MCPRepl.text_parameter(
+            "expression",
+            "Macro expression to expand (e.g., '@time sleep(1)')",
+        ),
+        args -> begin
+            try
+                expr = get(args, "expression", "")
+                if isempty(expr)
+                    return "Error: expression parameter is required"
+                end
+
+                code = """
+                using InteractiveUtils
+                @macroexpand $expr
+                """
+                execute_repllike(
+                    code;
+                    description="[Expanding macro: $expr]",
+                    quiet=false,
+                )
+            catch e
+                "Error expanding macro: \$e"
+            end
+        end
+    )
+
+    type_info_tool = @mcp_tool(
+        :type_info,
+        "Get type information: hierarchy, fields, parameters, and properties.",
+        MCPRepl.text_parameter(
+            "type_expr",
+            "Type expression to inspect (e.g., 'String', 'Vector{Int}', 'AbstractArray')",
+        ),
+        args -> begin
+            try
+                type_expr = get(args, "type_expr", "")
+                if isempty(type_expr)
+                    return "Error: type_expr parameter is required"
+                end
+
+                code = """
+                using InteractiveUtils
+                T = $type_expr
+                println("Type Information for: \$T")
+                println("=" ^ 60)
+                println()
+
+                # Basic type info
+                println("Abstract: ", isabstracttype(T))
+                println("Primitive: ", isprimitivetype(T))
+                println("Mutable: ", ismutabletype(T))
+                println()
+
+                # Type hierarchy
+                println("Supertype: ", supertype(T))
+                if !isabstracttype(T)
+                    println()
+                    println("Fields:")
+                    if fieldcount(T) > 0
+                        for (i, fname) in enumerate(fieldnames(T))
+                            ftype = fieldtype(T, i)
+                            println("  \$i. \$fname :: \$ftype")
+                        end
+                    else
+                        println("  (no fields)")
+                    end
+                end
+
+                println()
+                println("Direct subtypes:")
+                subs = subtypes(T)
+                if isempty(subs)
+                    println("  (no direct subtypes)")
+                else
+                    for sub in subs
+                        println("  - \$sub")
+                    end
+                end
+                """
+                execute_repllike(
+                    code;
+                    description="[Getting type info for: $type_expr]",
+                    quiet=false,
+                )
+            catch e
+                "Error getting type info: $e"
+            end
+        end
+    )
+
+    profile_tool = @mcp_tool(
+        :profile_code,
+        "Profile Julia code to identify performance bottlenecks.",
+        MCPRepl.text_parameter("code", "Julia code to profile"),
+        args -> begin
+            try
+                code_to_profile = get(args, "code", "")
+                if isempty(code_to_profile)
+                    return "Error: code parameter is required"
+                end
+
+                wrapper = """
+                using Profile
+                Profile.clear()
+                @profile begin
+                    $code_to_profile
+                end
+                Profile.print(format=:flat, sortedby=:count)
+                """
+                execute_repllike(wrapper; description="[Profiling code]", quiet=false)
+            catch e
+                "Error profiling code: \$e"
+            end
+        end
+    )
+
+    list_names_tool = @mcp_tool(
+        :list_names,
+        "List all exported names in a module or package.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "module_name" => Dict(
+                    "type" => "string",
+                    "description" => "Module name (e.g., 'Base', 'Core', 'Main')",
+                ),
+                "all" => Dict(
+                    "type" => "boolean",
+                    "description" => "Include non-exported names (default: false)",
+                ),
+            ),
+            "required" => ["module_name"],
+        ),
+        args -> begin
+            try
+                module_name = get(args, "module_name", "")
+                show_all = get(args, "all", false)
+
+                if isempty(module_name)
+                    return "Error: module_name parameter is required"
+                end
+
+                code = """
+                mod = $module_name
+                println("Names in \$mod" * (($show_all) ? " (all=true)" : " (exported only)") * ":")
+                println("=" ^ 60)
+                name_list = names(mod, all=$show_all)
+                for name in sort(name_list)
+                    println("  ", name)
+                end
+                println()
+                println("Total: ", length(name_list), " names")
+                """
+                execute_repllike(
+                    code;
+                    description="[Listing names in: $module_name]",
+                    quiet=false,
+                )
+            catch e
+                "Error listing names: \$e"
+            end
+        end
+    )
+
+    code_lowered_tool = @mcp_tool(
+        :code_lowered,
+        "Show lowered (desugared) IR for a function.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "function_expr" => Dict(
+                    "type" => "string",
+                    "description" => "Function to inspect (e.g., 'sin', 'Base.sort')",
+                ),
+                "types" => Dict(
+                    "type" => "string",
+                    "description" => "Argument types as tuple (e.g., '(Float64,)', '(Int, Int)')",
+                ),
+            ),
+            "required" => ["function_expr", "types"],
+        ),
+        args -> begin
+            try
+                func_expr = get(args, "function_expr", "")
+                types_expr = get(args, "types", "")
+
+                if isempty(func_expr) || isempty(types_expr)
+                    return "Error: function_expr and types parameters are required"
+                end
+
+                code = """
+                using InteractiveUtils
+                @code_lowered $func_expr($types_expr...)
+                """
+                execute_repllike(
+                    code;
+                    description="[Getting lowered code for: $func_expr with types $types_expr]",
+                    quiet=false,
+                )
+            catch e
+                "Error getting lowered code: \$e"
+            end
+        end
+    )
+
+    code_typed_tool = @mcp_tool(
+        :code_typed,
+        "Show type-inferred code for a function (for debugging type stability).",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "function_expr" => Dict(
+                    "type" => "string",
+                    "description" => "Function to inspect (e.g., 'sin', 'Base.sort')",
+                ),
+                "types" => Dict(
+                    "type" => "string",
+                    "description" => "Argument types as tuple (e.g., '(Float64,)', '(Int, Int)')",
+                ),
+            ),
+            "required" => ["function_expr", "types"],
+        ),
+        args -> begin
+            try
+                func_expr = get(args, "function_expr", "")
+                types_expr = get(args, "types", "")
+
+                if isempty(func_expr) || isempty(types_expr)
+                    return "Error: function_expr and types parameters are required"
+                end
+
+                code = """
+                using InteractiveUtils
+                @code_typed $func_expr($types_expr...)
+                """
+                execute_repllike(
+                    code;
+                    description="[Getting typed code for: $func_expr with types $types_expr]",
+                    quiet=false,
+                )
+            catch e
+                "Error getting typed code: \$e"
+            end
+        end
+    )
+
+    # Optional formatting tool (requires JuliaFormatter.jl)
+    format_tool = @mcp_tool(
+        :format_code,
+        "Format Julia code using JuliaFormatter.jl.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "path" => Dict(
+                    "type" => "string",
+                    "description" => "File or directory path to format",
+                ),
+                "overwrite" => Dict(
+                    "type" => "boolean",
+                    "description" => "Overwrite files in place",
+                    "default" => true,
+                ),
+                "verbose" => Dict(
+                    "type" => "boolean",
+                    "description" => "Show formatting progress",
+                    "default" => true,
+                ),
+            ),
+            "required" => ["path"],
+        ),
+        function (args)
+            try
+                # Check if JuliaFormatter is available
+                if !isdefined(Main, :JuliaFormatter)
+                    try
+                        @eval Main using JuliaFormatter
+                    catch
+                        return "Error: JuliaFormatter.jl is not installed. Install it with: using Pkg; Pkg.add(\"JuliaFormatter\")"
+                    end
+                end
+
+                path = get(args, "path", "")
+                overwrite = get(args, "overwrite", true)
+                verbose = get(args, "verbose", true)
+
+                if isempty(path)
+                    return "Error: path parameter is required"
+                end
+
+                # Make path absolute
+                abs_path = isabspath(path) ? path : joinpath(pwd(), path)
+
+                if !ispath(abs_path)
+                    return "Error: Path does not exist: $abs_path"
+                end
+
+                code = """
+                using JuliaFormatter
+
+                # Only detect changes for individual files, not directories
+                if isfile("$abs_path")
+                    # Read the file before formatting to detect changes
+                    before_content = read("$abs_path", String)
+
+                    # Format the file
+                    format_result = format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
+
+                    # Read after to see if changes were made
+                    after_content = read("$abs_path", String)
+                    changes_made = before_content != after_content
+
+                    if changes_made
+                        println("✅ File was reformatted: $abs_path")
+                    elseif format_result
+                        println("ℹ️  File was already properly formatted: $abs_path")
+                    else
+                        println("⚠️  Formatting completed but check for errors: $abs_path")
+                    end
+
+                    changes_made || format_result
+                else
+                    # For directories, just format and return result (verbose output shows individual files)
+                    format("$abs_path"; overwrite=$overwrite, verbose=$verbose)
+                    nothing  # Suppress output for directories
+                end
+                """
+
+                execute_repllike(
+                    code;
+                    description="[Formatting code at: $abs_path]",
+                    quiet=false,
+                )
+            catch e
+                "Error formatting code: $e"
+            end
+        end
+    )
+
+    # Optional linting tool (requires Aqua.jl)
+    lint_tool = @mcp_tool(
+        :lint_package,
+        "Run Aqua.jl quality assurance tests on a package.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "package_name" => Dict(
+                    "type" => "string",
+                    "description" => "Package name to test (defaults to current project)",
+                ),
+            ),
+            "required" => [],
+        ),
+        function (args)
+            try
+                # Check if Aqua is available
+                if !isdefined(Main, :Aqua)
+                    try
+                        @eval Main using Aqua
+                    catch
+                        return "Error: Aqua.jl is not installed. Install it with: using Pkg; Pkg.add(\"Aqua\")"
+                    end
+                end
+
+                pkg_name = get(args, "package_name", nothing)
+
+                if pkg_name === nothing
+                    # Use current project
+                    code = """
+                    using Aqua
+                    # Get current project name
+                    project_file = Base.active_project()
+                    if project_file === nothing
+                        println("❌ No active project found")
+                    else
+                        using Pkg
+                        proj = Pkg.TOML.parsefile(project_file)
+                        pkg_name = get(proj, "name", nothing)
+                        if pkg_name === nothing
+                            println("❌ No package name found in Project.toml")
+                        else
+                            println("Running Aqua tests for package: " * pkg_name)
+                            # Load the package
+                            Base.eval(Main, Expr(:using, Expr(:., Symbol(pkg_name))))
+                            # Run Aqua tests
+                            pkg_mod = Base.eval(Main, Symbol(pkg_name))
+                            Aqua.test_all(pkg_mod)
+                            println("✅ All Aqua tests passed for " * pkg_name)
+                        end
+                    end
+                    """
+                else
+                    # Construct code with package name - build string without dollar sign interpolation
+                    code =
+                        "using Aqua\n" *
+                        "Base.eval(Main, Expr(:using, Expr(:., Symbol(\"" *
+                        pkg_name *
+                        "\"))))\n" *
+                        "println(\"Running Aqua tests for package: " *
+                        pkg_name *
+                        "\")\n" *
+                        "pkg_mod = Base.eval(Main, Symbol(\"" *
+                        pkg_name *
+                        "\"))\n" *
+                        "Aqua.test_all(pkg_mod)\n" *
+                        "println(\"✅ All Aqua tests passed for " *
+                        pkg_name *
+                        "\")"
+                end
+
+                execute_repllike(
+                    code;
+                    description="[Running Aqua quality tests]",
+                    quiet=false,
+                )
+            catch e
+                "Error running Aqua tests: $e"
+            end
+        end
+    )
+
+    # High-level debugging workflow tools
+    open_and_breakpoint_tool = @mcp_tool(
+        :open_file_and_set_breakpoint,
+        """Open a file in VS Code and set a breakpoint at a specific line.
+
+This is a convenience tool that combines file opening and breakpoint setting
+into a single operation, making it easier to set up debugging.
+
+# Arguments
+- `file_path`: Absolute path to the file to open
+- `line`: Line number to set the breakpoint (optional, defaults to current cursor position)
+
+# Examples
+- Open file and set breakpoint at line 42: `{"file_path": "/path/to/file.jl", "line": 42}`
+- Open file (breakpoint at cursor): `{"file_path": "/path/to/file.jl"}`
+""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "file_path" => Dict(
+                    "type" => "string",
+                    "description" => "Absolute path to the file",
+                ),
+                "line" => Dict(
+                    "type" => "integer",
+                    "description" => "Line number for breakpoint (optional)",
+                ),
+            ),
+            "required" => ["file_path"],
+        ),
+        function (args)
+            try
+                file_path = get(args, "file_path", "")
+                line = get(args, "line", nothing)
+
+                if isempty(file_path)
+                    return "Error: file_path is required"
+                end
+
+                # Make sure it's an absolute path
+                abs_path =
+                    isabspath(file_path) ? file_path : joinpath(pwd(), file_path)
+
+                if !isfile(abs_path)
+                    return "Error: File does not exist: $abs_path"
+                end
+
+                # Open the file using vscode.open command
+                uri = "file://$abs_path"
+                args_json = JSON.json([uri])
+                args_encoded = HTTP.URIs.escapeuri(args_json)
+                open_uri = build_vscode_uri("vscode.open"; args=args_encoded)
+                trigger_vscode_uri(open_uri)
+
+                sleep(0.5)  # Give VS Code time to open the file
+
+                # Navigate to line if specified
+                if line !== nothing
+                    goto_uri = build_vscode_uri("workbench.action.gotoLine")
+                    trigger_vscode_uri(goto_uri)
+                    sleep(0.3)
+                end
+
+                # Set breakpoint
+                bp_uri = build_vscode_uri("editor.debug.action.toggleBreakpoint")
+                trigger_vscode_uri(bp_uri)
+
+                result = "Opened $abs_path"
+                if line !== nothing
+                    result *= " and navigated to line $line"
+                end
+                result *= ", breakpoint set"
+
+                return result
+            catch e
+                return "Error: $e"
+            end
+        end
+    )
+
+    start_debug_session_tool = @mcp_tool(
+        :start_debug_session,
+        """Start a debugging session in VS Code.
+
+Opens the debug view and starts debugging with the current configuration.
+Useful after setting breakpoints to begin stepping through code.
+
+# Examples
+- Start debugging: `{}`
+""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                # Open debug view
+                view_uri = build_vscode_uri("workbench.view.debug")
+                trigger_vscode_uri(view_uri)
+
+                sleep(0.3)
+
+                # Start debugging
+                start_uri = build_vscode_uri("workbench.action.debug.start")
+                trigger_vscode_uri(start_uri)
+
+                return "Debug session started. Use stepping commands to navigate through code."
+            catch e
+                return "Error starting debug session: $e"
+            end
+        end
+    )
+
+    add_watch_expression_tool = @mcp_tool(
+        :add_watch_expression,
+        """Add a watch expression to monitor during debugging.
+
+Watch expressions let you monitor the value of variables or expressions
+as you step through code during debugging.
+
+# Arguments
+- `expression`: The Julia expression to watch (e.g., "x", "length(arr)", "myvar > 10")
+
+# Examples
+- Watch a variable: `{"expression": "x"}`
+- Watch an expression: `{"expression": "length(my_array)"}`
+- Watch a condition: `{"expression": "counter > 100"}`
+""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "expression" => Dict(
+                    "type" => "string",
+                    "description" => "Expression to watch",
+                ),
+            ),
+            "required" => ["expression"],
+        ),
+        function (args)
+            try
+                expression = get(args, "expression", "")
+
+                if isempty(expression)
+                    return "Error: expression is required"
+                end
+
+                # Focus watch view first
+                watch_uri = build_vscode_uri("workbench.debug.action.focusWatchView")
+                trigger_vscode_uri(watch_uri)
+
+                sleep(0.2)
+
+                # Add watch expression
+                add_uri = build_vscode_uri("workbench.action.debug.addWatch")
+                trigger_vscode_uri(add_uri)
+
+                return "Watch expression dialog opened for: $expression (user will need to enter it)"
+            catch e
+                return "Error adding watch expression: $e"
+            end
+        end
+    )
+
+    copy_debug_value_tool = @mcp_tool(
+        :copy_debug_value,
+        """Copy the value of a variable or expression during debugging to the clipboard.
+
+This tool allows AI agents to inspect variable values during a debug session.
+The value is copied to the clipboard and can then be read using shell commands.
+
+**Prerequisites:**
+- Must be in an active debug session (paused at a breakpoint)
+- The variable/expression must be selected or focused in the debug view
+
+**Workflow:**
+1. Focus the appropriate debug view (Variables or Watch)
+2. The user or AI should have the variable selected/focused
+3. Copy the value to clipboard
+4. Read clipboard contents to get the value
+
+# Arguments
+- `view`: Which debug view to focus - "variables" or "watch" (default: "variables")
+
+# Examples
+- Copy from variables view: `{"view": "variables"}`
+- Copy from watch view: `{"view": "watch"}`
+
+**Note:** After copying, use a shell command to read the clipboard:
+- macOS: `pbpaste`
+- Linux: `xclip -selection clipboard -o` or `xsel --clipboard --output`
+- Windows: `powershell Get-Clipboard`
+""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "view" => Dict(
+                    "type" => "string",
+                    "description" => "Debug view to focus: 'variables' or 'watch'",
+                    "enum" => ["variables", "watch"],
+                    "default" => "variables",
+                ),
+            ),
+            "required" => [],
+        ),
+        function (args)
+            try
+                view = get(args, "view", "variables")
+
+                # Focus the appropriate debug view
+                if view == "watch"
+                    focus_uri = build_vscode_uri("workbench.debug.action.focusWatchView")
+                else
+                    focus_uri =
+                        build_vscode_uri("workbench.debug.action.focusVariablesView")
+                end
+                trigger_vscode_uri(focus_uri)
+
+                sleep(0.2)
+
+                # Copy the selected value
+                copy_uri = build_vscode_uri("workbench.action.debug.copyValue")
+                trigger_vscode_uri(copy_uri)
+
+                clipboard_cmd = if Sys.isapple()
+                    "pbpaste"
+                elseif Sys.islinux()
+                    "xclip -selection clipboard -o (or xsel --clipboard --output)"
+                elseif Sys.iswindows()
+                    "powershell Get-Clipboard"
+                else
+                    "appropriate clipboard command for your OS"
+                end
+
+                return """Value copied to clipboard from $(view) view.
+To read the value, run in terminal: $clipboard_cmd
+Note: Make sure a variable is selected/focused in the debug view before copying."""
+            catch e
+                return "Error copying debug value: $e"
+            end
+        end
+    )
+
+    # Enhanced debugging tools using bidirectional communication
+    debug_step_over_tool = @mcp_tool(
+        :debug_step_over,
+        """Step over the current line in the debugger.
+
+Executes the current line and moves to the next line without entering function calls.
+Must be in an active debug session (paused at a breakpoint).
+
+# Examples
+- `debug_step_over()`
+- `debug_step_over(wait_for_response=true)` - Wait for confirmation
+""",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "wait_for_response" => Dict(
+                    "type" => "boolean",
+                    "description" => "Wait for command completion (default: false)",
+                    "default" => false,
+                ),
+            ),
+            "required" => [],
+        ),
+        function (args)
+            try
+                wait_response = get(args, "wait_for_response", false)
+
+                if wait_response
+                    result = execute_repllike(
+                        """execute_vscode_command("workbench.action.debug.stepOver",
+                                                  wait_for_response=true, timeout=10.0)""";
+                        silent=false,
+                        quiet=false,
+                    )
+                    return result
+                else
+                    trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stepOver"))
+                    return "Stepped over current line"
+                end
+            catch e
+                return "Error stepping over: $e"
+            end
+        end
+    )
+
+    debug_step_into_tool = @mcp_tool(
+        :debug_step_into,
+        """Step into a function call in the debugger.
+
+Enters the function on the current line to debug its internals.
+Must be in an active debug session (paused at a breakpoint).
+
+# Examples
+- `debug_step_into()`
+""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stepInto"))
+                return "Stepped into function"
+            catch e
+                return "Error stepping into: $e"
+            end
+        end
+    )
+
+    debug_step_out_tool = @mcp_tool(
+        :debug_step_out,
+        """Step out of the current function in the debugger.
+
+Continues execution until the current function returns to its caller.
+Must be in an active debug session (paused at a breakpoint).
+
+# Examples
+- `debug_step_out()`
+""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stepOut"))
+                return "Stepped out of current function"
+            catch e
+                return "Error stepping out: $e"
+            end
+        end
+    )
+
+    debug_continue_tool = @mcp_tool(
+        :debug_continue,
+        """Continue execution in the debugger.
+
+Resumes execution until the next breakpoint or program completion.
+Must be in an active debug session (paused at a breakpoint).
+
+# Examples
+- `debug_continue()`
+""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.continue"))
+                return "Continued execution"
+            catch e
+                return "Error continuing: $e"
+            end
+        end
+    )
+
+    debug_stop_tool = @mcp_tool(
+        :debug_stop,
+        """Stop the current debug session.
+
+Terminates the active debug session and returns to normal execution.
+
+# Examples
+- `debug_stop()`
+""",
+        Dict("type" => "object", "properties" => Dict(), "required" => []),
+        function (args)
+            try
+                trigger_vscode_uri(build_vscode_uri("workbench.action.debug.stop"))
+                return "Debug session stopped"
+            catch e
+                return "Error stopping debug session: $e"
+            end
+        end
+    )
+
+    # Package management tools
+    pkg_add_tool = @mcp_tool(
+        :pkg_add,
+        "Add Julia packages to the current environment (modifies Project.toml).",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "packages" => Dict(
+                    "type" => "array",
+                    "description" => "Array of package names to add",
+                    "items" => Dict("type" => "string"),
+                ),
+            ),
+            "required" => ["packages"],
+        ),
+        function (args)
+            try
+                packages = get(args, "packages", String[])
+                if isempty(packages)
+                    return "Error: packages array is required and cannot be empty"
+                end
+
+                # Use Pkg.add directly with io=devnull to disable interactivity
+                pkg_names = join(["\"$p\"" for p in packages], ", ")
+                code = "using Pkg; Pkg.add([$pkg_names]; io=devnull)"
+
+                result = execute_repllike(code; silent=false, quiet=false)
+                return "Added packages: $(join(packages, ", "))\n\n$result"
+            catch e
+                return "Error adding packages: $e"
+            end
+        end
+    )
+
+    pkg_rm_tool = @mcp_tool(
+        :pkg_rm,
+        "Remove Julia packages from the current environment.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "packages" => Dict(
+                    "type" => "array",
+                    "description" => "Array of package names to remove",
+                    "items" => Dict("type" => "string"),
+                ),
+            ),
+            "required" => ["packages"],
+        ),
+        function (args)
+            try
+                packages = get(args, "packages", String[])
+                if isempty(packages)
+                    return "Error: packages array is required and cannot be empty"
+                end
+
+                # Use Pkg.rm directly with io=devnull to disable interactivity
+                pkg_names = join(["\"$p\"" for p in packages], ", ")
+                code = "using Pkg; Pkg.rm([$pkg_names]; io=devnull)"
+
+                result = execute_repllike(code; silent=false, quiet=false)
+                return "Removed packages: $(join(packages, ", "))\n\n$result"
+            catch e
+                return "Error removing packages: $e"
+            end
+        end
+    )
+
+    # Create supervisor tools
+    supervisor_status_tool = @mcp_tool(
+        :supervisor_status,
+        "Get status of all managed agents in supervisor mode.",
+        Dict("type" => "object", "properties" => Dict()),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agents = Supervisor.get_all_agents(registry)
+
+            if isempty(agents)
+                return "No agents registered."
+            end
+
+            output = "Agent Status Report\n"
+            output *= "="^60 * "\n\n"
+
+            for (name, agent) in agents
+                output *= "Agent: $name\n"
+                output *= "  Status: $(agent.status)\n"
+                output *= "  Port: $(agent.port)\n"
+                output *= "  PID: $(agent.pid === nothing ? "unknown" : agent.pid)\n"
+                output *= "  Directory: $(agent.directory)\n"
+                output *= "  Description: $(agent.description)\n"
+                output *= "  Uptime: $(Supervisor.uptime_string(agent))\n"
+                output *= "  Last Heartbeat: $(Supervisor.heartbeat_age_string(agent))\n"
+                output *= "  Missed Heartbeats: $(agent.missed_heartbeats)\n"
+                output *= "  Restarts: $(agent.restarts)\n"
+                output *= "  Restart Policy: $(agent.restart_policy)\n"
+                output *= "\n"
+            end
+
+            return output
+        end
+    )
+
+    supervisor_start_agent_tool = @mcp_tool(
+        :supervisor_start_agent,
+        "Start a managed agent process.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "agent_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the agent to start",
+                ),
+            ),
+            "required" => ["agent_name"],
+        ),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            agent_name = get(args, "agent_name", "")
+            if isempty(agent_name)
+                return "Error: agent_name is required"
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agent = Supervisor.get_agent(registry, agent_name)
+
+            if agent === nothing
+                return "Error: Agent '$agent_name' not found in registry"
+            end
+
+            if agent.status != :stopped
+                return "Agent '$agent_name' is already running (status: $(agent.status))"
+            end
+
+            success = Supervisor.start_agent(agent)
+
+            if success
+                return "Agent '$agent_name' started successfully on port $(agent.port)"
+            else
+                return "Failed to start agent '$agent_name'"
+            end
+        end
+    )
+
+    supervisor_stop_agent_tool = @mcp_tool(
+        :supervisor_stop_agent,
+        "Stop a managed agent process.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "agent_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the agent to stop",
+                ),
+                "force" => Dict(
+                    "type" => "boolean",
+                    "description" => "Force kill the agent (default: false)",
+                    "default" => false,
+                ),
+            ),
+            "required" => ["agent_name"],
+        ),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            agent_name = get(args, "agent_name", "")
+            force = get(args, "force", false)
+
+            if isempty(agent_name)
+                return "Error: agent_name is required"
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agent = Supervisor.get_agent(registry, agent_name)
+
+            if agent === nothing
+                return "Error: Agent '$agent_name' not found in registry"
+            end
+
+            if agent.status == :stopped
+                return "Agent '$agent_name' is already stopped"
+            end
+
+            success = Supervisor.stop_agent(agent; force=force)
+
+            if success
+                return "Agent '$agent_name' stopped successfully"
+            else
+                return "Failed to stop agent '$agent_name'"
+            end
+        end
+    )
+
+    supervisor_restart_agent_tool = @mcp_tool(
+        :supervisor_restart_agent,
+        "Restart a managed agent process.",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "agent_name" => Dict(
+                    "type" => "string",
+                    "description" => "Name of the agent to restart",
+                ),
+            ),
+            "required" => ["agent_name"],
+        ),
+        function (args)
+            if SUPERVISOR_REGISTRY[] === nothing
+                return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
+            end
+
+            agent_name = get(args, "agent_name", "")
+
+            if isempty(agent_name)
+                return "Error: agent_name is required"
+            end
+
+            registry = SUPERVISOR_REGISTRY[]
+            agent = Supervisor.get_agent(registry, agent_name)
+
+            if agent === nothing
+                return "Error: Agent '$agent_name' not found in registry"
+            end
+
+            success = Supervisor.restart_agent(agent)
+
+            if success
+                return "Agent '$agent_name' restarted successfully. It should be online in a few seconds."
+            else
+                return "Failed to restart agent '$agent_name'"
+            end
+        end
+    )
+
     # Create LSP tools
     lsp_tools = create_lsp_tools()
 
-    # Load tools configuration
-    enabled_tools = load_tools_config()
+    # Load tools configuration from workspace directory
+    enabled_tools = load_tools_config(".mcprepl/tools.json", workspace_dir)
 
     # Collect all tools
-    all_tools =[
+    all_tools = [
         ping_tool,
         usage_instructions_tool,
         usage_quiz_tool,
@@ -685,6 +2430,10 @@ function start!(;
         pkg_add_tool,
         pkg_rm_tool,
         run_tests_tool,
+        supervisor_status_tool,
+        supervisor_start_agent_tool,
+        supervisor_stop_agent_tool,
+        supervisor_restart_agent_tool,
         lsp_tools...,  # Add all LSP tools
     ]
 
@@ -697,7 +2446,7 @@ function start!(;
     if verbose && enabled_tools !== nothing
         disabled_count = length(all_tools) - length(active_tools)
         if disabled_count > 0
-            printstyled("🔧 Tools: ", color = :cyan, bold = true)
+            printstyled("🔧 Tools: ", color=:cyan, bold=true)
             println("$(length(active_tools)) enabled, $disabled_count disabled by config")
         end
     end
@@ -707,8 +2456,8 @@ function start!(;
     SERVER[] = start_mcp_server(
         active_tools,
         actual_port;
-        verbose = verbose,
-        security_config = security_config,
+        verbose=verbose,
+        security_config=security_config,
     )
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
@@ -750,6 +2499,13 @@ function stop!()
     else
         println("No server running to stop.")
     end
+
+    # Stop supervisor if running
+    if SUPERVISOR_REGISTRY[] !== nothing
+        println("Stopping supervisor...")
+        Supervisor.stop_supervisor(SUPERVISOR_REGISTRY[]; stop_agents=true)
+        SUPERVISOR_REGISTRY[] = nothing
+    end
 end
 
 """
@@ -775,10 +2531,10 @@ end
 ```
 """
 function test_server(
-    port::Int = 3000;
-    host = "127.0.0.1",
-    max_attempts::Int = 3,
-    delay::Float64 = 0.5,
+    port::Int=3000;
+    host="127.0.0.1",
+    max_attempts::Int=3,
+    delay::Float64=0.5,
 )
     for attempt = 1:max_attempts
         try
@@ -817,8 +2573,8 @@ function test_server(
                 "http://$host:$port/",
                 collect(headers),
                 body;
-                readtimeout = 5,
-                connect_timeout = 2,
+                readtimeout=5,
+                connect_timeout=2,
             )
 
             # Check if we got a successful response
@@ -849,7 +2605,7 @@ Display current security configuration.
 function security_status()
     config = load_security_config()
     if config === nothing
-        printstyled("\n⚠️  No security configuration found\n", color = :yellow, bold = true)
+        printstyled("\n⚠️  No security configuration found\n", color=:yellow, bold=true)
         println("Run MCPRepl.setup_security() to configure")
         println()
         return
@@ -862,8 +2618,8 @@ end
 
 Launch the security setup wizard.
 """
-function setup_security(; force::Bool = false, gentle::Bool = false)
-    return security_setup_wizard(pwd(); force = force, gentle = gentle)
+function setup_security(; force::Bool=false, gentle::Bool=false)
+    return security_setup_wizard(pwd(); force=force, gentle=gentle)
 end
 
 """
@@ -972,7 +2728,7 @@ end
 
 # String-based overload for backward compatibility (deprecated)
 function call_tool(tool_name::String, args::Dict)
-    @warn "String-based tool names are deprecated. Use :$(Symbol(tool_name)) instead." maxlog=1
+    @warn "String-based tool names are deprecated. Use :$(Symbol(tool_name)) instead." maxlog = 1
     tool_id = Symbol(tool_name)
     return call_tool(tool_id, args)
 end
@@ -1006,7 +2762,7 @@ function list_tools()
     println()
 
     for (name, desc) in sort(collect(tools_info))
-        printstyled("  • ", name, "\n", color = :cyan, bold = true)
+        printstyled("  • ", name, "\n", color=:cyan, bold=true)
         # Print first line of description
         first_line = split(desc, "\n")[1]
         println("    ", first_line)
@@ -1020,7 +2776,7 @@ end
     tool_help(tool_id::Symbol)
 Get detailed help/documentation for a specific MCP tool.
 """
-function tool_help(tool_id::Symbol; extended::Bool = false)
+function tool_help(tool_id::Symbol; extended::Bool=false)
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
@@ -1040,11 +2796,8 @@ function tool_help(tool_id::Symbol; extended::Bool = false)
 
     # Try to load extended documentation if requested
     if extended
-        extended_help_path = joinpath(
-            dirname(dirname(@__FILE__)),
-            "extended-help",
-            "$(string(tool_id)).md",
-        )
+        extended_help_path =
+            joinpath(dirname(dirname(@__FILE__)), "extended-help", "$(string(tool_id)).md")
 
         if isfile(extended_help_path)
             println("\n" * "="^70)

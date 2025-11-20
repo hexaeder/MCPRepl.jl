@@ -351,6 +351,55 @@ function create_handler(
             end
 
 
+            # Handle supervisor heartbeat (if supervisor mode is enabled)
+            if request["method"] == "supervisor/heartbeat"
+                # Extract heartbeat data
+                params = get(request, "params", Dict())
+                agent_name = get(params, "agent_name", nothing)
+                pid = get(params, "pid", nothing)
+
+                if agent_name !== nothing && pid !== nothing
+                    # Update heartbeat in supervisor registry
+                    # Note: This requires supervisor_registry to be accessible
+                    # We'll pass it through the handler closure
+                    if hasfield(typeof(MCPRepl), :SUPERVISOR_REGISTRY)
+                        if MCPRepl.SUPERVISOR_REGISTRY[] !== nothing
+                            MCPRepl.Supervisor.update_heartbeat!(
+                                MCPRepl.SUPERVISOR_REGISTRY[],
+                                agent_name,
+                                pid,
+                            )
+                        end
+                    end
+
+                    # Acknowledge heartbeat
+                    response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "result" => Dict("status" => "ok"),
+                    )
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(response),
+                    )
+                else
+                    error_response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "error" => Dict(
+                            "code" => -32602,
+                            "message" => "Invalid heartbeat: missing agent_name or pid",
+                        ),
+                    )
+                    return HTTP.Response(
+                        400,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(error_response),
+                    )
+                end
+            end
+
             # Handle tool listing
             if request["method"] == "tools/list"
                 tool_list = [

@@ -5,6 +5,7 @@
 using Random
 using SHA
 using JSON
+using TOML
 
 # Security configuration structure
 struct SecurityConfig
@@ -49,13 +50,89 @@ function get_security_config_path(workspace_dir::String = pwd())
 end
 
 """
-    load_security_config(workspace_dir::String=pwd()) -> Union{SecurityConfig, Nothing}
+    load_security_config(workspace_dir::String=pwd(), agent_name::String="", supervisor::Bool=false) -> Union{SecurityConfig, Nothing}
 
 Load security configuration from workspace .mcprepl/security.json file.
 Returns nothing if no configuration exists.
 """
-function load_security_config(workspace_dir::String = pwd())
+function load_security_config(
+    workspace_dir::String = pwd(),
+    agent_name::String = "",
+    supervisor::Bool = false,
+)
     config_path = get_security_config_path(workspace_dir)
+
+    # Try to load from agents.json if in agent or supervisor mode
+    agents_config_path = joinpath(workspace_dir, ".mcprepl", "agents.json")
+
+    # If agent mode, ALWAYS use agents.json (never security.json)
+    if !isempty(agent_name)
+        if isfile(agents_config_path)
+            try
+                agents_config = JSON.parsefile(agents_config_path)
+                if haskey(agents_config, "agents") &&
+                   haskey(agents_config["agents"], agent_name)
+                    agent_config = agents_config["agents"][agent_name]
+
+                    mode = Symbol(get(agent_config, "mode", "lax"))
+                    api_keys = get(agent_config, "api_keys", String[])
+                    allowed_ips = get(agent_config, "allowed_ips", String[])
+                    # Port is required in agent config
+                    if !haskey(agent_config, "port")
+                        error("Agent '$agent_name' missing required 'port' field in agents.json")
+                    end
+                    port = agent_config["port"]
+                    created_at = Int64(round(time()))
+
+                    @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port path=agents_config_path
+                    return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
+                else
+                    error("Agent '$agent_name' not found in agents.json at $agents_config_path. Available agents: $(collect(keys(get(agents_config, "agents", Dict()))))")
+                end
+            catch e
+                if e isa ErrorException && contains(e.msg, "not found in agents.json")
+                    rethrow(e)  # Re-throw our specific error
+                end
+                error("Failed to load agent config from agents.json: $e")
+            end
+        else
+            error("Agents config file not found for agent '$agent_name' at $agents_config_path")
+        end
+    end
+
+    # If supervisor mode, ALWAYS use agents.json (never security.json)
+    if supervisor
+        if isfile(agents_config_path)
+            try
+                agents_config = JSON.parsefile(agents_config_path)
+                if haskey(agents_config, "supervisor")
+                    supervisor_config = agents_config["supervisor"]
+
+                    mode = Symbol(get(supervisor_config, "mode", "lax"))
+                    api_keys = get(supervisor_config, "api_keys", String[])
+                    allowed_ips = get(supervisor_config, "allowed_ips", String[])
+                    # Port is required in supervisor config
+                    if !haskey(supervisor_config, "port")
+                        error("Supervisor missing required 'port' field in agents.json")
+                    end
+                    port = supervisor_config["port"]
+                    created_at = Int64(round(time()))
+
+                    @info "Loaded security config for supervisor from agents.json" mode=mode port=port path=agents_config_path
+                    return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
+                else
+                    error("Supervisor config not found in agents.json at $agents_config_path")
+                end
+            catch e
+                if e isa ErrorException && contains(e.msg, "Supervisor config not found")
+                    rethrow(e)  # Re-throw our specific error
+                end
+                error("Failed to load supervisor config from agents.json: $e")
+            end
+        else
+            error("Agents config file not found for supervisor at $agents_config_path")
+        end
+    end
 
     if !isfile(config_path)
         return nothing

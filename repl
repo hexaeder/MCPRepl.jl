@@ -7,27 +7,102 @@
 # configuration (.mcprepl/security.json) or a project .env file managed by
 # the project tools — the launcher intentionally does not alter environment
 # variables.
+#
+# Configuration is read from agents.json for multi-agent mode.
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+CONFIG_FILE="$SCRIPT_DIR/.mcprepl/agents.json"
 
 # Parse command line arguments
 AUTO_RESTART=true
-for arg in "$@"; do
-    if [ "$arg" = "--no-restart" ]; then
-        AUTO_RESTART=false
-        # Remove --no-restart from args to pass to julia
-        set -- "${@/$arg/}"
-    fi
+SUPERVISOR_MODE=false
+AGENT_NAME=""
+JULIA_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no-restart)
+      AUTO_RESTART=false
+      shift
+      ;;
+    --supervisor)
+      SUPERVISOR_MODE=true
+      shift
+      ;;
+    --agent)
+      AGENT_NAME="$2"
+      shift 2
+      ;;
+    *)
+      JULIA_ARGS+=("$1")
+      shift
+      ;;
+  esac
 done
 
-# Crash protection: track restart times to detect crash loops
-MAX_CRASHES=5          # Maximum crashes allowed
-CRASH_WINDOW=30       # Time window in seconds
-declare -a RESTART_TIMES=()
+# Check for jq (required for JSON parsing in agent/supervisor mode)
+if { [ "$SUPERVISOR_MODE" = true ] || [ -n "$AGENT_NAME" ]; } && ! command -v jq &> /dev/null; then
+    echo "Error: jq is required for agent/supervisor mode"
+    echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
+    exit 1
+fi
 
-# Flag file for controlled shutdown
-NO_RESTART_FLAG="$SCRIPT_DIR/.mcprepl/.no-restart"
+# Handle agent mode
+if [ -n "$AGENT_NAME" ]; then
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Configuration file not found: $CONFIG_FILE"
+    exit 1
+  fi
 
+  # Extract agent configuration
+  AGENT_CONFIG=$(jq -r ".agents[\"$AGENT_NAME\"]" "$CONFIG_FILE")
+
+  if [ "$AGENT_CONFIG" = "null" ]; then
+    echo "Error: Agent '$AGENT_NAME' not found in $CONFIG_FILE"
+    echo ""
+    echo "Available agents:"
+    jq -r '.agents | keys[]' "$CONFIG_FILE" 2>/dev/null || echo "  (none)"
+    exit 1
+  fi
+
+  # Extract agent settings
+  AGENT_PORT=$(echo "$AGENT_CONFIG" | jq -r '.port')
+  AGENT_DIR=$(echo "$AGENT_CONFIG" | jq -r '.directory')
+  AGENT_API_KEY=$(echo "$AGENT_CONFIG" | jq -r '.api_key // empty')
+  AGENT_DESC=$(echo "$AGENT_CONFIG" | jq -r '.description // ""')
+
+  # Resolve agent directory (relative to project root)
+  AGENT_FULL_DIR="$SCRIPT_DIR/$AGENT_DIR"
+
+  if [ ! -d "$AGENT_FULL_DIR" ]; then
+    echo "Error: Agent directory not found: $AGENT_FULL_DIR"
+    exit 1
+  fi
+
+  # Change to agent directory
+  cd "$AGENT_FULL_DIR" || exit 1
+
+  echo "Starting Julia REPL for agent: $AGENT_NAME"
+  echo "  Description: $AGENT_DESC"
+  echo "  Port: $AGENT_PORT"
+  echo "  Directory: $AGENT_DIR"
+  echo ""
+
+  # Pass agent name via global variable set before loading startup script
+  exec julia -i --project="$AGENT_FULL_DIR" -e "global MCPREPL_AGENT_NAME=\"$AGENT_NAME\"" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
+fi
+
+# Handle supervisor mode
+if [ "$SUPERVISOR_MODE" = true ]; then
+  echo "Starting Julia REPL with MCPRepl project..."
+  echo "  Supervisor mode: enabled"
+  echo ""
+
+  # Pass supervisor flag via global variable set before loading startup script
+  exec julia -i --project="$SCRIPT_DIR" -e "global MCPREPL_SUPERVISOR=true" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
+fi
+
+# Normal mode with optional auto-restart
 if [ "$AUTO_RESTART" = true ]; then
     echo "Starting Julia REPL with MCPRepl project (auto-restart enabled)..."
 else
@@ -37,14 +112,22 @@ echo ""
 
 # If --no-restart flag is used, run once and exit
 if [ "$AUTO_RESTART" = false ]; then
-    julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "$@"
+    julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
     exit $?
 fi
+
+# Crash protection: track restart times to detect crash loops
+MAX_CRASHES=5          # Maximum crashes allowed
+CRASH_WINDOW=30       # Time window in seconds
+declare -a RESTART_TIMES=()
+
+# Flag file for controlled shutdown
+NO_RESTART_FLAG="$SCRIPT_DIR/.mcprepl/.no-restart"
 
 # Trap SIGTERM signal for graceful shutdown
 trap "echo '✓ SIGTERM received - exiting'; exit 0" SIGTERM
 
-# Otherwise, run with auto-restart loop
+# Run with auto-restart loop
 while true; do
     # Check for shutdown flag before starting
     if [ -f "$NO_RESTART_FLAG" ]; then
@@ -77,7 +160,7 @@ while true; do
     fi
     
     # Start Julia
-    julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "$@"
+    julia --project="$SCRIPT_DIR" --load="$SCRIPT_DIR/.julia-startup.jl" "${JULIA_ARGS[@]}"
     EXIT_CODE=$?
     
     # Check for shutdown flag after exit

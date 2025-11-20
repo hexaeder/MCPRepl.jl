@@ -98,7 +98,7 @@ using JSON
                 # Clean any existing config
                 vscode_dir = joinpath(temp_dir, ".vscode")
                 if isdir(vscode_dir)
-                    rm(vscode_dir, recursive = true)
+                    rm(vscode_dir, recursive=true)
                 end
 
                 # Test different port numbers
@@ -142,7 +142,7 @@ using JSON
                 @test settings["test.key"] == "value"
 
                 # Test 4: Configure julia.additionalArgs (empty settings)
-                rm(joinpath(temp_dir, ".vscode"), recursive = true)
+                rm(joinpath(temp_dir, ".vscode"), recursive=true)
                 @test MCPRepl.configure_vscode_julia_args() == true
                 settings = MCPRepl.read_vscode_settings()
                 @test haskey(settings, "julia.additionalArgs")
@@ -198,8 +198,7 @@ using JSON
                 content = read(startup_path, String)
                 @test contains(content, "using MCPRepl")
                 @test contains(content, "MCPRepl.start!")
-                # The port is dynamically read from security.json, not hardcoded in file
-                # The test was checking for a hardcoded port, which is incorrect.
+                # Note: Port is read dynamically from security.json, not hardcoded in file
 
                 # Test 4: Check has startup script
                 @test MCPRepl.has_startup_script() == true
@@ -214,6 +213,6 @@ using JSON
 
     finally
         # Cleanup: remove temp directory
-        rm(temp_dir, recursive = true, force = true)
+        rm(temp_dir, recursive=true, force=true)
     end
 end
