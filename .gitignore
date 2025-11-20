@@ -7,6 +7,14 @@ deps/deps.jl
 # Example project (for local testing)
 example-project/
 
+# Node.js / npm
+node_modules/
+dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
 # VS Code
 .vscode/settings.json
 .vscode/mcp.json

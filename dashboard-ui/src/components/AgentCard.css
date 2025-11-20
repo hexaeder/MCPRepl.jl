@@ -1,86 +1,83 @@
 .agent-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1rem;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
 }
 
 .agent-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 12px;
-  padding: 1px;
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  opacity: 0;
-  transition: opacity 0.3s;
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 4px;
+    border: 1px solid var(--accent-primary);
+    opacity: 0;
+    transition: opacity 0.3s;
+    box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
 }
 
 .agent-card:hover::before {
-  opacity: 1;
+    opacity: 1;
 }
 
 .agent-card:hover {
-  transform: translateX(4px);
-  box-shadow: -4px 0 20px rgba(0, 217, 255, 0.2);
+    transform: translateX(4px);
+    box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
 }
 
 .agent-card.selected {
-  border-color: var(--accent-primary);
-  box-shadow: -4px 0 20px rgba(0, 217, 255, 0.3);
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
 }
 
 .agent-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
 }
 
 .agent-id {
-  font-weight: 600;
-  font-size: 0.875rem;
-  color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text-primary);
 }
 
 .status-badge {
-  padding: 0.25rem 0.5rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: white;
-  text-transform: uppercase;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: white;
+    text-transform: uppercase;
 }
 
 .agent-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
 }
 
 .meta-item {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.75rem;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
 }
 
 .meta-label {
-  color: var(--text-tertiary);
+    color: var(--text-tertiary);
 }
 
 .meta-value {
-  color: var(--text-secondary);
-  font-family: 'JetBrains Mono', monospace;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
 }
 
 .heartbeat-container {
-  height: 60px;
-  margin-top: 0.75rem;
+    height: 60px;
+    margin-top: 0.75rem;
 }

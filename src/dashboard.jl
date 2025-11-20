@@ -116,7 +116,7 @@ function dashboard_html()
     if isfile(react_dist)
         return read(react_dist, String)
     end
-    
+
     # Fallback to template
     template_path = abspath(joinpath(@__DIR__, "..", "templates", "dashboard.html.tmpl"))
     if !isfile(template_path)
@@ -134,11 +134,11 @@ Serve a static file from the React build directory with proper MIME type.
 function serve_static_file(filepath::String)
     react_dist = abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
     fullpath = joinpath(react_dist, filepath)
-    
+
     if !isfile(fullpath) || !startswith(abspath(fullpath), react_dist)
         return HTTP.Response(404, "Not Found")
     end
-    
+
     # Determine MIME type
     mime_types = Dict(
         ".html" => "text/html",
@@ -151,10 +151,10 @@ function serve_static_file(filepath::String)
         ".svg" => "image/svg+xml",
         ".ico" => "image/x-icon"
     )
-    
+
     ext = lowercase(splitext(fullpath)[2])
     mime_type = get(mime_types, ext, "application/octet-stream")
-    
+
     content = read(fullpath)
     return HTTP.Response(200, ["Content-Type" => mime_type], body=content)
 end
