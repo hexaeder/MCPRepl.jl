@@ -17,6 +17,7 @@ using Pkg
 export @mcp_tool, MCPTool
 export start!, stop!, test_server
 
+include("utils.jl")
 include("tools.jl")
 
 # Version tracking - gets git commit hash at runtime
