@@ -411,7 +411,10 @@ function execute_repllike(
         """
     end
 
-    repl = Base.active_repl
+    # Check if we have an active REPL (interactive mode) or running in server mode
+    has_repl = isdefined(Base, :active_repl)
+    repl = has_repl ? Base.active_repl : nothing
+    backend = has_repl ? repl.backendref : nothing
 
     # Auto-append semicolon in quiet mode to suppress output
     if quiet && !REPL.ends_with_semicolon(str)
@@ -426,9 +429,9 @@ function execute_repllike(
         expr = remove_println_calls(expr)
     end
 
-    backend = repl.backendref
-
-    REPL.prepare_next(repl)
+    if has_repl
+        REPL.prepare_next(repl)
+    end
 
     # Only print the agent prompt if not silent
     if !silent
@@ -503,8 +506,13 @@ function execute_repllike(
 
     # Evaluate the expression
     response = try
-        result_pair = REPL.eval_on_backend(expr, backend)
-        result_pair.first  # Extract result from Pair{Any, Bool}
+        if has_repl
+            result_pair = REPL.eval_on_backend(expr, backend)
+            result_pair.first  # Extract result from Pair{Any, Bool}
+        else
+            # In server mode without interactive REPL, eval directly in Main
+            Core.eval(Main, expr)
+        end
     catch e
         e
     finally
@@ -540,8 +548,8 @@ function execute_repllike(
         ""
     end
 
-    # Refresh REPL if not silent
-    if !silent
+    # Refresh REPL if not silent and we have a REPL
+    if !silent && has_repl
         if !isempty(result_str)
             println(result_str)
         end

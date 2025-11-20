@@ -103,6 +103,14 @@ try
             try
                 sleep(1)
 
+                # Ensure proxy server is running first
+                proxy_port = 3000
+                if !MCPRepl.Proxy.is_server_running(proxy_port)
+                    @info "🔌 Starting persistent MCP proxy server on port $proxy_port..."
+                    MCPRepl.Proxy.start_server(proxy_port; background=true)
+                    sleep(1)  # Give proxy time to start
+                end
+
                 # Check if supervisor mode or agent name was set via -e flags
                 supervisor_enabled = isdefined(Main, :MCPREPL_SUPERVISOR) ? Main.MCPREPL_SUPERVISOR : false
                 agent_name_arg = isdefined(Main, :MCPREPL_AGENT_NAME) ? String(Main.MCPREPL_AGENT_NAME) : ""

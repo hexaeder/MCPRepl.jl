@@ -11,6 +11,9 @@ using JSON
 using Sockets
 using Dates
 
+include("dashboard.jl")
+using .Dashboard
+
 # REPL Connection tracking
 mutable struct REPLConnection
     id::String                          # Unique identifier (project name, agent name)
@@ -148,6 +151,13 @@ function register_repl(id::String, port::Int; pid::Union{Int,Nothing}=nothing, m
             0
         )
         @info "REPL registered with proxy" id = id port = port pid = pid
+
+        # Log registration event to dashboard
+        Dashboard.log_event(id, Dashboard.AGENT_START, Dict(
+            "port" => port,
+            "pid" => pid,
+            "metadata" => metadata
+        ))
     end
 end
 
@@ -160,6 +170,9 @@ function unregister_repl(id::String)
     lock(REPL_REGISTRY_LOCK) do
         if haskey(REPL_REGISTRY, id)
             delete!(REPL_REGISTRY, id)
+
+            # Log stop event to dashboard
+            Dashboard.log_event(id, Dashboard.AGENT_STOP, Dict())
             @info "REPL unregistered from proxy" id = id
         end
     end
@@ -290,6 +303,24 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
         body_str = JSON.json(request)
 
         @debug "Forwarding to backend" url = backend_url headers = request_headers body_length = length(body_str)
+
+        # Log tool call event to dashboard
+        method = get(request, "method", "")
+        if method == "tools/call"
+            params = get(request, "params", Dict())
+            tool_name = get(params, "name", "unknown")
+            Dashboard.log_event(target_id, Dashboard.TOOL_CALL, Dict(
+                "tool" => tool_name,
+                "method" => method
+            ))
+        elseif !isempty(method)
+            # Log other methods as code execution
+            Dashboard.log_event(target_id, Dashboard.CODE_EXECUTION, Dict(
+                "method" => method
+            ))
+        end
+
+        start_time = time()
         response = HTTP.request(
             "POST",
             backend_url,
@@ -298,6 +329,13 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
             readtimeout=30,
             connect_timeout=5
         )
+        duration_ms = (time() - start_time) * 1000
+
+        # Log successful execution
+        Dashboard.log_event(target_id, Dashboard.OUTPUT, Dict(
+                "status" => response.status,
+                "method" => method
+            ); duration_ms=duration_ms)
 
         # Update last heartbeat
         update_repl_status(target_id, :ready)
@@ -328,6 +366,12 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
             end
         end
 
+        # Log error event
+        Dashboard.log_event(target_id, Dashboard.ERROR, Dict(
+            "message" => sprint(showerror, e),
+            "method" => get(request, "method", "")
+        ))
+
         return HTTP.Response(502, JSON.json(Dict(
             "jsonrpc" => "2.0",
             "id" => get(request, "id", nothing),
@@ -346,7 +390,56 @@ Handle incoming MCP requests. Routes to appropriate backend REPL or handles prox
 """
 function handle_request(req::HTTP.Request)
     try
-        # Parse request body
+        # Handle dashboard HTTP routes
+        uri = HTTP.URI(req.target)
+        path = uri.path
+
+        # Dashboard HTML page
+        if path == "/dashboard" || path == "/dashboard/"
+            html = Dashboard.dashboard_html()
+            return HTTP.Response(200, ["Content-Type" => "text/html"], html)
+        end
+
+        # Dashboard API: Get all agents
+        if path == "/dashboard/api/agents"
+            agents = Dict{String,Any}()
+            for (id, conn) in REPL_REGISTRY
+                agents[id] = Dict(
+                    "id" => id,
+                    "port" => conn.port,
+                    "pid" => conn.pid,
+                    "status" => string(conn.status),
+                    "last_heartbeat" => Dates.format(conn.last_heartbeat, "yyyy-mm-dd HH:MM:SS")
+                )
+            end
+            return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(agents))
+        end
+
+        # Dashboard API: Get events
+        if path == "/dashboard/api/events"
+            query_params = HTTP.queryparams(uri)
+            id = get(query_params, "id", nothing)
+            limit = parse(Int, get(query_params, "limit", "100"))
+
+            events = Dashboard.get_events(id=id, limit=limit)
+            events_json = [Dict(
+                "id" => e.id,
+                "type" => string(e.event_type),
+                "timestamp" => Dates.format(e.timestamp, "yyyy-mm-dd HH:MM:SS.sss"),
+                "data" => e.data,
+                "duration_ms" => e.duration_ms
+            ) for e in events]
+
+            return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(events_json))
+        end
+
+        # Dashboard WebSocket (for future implementation)
+        if path == "/dashboard/ws"
+            # WebSocket upgrade would be handled here
+            return HTTP.Response(501, "WebSocket not yet implemented")
+        end
+
+        # Parse request body for JSON-RPC
         body = String(req.body)
 
         if isempty(body)
@@ -465,6 +558,9 @@ function handle_request(req::HTTP.Request)
                         REPL_REGISTRY[id].last_error = nothing
                         @info "REPL recovered from stopped state via heartbeat" id = id
                     end
+
+                    # Log heartbeat event (don't spam - could be rate limited in Dashboard module)
+                    Dashboard.log_event(id, Dashboard.HEARTBEAT, Dict("status" => "ok"))
                 end
             end
 
