@@ -18,6 +18,7 @@ export @mcp_tool, MCPTool
 export start!, stop!, test_server
 
 include("utils.jl")
+include("proxy.jl")
 include("tools.jl")
 
 # Version tracking - gets git commit hash at runtime
@@ -725,6 +726,34 @@ function start!(;
     workspace_dir::String=pwd(),
 )
     SERVER[] !== nothing && stop!() # Stop existing server if running
+
+    # Check for persistent proxy server
+    proxy_port = 3000  # Default proxy port
+    proxy_running = Proxy.is_server_running(proxy_port)
+    
+    if proxy_running
+        proxy_pid = Proxy.get_server_pid(proxy_port)
+        if verbose
+            printstyled("🔌 Persistent Proxy: ", color=:cyan, bold=true)
+            printstyled("Connected (PID: $proxy_pid, Port: $proxy_port)\n", color=:green, bold=true)
+        end
+    else
+        # Start proxy server in background
+        if verbose
+            printstyled("🚀 Starting Persistent Proxy Server...\n", color=:cyan, bold=true)
+        end
+        Proxy.start_server(proxy_port; background=true)
+        
+        # Verify it started
+        if Proxy.is_server_running(proxy_port)
+            proxy_pid = Proxy.get_server_pid(proxy_port)
+            if verbose
+                printstyled("✅ Proxy Server Started (PID: $proxy_pid, Port: $proxy_port)\n", color=:green, bold=true)
+            end
+        else
+            @warn "Failed to start proxy server, continuing with direct connection"
+        end
+    end
 
     # Load or prompt for security configuration
     # Pass agent_name and supervisor flag so it can load from agents.json if needed
