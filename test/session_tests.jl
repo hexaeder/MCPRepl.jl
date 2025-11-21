@@ -1,4 +1,4 @@
-using Test
+using ReTest
 
 # Load Session module directly for testing
 include("../src/session.jl")
