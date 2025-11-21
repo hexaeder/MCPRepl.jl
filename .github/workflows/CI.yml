@@ -11,6 +11,26 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  format:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - name: Install JuliaFormatter
+        run: julia -e 'using Pkg; Pkg.add("JuliaFormatter")'
+      - name: Check formatting
+        run: |
+          julia -e '
+          using JuliaFormatter
+          formatted = format(".", verbose=true)
+          if formatted
+            @error "Code is not formatted. Run `julia -e \"using JuliaFormatter; format(\\\".\\\")\"`"
+            exit(1)
+          end
+          '
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
