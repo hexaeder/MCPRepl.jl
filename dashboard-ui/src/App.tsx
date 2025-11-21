@@ -127,13 +127,13 @@ export const App: React.FC = () => {
                                     <MetricCard
                                         icon="⚠️"
                                         label="Errors"
-                                        value={events.filter(e => e.event_type === 'ERROR').length}
+                                        value={events.filter(e => e.type === 'ERROR').length}
                                         valueColor="#ef4444"
                                     />
                                     <MetricCard
                                         icon="🔧"
                                         label="Tool Calls"
-                                        value={events.filter(e => e.event_type === 'TOOL_CALL').length}
+                                        value={events.filter(e => e.type === 'TOOL_CALL').length}
                                         valueColor="#00d9ff"
                                     />
                                 </div>

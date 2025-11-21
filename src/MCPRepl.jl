@@ -2959,6 +2959,7 @@ export setup_security, security_status, generate_key, revoke_key
 export allow_ip, deny_ip, set_security_mode, quick_setup, gentle_setup
 export call_tool, list_tools, tool_help
 export start_proxy, stop_proxy  # Proxy server functions
+export Proxy  # Proxy server module
 export Generate  # Project template generator module
 
 end #module

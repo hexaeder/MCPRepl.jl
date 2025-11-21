@@ -54,6 +54,8 @@ const SERVER_PORT = Ref{Int}(3000)
 const SERVER_PID_FILE = Ref{String}("")
 const REPL_REGISTRY = Dict{String,REPLConnection}()
 const REPL_REGISTRY_LOCK = ReentrantLock()
+const VITE_DEV_PROCESS = Ref{Union{Base.Process,Nothing}}(nothing)
+const VITE_DEV_PORT = 3001
 
 """
     is_server_running(port::Int=3000) -> Bool
@@ -143,6 +145,111 @@ Remove the PID file for the proxy server.
 function remove_pid_file(port::Int=3000)
     pid_file = get_pid_file_path(port)
     rm(pid_file, force=true)
+end
+
+# ============================================================================
+# Vite Dev Server Management
+# ============================================================================
+
+"""
+    is_dev_environment() -> Bool
+
+Check if we're in a development environment (dashboard-ui source exists).
+"""
+function is_dev_environment()
+    dashboard_src = joinpath(dirname(dirname(@__FILE__)), "dashboard-ui", "src")
+    return isdir(dashboard_src)
+end
+
+"""
+    is_vite_running() -> Bool
+
+Check if Vite dev server is running on port 3001.
+"""
+function is_vite_running()
+    try
+        sock = connect("localhost", VITE_DEV_PORT)
+        close(sock)
+        return true
+    catch
+        return false
+    end
+end
+
+"""
+    start_vite_dev_server()
+
+Start the Vite dev server if in development mode and not already running.
+"""
+function start_vite_dev_server()
+    # Only start in dev environment
+    if !is_dev_environment()
+        @debug "Not in dev environment, skipping Vite dev server"
+        return nothing
+    end
+
+    # Check if already running
+    if is_vite_running()
+        @info "Vite dev server already running on port $VITE_DEV_PORT"
+        return nothing
+    end
+
+    # Check if process reference exists and is still running
+    if VITE_DEV_PROCESS[] !== nothing && process_running(VITE_DEV_PROCESS[])
+        @info "Vite dev server process already started"
+        return VITE_DEV_PROCESS[]
+    end
+
+    dashboard_dir = joinpath(dirname(dirname(@__FILE__)), "dashboard-ui")
+
+    # Check if node_modules exists
+    if !isdir(joinpath(dashboard_dir, "node_modules"))
+        @warn "dashboard-ui/node_modules not found. Run 'npm install' first."
+        return nothing
+    end
+
+    @info "Starting Vite dev server..." dashboard_dir = dashboard_dir port = VITE_DEV_PORT
+
+    try
+        # Start npm run dev in the background
+        # Need to change directory before running
+        proc = cd(dashboard_dir) do
+            run(pipeline(`npm run dev`, stdout=devnull, stderr=devnull), wait=false)
+        end
+
+        VITE_DEV_PROCESS[] = proc
+
+        # Give it a moment to start
+        sleep(2)
+
+        if is_vite_running()
+            @info "✅ Vite dev server started on port $VITE_DEV_PORT"
+            return proc
+        else
+            @warn "Vite dev server may not have started successfully"
+            return proc
+        end
+    catch e
+        @error "Failed to start Vite dev server" exception = (e, catch_backtrace())
+        return nothing
+    end
+end
+
+"""
+    stop_vite_dev_server()
+
+Stop the Vite dev server if it's running.
+"""
+function stop_vite_dev_server()
+    if VITE_DEV_PROCESS[] !== nothing
+        try
+            kill(VITE_DEV_PROCESS[])
+            @info "Vite dev server stopped"
+        catch e
+            @debug "Error stopping Vite dev server" exception = (e, catch_backtrace())
+        end
+        VITE_DEV_PROCESS[] = nothing
+    end
 end
 
 # ============================================================================
@@ -485,30 +592,47 @@ function handle_request(http::HTTP.Stream)
         uri = HTTP.URI(req.target)
         path = uri.path
 
-        # Dashboard HTML page
-        if path == "/dashboard" || path == "/dashboard/"
-            html = Dashboard.dashboard_html()
-            HTTP.setstatus(http, 200)
-            HTTP.setheader(http, "Content-Type" => "text/html")
-            HTTP.startwrite(http)
-            write(http, html)
-            return nothing
-        end
+        # Dashboard HTML page and static assets (React build or Vite dev server)
+        if (path == "/dashboard" || path == "/dashboard/" || startswith(path, "/dashboard/")) && !startswith(path, "/dashboard/api/")
+            # Try to proxy to Vite dev server first (for HMR during development)
+            vite_port = 3001
+            try
+                # Quick check if Vite dev server is running
+                test_conn = Sockets.connect("localhost", vite_port)
+                close(test_conn)
 
-        # Dashboard static assets (React build)
-        if startswith(path, "/dashboard/") && !startswith(path, "/dashboard/api/")
-            asset_path = replace(path, r"^/dashboard/" => "")
-            response = Dashboard.serve_static_file(asset_path)
-            HTTP.setstatus(http, response.status)
-            for (name, value) in response.headers
-                HTTP.setheader(http, name => value)
+                # Vite is running - proxy the request to it
+                # Strip /dashboard prefix since Vite serves from root
+                vite_path = replace(path, r"^/dashboard" => "")
+                if vite_path == ""
+                    vite_path = "/"
+                end
+                vite_url = "http://localhost:$(vite_port)$(vite_path)"
+                vite_response = HTTP.get(vite_url, status_exception=false)
+
+                HTTP.setstatus(http, vite_response.status)
+                for (name, value) in vite_response.headers
+                    # Skip transfer-encoding headers that HTTP.jl handles
+                    if lowercase(name) ∉ ["transfer-encoding", "connection"]
+                        HTTP.setheader(http, name => value)
+                    end
+                end
+                HTTP.startwrite(http)
+                write(http, vite_response.body)
+                return nothing
+            catch e
+                # Vite not running - fall back to serving built static files
+                asset_path = replace(path, r"^/dashboard/" => "")
+                response = Dashboard.serve_static_file(asset_path)
+                HTTP.setstatus(http, response.status)
+                for (name, value) in response.headers
+                    HTTP.setheader(http, name => value)
+                end
+                HTTP.startwrite(http)
+                write(http, response.body)
+                return nothing
             end
-            HTTP.startwrite(http)
-            write(http, response.body)
-            return nothing
-        end
-
-        # Dashboard API: Get all agents
+        end        # Dashboard API: Get all agents
         if path == "/dashboard/api/agents"
             agents = Dict{String,Any}()
             for (id, conn) in REPL_REGISTRY
@@ -1060,8 +1184,14 @@ function start_foreground_server(port::Int=3000)
 
     @info "Starting MCP Proxy Server" port = port pid = getpid()
 
+    # Start Vite dev server if in development mode
+    start_vite_dev_server()
+
     # Setup cleanup on exit
-    atexit(() -> remove_pid_file(port))
+    atexit(() -> begin
+        stop_vite_dev_server()
+        remove_pid_file(port)
+    end)
 
     # Start HTTP server with streaming support
     server = HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose=false, stream=true)
@@ -1083,15 +1213,15 @@ function start_background_server(port::Int=3000)
     using Pkg
     Pkg.activate("$(Base.active_project())")
 
-    using MCPRepl.Proxy
+    using MCPRepl
 
     println("Starting MCP Proxy Server in background...")
-    Proxy.start_foreground_server($port)
+    MCPRepl.Proxy.start_foreground_server($port)
 
     # Keep server running
     println("Press Ctrl+C to stop the server")
     try
-        wait(Proxy.SERVER[])
+        wait(MCPRepl.Proxy.SERVER[])
     catch e
         @warn "Server stopped" exception=e
     end
@@ -1108,12 +1238,12 @@ function start_background_server(port::Int=3000)
         run(`cmd /c start julia $script_file`, wait=false)
     else
         # Unix: use nohup and redirect output
-        log_file = joinpath(dirname(get_pid_file_path(port)), "proxy-$port.log")
+        log_file = joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
         run(pipeline(`nohup julia $script_file`, stdout=log_file, stderr=log_file), wait=false)
     end
 
     # Wait a moment for server to start
-    sleep(2)
+    sleep(3)
 
     if is_server_running(port)
         pid = get_server_pid(port)
@@ -1131,6 +1261,9 @@ end
 Stop the proxy server running on the specified port.
 """
 function stop_server(port::Int=3000)
+    # Stop Vite dev server first
+    stop_vite_dev_server()
+    
     if SERVER[] !== nothing
         # Stop server in current process
         @info "Stopping proxy server"
@@ -1138,7 +1271,7 @@ function stop_server(port::Int=3000)
         SERVER[] = nothing
         remove_pid_file(port)
     else
-        # Try to stop background server
+        # Try to stop background server by PID file
         pid = get_server_pid(port)
         if pid !== nothing
             @info "Stopping background proxy server" pid = pid
@@ -1148,7 +1281,28 @@ function stop_server(port::Int=3000)
                 run(`kill $pid`, wait=false)
             end
             remove_pid_file(port)
-        else
+        end
+        
+        # Also kill any process listening on the port (in case PID file is stale)
+        try
+            if !Sys.iswindows()
+                # Use lsof to find and kill any process on the port
+                result = read(`lsof -ti :$port`, String)
+                pids = split(strip(result), '\n')
+                for pid_str in pids
+                    if !isempty(pid_str)
+                        pid_num = parse(Int, pid_str)
+                        @info "Killing process on port $port" pid=pid_num
+                        run(`kill $pid_num`, wait=false)
+                    end
+                end
+            end
+        catch e
+            # Port might not be in use, that's okay
+            @debug "No additional processes found on port $port"
+        end
+        
+        if pid === nothing && !is_server_running(port)
             @info "No proxy server found on port $port"
         end
     end
