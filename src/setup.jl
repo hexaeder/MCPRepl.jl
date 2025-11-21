@@ -15,7 +15,7 @@ function read_vscode_mcp_config()
 
     try
         content = read(mcp_path, String)
-        return JSON.parse(content; dicttype=Dict)
+        return JSON.parse(content; dicttype = Dict)
     catch
         return nothing
     end
@@ -140,7 +140,7 @@ function read_claude_config()
 
     try
         content = read(config_path, String)
-        return JSON.parse(content; dicttype=Dict)
+        return JSON.parse(content; dicttype = Dict)
     catch
         return nothing
     end
@@ -166,7 +166,7 @@ function write_claude_config(config::Dict)
     end
 end
 
-function add_claude_mcp_server(; api_key::Union{String,Nothing}=nothing)
+function add_claude_mcp_server(; api_key::Union{String,Nothing} = nothing)
     # Load security config to get port and API key
     security_config = load_security_config()
 
@@ -191,7 +191,9 @@ function add_claude_mcp_server(; api_key::Union{String,Nothing}=nothing)
             )
         else
             # Add with target header (for lax mode)
-            run(`claude mcp add julia-repl $url --scope project --transport http -H "X-MCPRepl-Target: $repl_id"`)
+            run(
+                `claude mcp add julia-repl $url --scope project --transport http -H "X-MCPRepl-Target: $repl_id"`,
+            )
         end
         return true
     catch e
@@ -239,7 +241,7 @@ function read_vscode_settings()
         lines = split(content, '\n')
         cleaned_lines = filter(line -> !startswith(strip(line), "//"), lines)
         cleaned_content = join(cleaned_lines, '\n')
-        return JSON.parse(cleaned_content; dicttype=Dict)
+        return JSON.parse(cleaned_content; dicttype = Dict)
     catch e
         @warn "Failed to read VS Code settings.json" exception = e
         return Dict()
@@ -274,7 +276,7 @@ function has_startup_script()
     return isfile(get_startup_script_path())
 end
 
-function install_startup_script(; emoticon::String="🐉")
+function install_startup_script(; emoticon::String = "🐉")
     startup_path = get_startup_script_path()
 
     # Load security config to get port if available
@@ -359,7 +361,7 @@ function check_vscode_extension_installed()
     end
 end
 
-function prompt_and_setup_vscode_startup(; gentle::Bool=false)
+function prompt_and_setup_vscode_startup(; gentle::Bool = false)
     """Prompt user to install startup script and configure VS Code settings"""
 
     emoticon = gentle ? "🦋" : "🐉"
@@ -402,7 +404,7 @@ function prompt_and_setup_vscode_startup(; gentle::Bool=false)
 
         # Install startup script if needed
         if !has_script
-            if install_startup_script(emoticon=emoticon)
+            if install_startup_script(emoticon = emoticon)
                 println("   ✅ Created .julia-startup.jl")
             else
                 println("   ❌ Failed to create .julia-startup.jl")
@@ -482,7 +484,7 @@ function prompt_and_setup_vscode_extension()
             # This will remove old versions first
             install_vscode_remote_control(
                 pwd();
-                allowed_commands=[
+                allowed_commands = [
                     # REPL & Window Control
                     "language-julia.startREPL",
                     "workbench.action.reloadWindow",
@@ -593,7 +595,7 @@ function prompt_and_setup_vscode_extension()
                     # Extension Management
                     "workbench.extensions.installExtension",
                 ],
-                require_confirmation=false,
+                require_confirmation = false,
             )
             if has_extension
                 println("   ✅ Reinstalled VS Code Remote Control extension")
@@ -622,7 +624,7 @@ function check_claude_status()
     try
         # Use success() to check if command exists and runs without error
         # Redirect both stdout and stderr to devnull
-        if !success(pipeline(`claude --version`, stdout=devnull, stderr=devnull))
+        if !success(pipeline(`claude --version`, stdout = devnull, stderr = devnull))
             return :claude_not_found
         end
     catch
@@ -666,7 +668,7 @@ function read_gemini_settings()
 
     try
         content = read(settings_path, String)
-        return JSON.parse(content; dicttype=Dict)
+        return JSON.parse(content; dicttype = Dict)
     catch
         return Dict()
     end
@@ -694,7 +696,7 @@ function check_gemini_status()
     # Check if gemini command exists (cross-platform)
     try
         # Use success() to check if command exists and runs without error
-        if !success(pipeline(`gemini --version`, stdout=devnull, stderr=devnull))
+        if !success(pipeline(`gemini --version`, stdout = devnull, stderr = devnull))
             return :gemini_not_found
         end
     catch
@@ -803,35 +805,35 @@ After configuring VS Code, reload the window (Cmd+Shift+P → "Reload Window")
 to apply changes. If you installed the startup script, restart your Julia REPL
 to see it in action.
 """
-function setup(; gentle::Bool=false)
+function setup(; gentle::Bool = false)
     # FIRST: Check security configuration
     security_config = load_security_config()
 
     if security_config === nothing
         printstyled(
             "\n╔═══════════════════════════════════════════════════════════╗\n",
-            color=:cyan,
-            bold=true,
+            color = :cyan,
+            bold = true,
         )
         printstyled(
             "║                                                           ║\n",
-            color=:cyan,
-            bold=true,
+            color = :cyan,
+            bold = true,
         )
         printstyled(
             "║         🔒 MCPRepl Security Setup Required 🔒             ║\n",
-            color=:yellow,
-            bold=true,
+            color = :yellow,
+            bold = true,
         )
         printstyled(
             "║                                                           ║\n",
-            color=:cyan,
-            bold=true,
+            color = :cyan,
+            bold = true,
         )
         printstyled(
             "╚═══════════════════════════════════════════════════════════╝\n",
-            color=:cyan,
-            bold=true,
+            color = :cyan,
+            bold = true,
         )
         println()
         println("MCPRepl now requires security configuration before use.")
@@ -841,15 +843,15 @@ function setup(; gentle::Bool=false)
         response = strip(lowercase(readline()))
 
         if isempty(response) || response == "y" || response == "yes"
-            security_config = security_setup_wizard(pwd(); gentle=gentle)
+            security_config = security_setup_wizard(pwd(); gentle = gentle)
             println()
-            printstyled("✅ Security configuration complete!\n", color=:green, bold=true)
+            printstyled("✅ Security configuration complete!\n", color = :green, bold = true)
             println()
         else
             println()
             printstyled(
                 "⚠️  Setup incomplete. Run MCPRepl.setup_security() later.\n",
-                color=:yellow,
+                color = :yellow,
             )
             println()
             return
@@ -857,7 +859,7 @@ function setup(; gentle::Bool=false)
     else
         printstyled(
             "\n✅ Security configured (mode: $(security_config.mode))\n",
-            color=:green,
+            color = :green,
         )
         println()
     end
@@ -866,7 +868,7 @@ function setup(; gentle::Bool=false)
     emoticon = gentle ? "🦋" : "🐉"
     if !has_startup_script()
         println("📝 Installing Julia startup script...")
-        if install_startup_script(emoticon=emoticon)
+        if install_startup_script(emoticon = emoticon)
             println("   ✅ Created .julia-startup.jl")
         else
             println("   ❌ Failed to create .julia-startup.jl")
@@ -1000,7 +1002,7 @@ function setup(; gentle::Bool=false)
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1019,7 +1021,7 @@ function setup(; gentle::Bool=false)
                 println("   🌐 Server URL: http://localhost:$port")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1035,7 +1037,7 @@ function setup(; gentle::Bool=false)
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1053,7 +1055,7 @@ function setup(; gentle::Bool=false)
                 println("   ✅ Successfully configured VS Code stdio transport")
 
                 # Prompt for startup script installation
-                prompt_and_setup_vscode_startup(gentle=gentle)
+                prompt_and_setup_vscode_startup(gentle = gentle)
 
                 # Prompt for VS Code extension installation
                 prompt_and_setup_vscode_extension()
@@ -1194,9 +1196,9 @@ This includes:
 
 Use this to start fresh with a clean setup.
 """
-function reset(; workspace_dir::String=pwd())
+function reset(; workspace_dir::String = pwd())
     println()
-    printstyled("⚠️  MCPRepl Configuration Reset\n", color=:yellow, bold=true)
+    printstyled("⚠️  MCPRepl Configuration Reset\n", color = :yellow, bold = true)
     println()
     println("This will remove:")
     println("  • .mcprepl/ directory (security config and API keys)")
@@ -1222,7 +1224,7 @@ function reset(; workspace_dir::String=pwd())
     mcprepl_dir = joinpath(workspace_dir, ".mcprepl")
     if isdir(mcprepl_dir)
         try
-            rm(mcprepl_dir; recursive=true, force=true)
+            rm(mcprepl_dir; recursive = true, force = true)
             println("✅ Removed .mcprepl/ directory")
             success_count += 1
         catch e
@@ -1238,7 +1240,7 @@ function reset(; workspace_dir::String=pwd())
     startup_script = joinpath(workspace_dir, ".julia-startup.jl")
     if isfile(startup_script)
         try
-            rm(startup_script; force=true)
+            rm(startup_script; force = true)
             println("✅ Removed .julia-startup.jl")
             success_count += 1
         catch e
@@ -1254,7 +1256,7 @@ function reset(; workspace_dir::String=pwd())
     vscode_settings_path = joinpath(workspace_dir, ".vscode", "settings.json")
     if isfile(vscode_settings_path)
         try
-            settings = JSON.parsefile(vscode_settings_path; dicttype=Dict{String,Any})
+            settings = JSON.parsefile(vscode_settings_path; dicttype = Dict{String,Any})
 
             if haskey(settings, "julia.additionalArgs")
                 args = settings["julia.additionalArgs"]
@@ -1294,7 +1296,7 @@ function reset(; workspace_dir::String=pwd())
     mcp_config_path = joinpath(workspace_dir, ".vscode", "mcp.json")
     if isfile(mcp_config_path)
         try
-            mcp_config = JSON.parsefile(mcp_config_path; dicttype=Dict{String,Any})
+            mcp_config = JSON.parsefile(mcp_config_path; dicttype = Dict{String,Any})
 
             if haskey(mcp_config, "servers")
                 servers = mcp_config["servers"]
@@ -1332,16 +1334,16 @@ function reset(; workspace_dir::String=pwd())
     if success_count == total_count
         printstyled(
             "✅ Reset complete! All MCPRepl files removed.\n",
-            color=:green,
-            bold=true,
+            color = :green,
+            bold = true,
         )
         println()
         println("Run MCPRepl.setup() to configure again.")
     else
         printstyled(
             "⚠️  Reset completed with some errors ($success_count/$total_count successful)\n",
-            color=:yellow,
-            bold=true,
+            color = :yellow,
+            bold = true,
         )
     end
     println()

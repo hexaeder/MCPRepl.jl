@@ -29,6 +29,9 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, isSelected, onClick
         >
             <div className="agent-header">
                 <span className="agent-id">{agent.id}</span>
+            </div>
+
+            <div className="status-line">
                 <span
                     className="status-badge"
                     style={{ backgroundColor: getStatusColor(agent.status) }}

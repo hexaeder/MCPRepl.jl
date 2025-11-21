@@ -53,7 +53,7 @@ if !isempty(agent_name)
             # Dev version - use the same path
             dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
             @info "  Using MCPRepl dev version from: $dev_path"
-            Pkg.develop(path=dev_path)
+            Pkg.develop(path = dev_path)
         elseif mcprepl_info !== nothing && haskey(mcprepl_info, "repo-url")
             # Git repository version
             repo_url = mcprepl_info["repo-url"]
@@ -61,10 +61,10 @@ if !isempty(agent_name)
                 # Specific branch/rev
                 repo_rev = mcprepl_info["repo-rev"]
                 @info "  Adding/updating MCPRepl from: $repo_url#$repo_rev"
-                Pkg.add(url=repo_url, rev=repo_rev)
+                Pkg.add(url = repo_url, rev = repo_rev)
             else
                 @info "  Adding/updating MCPRepl from: $repo_url"
-                Pkg.add(url=repo_url)
+                Pkg.add(url = repo_url)
             end
         else
             # Registered version or no manifest info - just add it
@@ -120,12 +120,12 @@ try
 
                 if has_agent_name
                     MCPRepl.start!(
-                        verbose=false,
-                        supervisor=supervisor_enabled,
-                        agent_name=agent_name_arg,
+                        verbose = false,
+                        supervisor = supervisor_enabled,
+                        agent_name = agent_name_arg,
                     )
                 else
-                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
+                    MCPRepl.start!(verbose = false, supervisor = supervisor_enabled)
                 end
 
                 # Wait a moment for server to fully initialize

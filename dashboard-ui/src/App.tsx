@@ -17,6 +17,10 @@ export const App: React.FC = () => {
     const terminalBottomRef = useRef<HTMLDivElement>(null);
     const [isNearBottom, setIsNearBottom] = useState(true);
     const [terminalSearch, setTerminalSearch] = useState('');
+    const [showServerModal, setShowServerModal] = useState(false);
+    const [showShutdownConfirm, setShowShutdownConfirm] = useState(false);
+    const [proxyPid, setProxyPid] = useState<number | null>(null);
+    const [proxyPort, setProxyPort] = useState<number | null>(null);
 
     useEffect(() => {
         const loadInitialData = async () => {
@@ -27,6 +31,14 @@ export const App: React.FC = () => {
                 ]);
                 setAgents(agentsData);
                 setEvents(eventsData);
+
+                // Fetch proxy info
+                const proxyInfoRes = await fetch('/dashboard/api/proxy-info');
+                if (proxyInfoRes.ok) {
+                    const proxyInfo = await proxyInfoRes.json();
+                    setProxyPid(proxyInfo.pid);
+                    setProxyPort(proxyInfo.port);
+                }
             } catch (error) {
                 console.error('Failed to load initial data:', error);
             }
@@ -88,14 +100,35 @@ export const App: React.FC = () => {
 
     const agentCount = Object.keys(agents).length;
     const eventCount = events.filter(e => e.type !== 'HEARTBEAT').length;
+    const [startTime] = React.useState(new Date());
+    const [uptime, setUptime] = React.useState('0s');
+
+    React.useEffect(() => {
+        const interval = setInterval(() => {
+            const seconds = Math.floor((Date.now() - startTime.getTime()) / 1000);
+            const hours = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            setUptime(hours > 0 ? `${hours}h ${mins}m ${secs}s` : mins > 0 ? `${mins}m ${secs}s` : `${secs}s`);
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [startTime]);
+
+    const handleRestart = async () => {
+        try {
+            await fetch('/dashboard/api/restart', { method: 'POST' });
+            // Page will reload automatically when server comes back
+            setTimeout(() => window.location.reload(), 2000);
+        } catch (error) {
+            console.error('Failed to restart proxy:', error);
+        }
+    };
 
     const handleShutdown = async () => {
-        if (!confirm('Are you sure you want to shut down the proxy server?')) {
-            return;
-        }
+        setShowServerModal(false);
+        setShowShutdownConfirm(false);
         try {
             await fetch('/dashboard/api/shutdown', { method: 'POST' });
-            alert('Proxy server is shutting down...');
         } catch (error) {
             console.error('Failed to shutdown proxy:', error);
         }
@@ -105,7 +138,7 @@ export const App: React.FC = () => {
         <div className="app">
             <header className="header">
                 <div className="header-brand">
-                    <div className="logo">⚡</div>
+                    <div className="logo" onClick={() => setShowServerModal(true)}>⚡</div>
                     <h1>MCPRepl Dashboard</h1>
                 </div>
                 <div className="header-stats">
@@ -117,11 +150,75 @@ export const App: React.FC = () => {
                         <span className="stat-label">EVENTS</span>
                         <span className="stat-value" id="header-events">{eventCount}</span>
                     </div>
-                    <button className="shutdown-button" onClick={handleShutdown} title="Shutdown proxy server">
-                        🛑 Stop Proxy
-                    </button>
                 </div>
             </header>
+
+            {showServerModal && (
+                <div className="modal-overlay" onClick={() => setShowServerModal(false)}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>⚡ Proxy Server</h2>
+                            <button className="modal-close" onClick={() => setShowServerModal(false)}>✕</button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="server-info">
+                                <div className="info-row">
+                                    <span className="info-label">Status</span>
+                                    <span className="info-value status-running">● Running</span>
+                                </div>
+                                <div className="info-row">
+                                    <span className="info-label">PID</span>
+                                    <span className="info-value">{proxyPid ?? 'Loading...'}</span>
+                                </div>
+                                <div className="info-row">
+                                    <span className="info-label">Port</span>
+                                    <span className="info-value">{proxyPort ?? 'Loading...'}</span>
+                                </div>
+                                <div className="info-row">
+                                    <span className="info-label">Uptime</span>
+                                    <span className="info-value">{uptime}</span>
+                                </div>
+                                <div className="info-row">
+                                    <span className="info-label">Active Agents</span>
+                                    <span className="info-value">{Object.values(agents).filter(a => a.status === 'ready').length} / {agentCount}</span>
+                                </div>
+                                <div className="info-row">
+                                    <span className="info-label">Total Events</span>
+                                    <span className="info-value">{eventCount}</span>
+                                </div>
+                                <div className="info-row">
+                                    <span className="info-label">Version</span>
+                                    <span className="info-value">MCPRepl v0.3.0</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="modal-button secondary" onClick={() => setShowServerModal(false)}>Close</button>
+                            <button className="modal-button warning" onClick={() => { setShowServerModal(false); handleRestart(); }}>🔄 Restart Server</button>
+                            <button className="modal-button danger" onClick={() => setShowShutdownConfirm(true)}>⏻ Shutdown Server</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showShutdownConfirm && (
+                <div className="modal-overlay" onClick={() => setShowShutdownConfirm(false)}>
+                    <div className="modal-content confirm-dialog" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>⚠️ Confirm Shutdown</h2>
+                        </div>
+                        <div className="modal-body">
+                            <p className="confirm-message">
+                                Are you sure you want to shut down the proxy server? All active agent connections will be terminated.
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="modal-button secondary" onClick={() => setShowShutdownConfirm(false)}>Cancel</button>
+                            <button className="modal-button danger" onClick={handleShutdown}>Shutdown</button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div className="main-container">
                 <aside className="sidebar">

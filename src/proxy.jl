@@ -919,7 +919,34 @@ function handle_request(http::HTTP.Stream)
                 write(http, response.body)
                 return nothing
             end
-        end        # Dashboard API: Get all agents
+        end        # Dashboard API: Get proxy server info
+        if path == "/dashboard/api/proxy-info"
+            proxy_info = Dict(
+                "pid" => getpid(),
+                "port" => begin
+                    local port = 3000
+                    if SERVER[] !== nothing
+                        try
+                            port_match = match(r":(\d+)", string(SERVER[].listener))
+                            if port_match !== nothing
+                                port = parse(Int, port_match[1])
+                            end
+                        catch
+                            port = 3000
+                        end
+                    end
+                    port
+                end,
+                "version" => "v0.3.0",
+            )
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(proxy_info))
+            return nothing
+        end
+
+        # Dashboard API: Get all agents
         if path == "/dashboard/api/agents"
             agents = lock(REPL_REGISTRY_LOCK) do
                 result = Dict{String,Any}()
@@ -944,8 +971,79 @@ function handle_request(http::HTTP.Stream)
             return nothing
         end
 
+        # Dashboard API: Restart proxy server
+        if path == "/dashboard/api/restart" && req.method == "POST"
+            @info "Restart endpoint called" pid = getpid()
+
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(Dict("status" => "ok", "message" => "Restarting proxy server")),
+            )
+
+            @info "Response sent, scheduling restart"
+
+            # Schedule restart after response is sent
+            @async begin
+                try
+                    sleep(0.5)
+                    @info "Restarting proxy server via dashboard"
+
+                    # Get port before closing
+                    local port = 3000
+                    if SERVER[] !== nothing
+                        try
+                            port_match = match(r":(\d+)", string(SERVER[].listener))
+                            if port_match !== nothing
+                                port = parse(Int, port_match[1])
+                            end
+                        catch
+                            port = 3000
+                        end
+
+                        # Spawn new proxy with delay, then exit immediately
+                        # Let the OS clean up the server on process exit
+                        script_dir = dirname(@__FILE__)
+                        proxy_script = joinpath(dirname(script_dir), "proxy.jl")
+
+                        # Use shell to wait for port to be free, then start new proxy
+                        restart_cmd = """
+                        sleep 2
+                        while lsof -i :$port >/dev/null 2>&1; do
+                            sleep 0.5
+                        done
+                        julia $proxy_script start --background
+                        """
+
+                        @info "Spawning restart process (will wait for port to clear)..."
+                        run(`sh -c $restart_cmd`, wait = false)
+
+                        @info "Removing PID file..."
+                        remove_pid_file(port)
+                    end
+
+                    # Flush logs before exit
+                    @info "Exiting current process..."
+                    flush(stderr)
+                    flush(stdout)
+                    sleep(0.1)
+
+                    # Exit current process
+                    exit(0)
+                catch e
+                    @error "Error during restart" exception = (e, catch_backtrace())
+                    exit(1)
+                end
+            end
+            return nothing
+        end
+
         # Dashboard API: Shutdown proxy server
-        if path == "/dashboard/api/shutdown" && method == "POST"
+        if path == "/dashboard/api/shutdown" && req.method == "POST"
+            @info "Shutdown endpoint called" pid = getpid()
+
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
@@ -956,19 +1054,44 @@ function handle_request(http::HTTP.Stream)
                 ),
             )
 
+            @info "Response sent, scheduling shutdown"
+
             # Schedule shutdown after response is sent
             @async begin
+                @info "Shutdown task started"
                 sleep(0.5)  # Give time for response to be sent
-                @info "Proxy server shutdown requested via dashboard"
+                @info "Proxy server shutdown requested via dashboard" pid = getpid()
+
+                # Get port from SERVER before closing
+                local port = 3000
                 if SERVER[] !== nothing
-                    HTTP.close(SERVER[])
+                    try
+                        port_match = match(r":(\d+)", string(SERVER[].listener))
+                        if port_match !== nothing
+                            port = parse(Int, port_match[1])
+                        end
+                    catch
+                        port = 3000
+                    end
+
+                    @info "Shutting down proxy server" port = port
+
+                    # Proper shutdown sequence
+                    stop_vite_dev_server()
+                    close(SERVER[])
                     SERVER[] = nothing
+                    remove_pid_file(port)
+
+                    @info "Server closed, exiting process"
                 end
+
+                # Force exit the Julia process
+                @info "Calling exit(0)"
+                sleep(0.1)
+                exit(0)
             end
             return nothing
-        end
-
-        # Dashboard API: Get events
+        end        # Dashboard API: Get events
         if path == "/dashboard/api/events"
             query_params = HTTP.queryparams(uri)
             id = get(query_params, "id", nothing)
@@ -1936,10 +2059,9 @@ function start_background_server(port::Int = 3000; status_callback = nothing)
         # Windows: use START command
         run(`cmd /c start julia $script_file`, wait = false)
     else
-        # Unix: use nohup and redirect output
-        log_file = joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
+        # Unix: use nohup and discard stdout/stderr (all logs go to proxy-$port.log via FileLogger)
         run(
-            pipeline(`nohup julia $script_file`, stdout = log_file, stderr = log_file),
+            pipeline(`nohup julia $script_file`, stdout = devnull, stderr = devnull),
             wait = false,
         )
     end
@@ -1976,16 +2098,8 @@ function start_background_server(port::Int = 3000; status_callback = nothing)
 
     # Server didn't start in time
     @error "Failed to start background proxy server" timeout = max_wait
-
-    # Show log contents to help debug
-    background_log =
-        joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
-    if isfile(background_log)
-        log_contents = read(background_log, String)
-        if !isempty(log_contents)
-            @error "Background server log:" log = log_contents
-        end
-    end
+    @info "Check log file for details" log_file =
+        joinpath(dirname(get_pid_file_path(port)), "proxy-$port.log")
 
     return nothing
 end

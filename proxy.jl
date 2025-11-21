@@ -55,7 +55,7 @@ if command == "start"
     end
 
     println("🚀 Starting proxy server on port $port$(background ? " (background)" : "")...")
-    server = Proxy.start_server(port; background=background)
+    server = Proxy.start_server(port; background = background)
 
     if !background && server !== nothing
         println("✅ Proxy server running on port $port. Press Ctrl+C to stop.")
@@ -76,8 +76,10 @@ elseif command == "stop"
     println("✅ Proxy stopped")
 
 elseif command == "restart"
-    println("🔄 Restarting proxy server on port $port$(background ? " (background)" : "")...")
-    server = Proxy.restart_server(port; background=background)
+    println(
+        "🔄 Restarting proxy server on port $port$(background ? " (background)" : "")...",
+    )
+    server = Proxy.restart_server(port; background = background)
 
     if !background && server !== nothing
         println("✅ Proxy server running on port $port. Press Ctrl+C to stop.")
