@@ -23,6 +23,51 @@ include("tools.jl")
 
 export Proxy
 
+# ============================================================================
+# Port Management
+# ============================================================================
+
+"""
+    find_free_port(start_port::Int=40000, end_port::Int=49999) -> Int
+
+Find an available port in the specified range by attempting to bind to each port.
+
+# Arguments
+- `start_port::Int=40000`: Start of port range to search (default: 40000-49999 for dynamic ports)
+- `end_port::Int=49999`: End of port range to search
+
+# Returns
+- `Int`: First available port in the range
+
+# Throws
+- `ErrorException`: If no free port is found in the range
+
+# Examples
+```julia
+# Find port in default range (40000-49999)
+port = find_free_port()
+
+# Find port in custom range
+port = find_free_port(4000, 4999)
+```
+"""
+function find_free_port(start_port::Int = 40000, end_port::Int = 49999)
+    for port = start_port:end_port
+        try
+            # Try to bind to the port - if successful, it's available
+            server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+            close(server)
+            @debug "Found free port" port = port
+            return port
+        catch e
+            # Port is in use or binding failed, try next one
+            @debug "Port unavailable" port = port exception = e
+            continue
+        end
+    end
+    error("No free ports available in range $start_port-$end_port")
+end
+
 # Version tracking - gets git commit hash at runtime
 function version_info()
     try
@@ -729,6 +774,40 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
     end
 end
 
+"""
+    start!(; port=nothing, verbose=true, security_mode=nothing, supervisor=false, 
+           agents_config=".mcprepl/agents.json", agent_name="", workspace_dir=pwd())
+
+Start the MCP REPL server.
+
+# Arguments
+- `port::Union{Int,Nothing}=nothing`: Server port. Use `0` for dynamic port assignment (finds first available port in 40000-49999). If `nothing`, uses port from configuration.
+- `verbose::Bool=true`: Show startup messages
+- `security_mode::Union{Symbol,Nothing}=nothing`: Override security mode (:strict, :relaxed, or :lax)
+- `supervisor::Bool=false`: Start in supervisor mode (monitors multiple agents)
+- `agents_config::String=".mcprepl/agents.json"`: Path to agents configuration file
+- `agent_name::String=""`: Agent name (when running as a managed agent)
+- `workspace_dir::String=pwd()`: Project root directory
+
+# Dynamic Port Assignment
+Set `port=0` (or use `"port": 0` in security.json/agents.json) to automatically find and use an available port.
+The server will search ports 40000-49999 for the first free port. This higher range avoids conflicts with common services.
+
+# Examples
+```julia
+# Use configured port from security.json
+MCPRepl.start!()
+
+# Use specific port
+MCPRepl.start!(port=4000)
+
+# Use dynamic port assignment
+MCPRepl.start!(port=0)
+
+# Start as supervised agent
+MCPRepl.start!(agent_name="data-processor")
+```
+"""
 function start!(;
     port::Union{Int,Nothing} = nothing,
     verbose::Bool = true,
@@ -793,14 +872,28 @@ function start!(;
 
     # Determine port: function arg overrides config, otherwise use what load_security_config() found
     actual_port = if port !== nothing
-        @info "Using port from function argument" port = port
-        port
+        if port == 0
+            # Port 0 means find a free port dynamically
+            @info "Finding available port dynamically"
+            find_free_port()
+        else
+            @info "Using port from function argument" port = port
+            port
+        end
     else
         # load_security_config already loaded the right port based on mode (agent/supervisor/normal)
-        @debug "Using port from loaded config" port = security_config.port mode = (
-            supervisor ? "supervisor" : (agent_name != "" ? "agent:$agent_name" : "normal")
-        )
-        security_config.port
+        config_port = security_config.port
+        if config_port == 0
+            # Port 0 in config means find a free port dynamically
+            @info "Finding available port dynamically (from config)"
+            find_free_port()
+        else
+            @debug "Using port from loaded config" port = config_port mode = (
+                supervisor ? "supervisor" :
+                (agent_name != "" ? "agent:$agent_name" : "normal")
+            )
+            config_port
+        end
     end
 
     # Override security mode if specified
