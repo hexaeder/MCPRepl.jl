@@ -13,9 +13,15 @@ using Dates
 using Dates: Minute, Second
 using Logging
 using LoggingExtras
+using UUIDs
 
 include("dashboard.jl")
 using .Dashboard
+
+include("session.jl")
+using .Session
+
+include("proxy_tools.jl")
 
 function setup_proxy_logging(port::Int)
     cache_dir = get(ENV, "XDG_CACHE_HOME") do
@@ -57,6 +63,8 @@ const SERVER_PORT = Ref{Int}(3000)
 const SERVER_PID_FILE = Ref{String}("")
 const REPL_REGISTRY = Dict{String,REPLConnection}()
 const REPL_REGISTRY_LOCK = ReentrantLock()
+const SESSION_REGISTRY = Dict{String,MCPSession}()  # Track MCP client sessions
+const SESSION_LOCK = ReentrantLock()
 const VITE_DEV_PROCESS = Ref{Union{Base.Process,Nothing}}(nothing)
 const VITE_DEV_PORT = 3001
 
@@ -343,6 +351,67 @@ Get a REPL connection by ID.
 function get_repl(id::String)
     lock(REPL_REGISTRY_LOCK) do
         get(REPL_REGISTRY, id, nothing)
+    end
+end
+
+"""
+    create_mcp_session(target_repl_id::Union{String,Nothing}) -> MCPSession
+
+Create a new MCP session for a client connection.
+"""
+function create_mcp_session(target_repl_id::Union{String,Nothing})
+    session = MCPSession(target_repl_id=target_repl_id)
+
+    lock(SESSION_LOCK) do
+        SESSION_REGISTRY[session.id] = session
+    end
+
+    @info "Created MCP session" session_id = session.id target_repl_id = target_repl_id
+    return session
+end
+
+"""
+    get_mcp_session(session_id::String) -> Union{MCPSession, Nothing}
+
+Get an MCP session by its ID.
+"""
+function get_mcp_session(session_id::String)
+    lock(SESSION_LOCK) do
+        return get(SESSION_REGISTRY, session_id, nothing)
+    end
+end
+
+"""
+    delete_mcp_session!(session_id::String)
+
+Delete an MCP session.
+"""
+function delete_mcp_session!(session_id::String)
+    lock(SESSION_LOCK) do
+        if haskey(SESSION_REGISTRY, session_id)
+            session = SESSION_REGISTRY[session_id]
+            close_session!(session)
+            delete!(SESSION_REGISTRY, session_id)
+            @info "Deleted MCP session" session_id = session_id
+        end
+    end
+end
+
+"""
+    cleanup_inactive_sessions!(max_age::Dates.Period=Dates.Hour(1))
+
+Remove sessions that haven't been active for longer than max_age.
+"""
+function cleanup_inactive_sessions!(max_age::Dates.Period=Dates.Hour(1))
+    cutoff = now() - max_age
+    lock(SESSION_LOCK) do
+        inactive = [id for (id, session) in SESSION_REGISTRY if session.last_activity < cutoff]
+        for id in inactive
+            session = SESSION_REGISTRY[id]
+            close_session!(session)
+            delete!(SESSION_REGISTRY, id)
+            @info "Cleaned up inactive session" session_id = id
+        end
     end
 end
 
@@ -762,21 +831,59 @@ end
 
 Route a request to the appropriate backend REPL with streaming support.
 
-Uses the X-MCPRepl-Target header to determine which REPL to route to.
-If no header is present, routes to the first available REPL.
+Routing priority:
+1. Mcp-Session-Id header (standard MCP session)
+2. X-MCPRepl-Target header (explicit target specification)
+3. Smart routing (prefer MCPRepl agent, or first available)
 """
 function route_to_repl_streaming(
     request::Dict,
     original_req::HTTP.Request,
     http::HTTP.Stream,
 )
-    # Determine target REPL
-    header_value = HTTP.header(original_req, "X-MCPRepl-Target")
-    # HTTP.header returns a SubString{String} or String
-    target_id = isempty(header_value) ? nothing : String(header_value)
+    # Check for MCP session ID first (standard MCP mechanism)
+    session_id_header = HTTP.header(original_req, "Mcp-Session-Id")
+    target_id = nothing
 
+    if !isempty(session_id_header)
+        session_id = String(session_id_header)
+        session = get_mcp_session(session_id)
+
+        if session !== nothing
+            # Update session activity
+            update_activity!(session)
+            target_id = session.target_repl_id
+            @debug "Routing via session" session_id = session_id target_id = target_id
+        else
+            # Session not found - client needs to re-initialize
+            HTTP.setstatus(http, 404)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32001,
+                            "message" => "Session not found. Please send a new initialize request.",
+                        ),
+                    ),
+                ),
+            )
+            return nothing
+        end
+    end
+
+    # Fall back to X-MCPRepl-Target header if no session
     if target_id === nothing
-        # No target specified - try to infer from context
+        header_value = HTTP.header(original_req, "X-MCPRepl-Target")
+        target_id = isempty(header_value) ? nothing : String(header_value)
+    end
+
+    # If still no target, this request requires a backend REPL but none is available
+    if target_id === nothing
         repls = list_repls()
         if isempty(repls)
             HTTP.setstatus(http, 503)
@@ -790,22 +897,32 @@ function route_to_repl_streaming(
                         "id" => get(request, "id", nothing),
                         "error" => Dict(
                             "code" => -32001,
-                            "message" => "No REPLs registered with proxy. Please start a REPL with MCPRepl.start!()",
+                            "message" => "No Julia sessions available. Use proxy tools to list or start sessions: list_julia_sessions, start_julia_session.",
                         ),
                     ),
                 ),
             )
             return nothing
-        end
-
-        # Smart routing: Prefer MCPRepl agent if available
-        # This prioritizes the main development REPL over test/temporary instances
-        mcprepl_idx = findfirst(r -> r.id == "MCPRepl", repls)
-        if mcprepl_idx !== nothing
-            target_id = repls[mcprepl_idx].id
         else
-            # Fall back to first available REPL
-            target_id = first(repls).id
+            # REPLs exist but session doesn't have a target
+            HTTP.setstatus(http, 400)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            available_agents = join([r.id for r in repls], ", ")
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32001,
+                            "message" => "No target REPL specified for this session. Available agents: $available_agents. Re-initialize with X-MCPRepl-Target header to specify a target.",
+                        ),
+                    ),
+                ),
+            )
+            return nothing
         end
     end
 
@@ -1166,6 +1283,202 @@ function handle_request(http::HTTP.Stream)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
             write(http, JSON.json(agents))
+            return nothing
+        end
+
+        # Dashboard API: Get tools (proxy + selected agent)
+        if path == "/dashboard/api/tools"
+            agent_id = nothing
+            for (k, v) in req.headers
+                if lowercase(k) == "x-agent-id"
+                    agent_id = v
+                    break
+                end
+            end
+
+            result = Dict{String,Any}(
+                "proxy_tools" => get_proxy_tool_schemas(),
+                "agent_tools" => Dict{String,Any}()
+            )
+
+            # If agent_id specified, fetch tools from that agent
+            if agent_id !== nothing && haskey(REPL_REGISTRY, agent_id)
+                conn = REPL_REGISTRY[agent_id]
+                if conn.status == :ready
+                    try
+                        # Make tools/list request to agent
+                        agent_req = Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => 1,
+                            "method" => "tools/list",
+                            "params" => Dict()
+                        )
+
+                        agent_resp = HTTP.post(
+                            "http://127.0.0.1:$(conn.port)/",
+                            ["Content-Type" => "application/json"],
+                            JSON.json(agent_req);
+                            readtimeout=5
+                        )
+
+                        if agent_resp.status == 200
+                            agent_data = JSON.parse(String(agent_resp.body))
+                            if haskey(agent_data, "result") && haskey(agent_data["result"], "tools")
+                                result["agent_tools"][agent_id] = agent_data["result"]["tools"]
+                            end
+                        end
+                    catch e
+                        @warn "Failed to fetch tools from agent" agent_id = agent_id exception = e
+                    end
+                end
+            end
+
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(result))
+            return nothing
+        end
+
+        # Dashboard API: List directories for path autocomplete
+        if path == "/dashboard/api/directories"
+            # Get path prefix from query params
+            path_prefix = ""
+
+            if !isempty(req.target)
+                uri = HTTP.URI(req.target)
+                params = HTTP.queryparams(uri.query)
+                path_prefix = get(params, "path", "")
+            end
+
+            result = Dict{String,Any}("directories" => String[], "is_julia_project" => false)
+
+            try
+                # Expand ~ to home directory
+                expanded_path = expanduser(path_prefix)
+
+                # Check if current path is a Julia project (has Project.toml)
+                if isdir(expanded_path)
+                    project_toml = joinpath(expanded_path, "Project.toml")
+                    result["is_julia_project"] = isfile(project_toml)
+                end
+
+                # If path ends with /, list contents of that directory
+                # Otherwise, list contents of parent directory and filter
+                if isdir(expanded_path)
+                    base_dir = expanded_path
+                    filter_prefix = ""
+                else
+                    base_dir = dirname(expanded_path)
+                    filter_prefix = basename(expanded_path)
+                end
+
+                if isdir(base_dir)
+                    entries = readdir(base_dir, join=false)
+
+                    # Filter directories only
+                    for entry in entries
+                        full_path = joinpath(base_dir, entry)
+                        # Include directories and filter by prefix
+                        if isdir(full_path) && startswith(entry, filter_prefix)
+                            # Return path relative to what user typed
+                            if endswith(expanded_path, "/") || isdir(expanded_path)
+                                result["directories"] = push!(result["directories"], joinpath(path_prefix, entry))
+                            else
+                                result["directories"] = push!(result["directories"], joinpath(dirname(path_prefix), entry))
+                            end
+                        end
+                    end
+
+                    # Sort results
+                    sort!(result["directories"])
+
+                    # Limit to 20 results
+                    if length(result["directories"]) > 20
+                        result["directories"] = result["directories"][1:20]
+                    end
+                end
+            catch e
+                result["error"] = "Failed to list directories: $(sprint(showerror, e))"
+            end
+
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(result))
+            return nothing
+        end
+
+        # Dashboard API: Get logs for a session
+        if path == "/dashboard/api/logs"
+            # Get session_id from query params
+            session_id = nothing
+            lines = 500  # default number of lines
+
+            if !isempty(req.target)
+                uri = HTTP.URI(req.target)
+                params = HTTP.queryparams(uri.query)
+                session_id = get(params, "session_id", nothing)
+                lines_str = get(params, "lines", "500")
+                lines = tryparse(Int, lines_str)
+                if lines === nothing
+                    lines = 500
+                end
+            end
+
+            result = Dict{String,Any}()
+
+            if session_id !== nothing
+                # Get log file for specific session
+                log_dir = joinpath(dirname(@__DIR__), "logs")
+                if isdir(log_dir)
+                    # Find most recent log file for this session
+                    log_files = filter(f -> startswith(f, "session_$(session_id)_"), readdir(log_dir))
+                    if !isempty(log_files)
+                        latest_log = joinpath(log_dir, sort(log_files)[end])
+                        if isfile(latest_log)
+                            try
+                                content = read(latest_log, String)
+                                # Get last N lines
+                                all_lines = split(content, '\n')
+                                selected_lines = all_lines[max(1, length(all_lines) - lines + 1):end]
+                                result["content"] = join(selected_lines, '\n')
+                                result["file"] = latest_log
+                                result["total_lines"] = length(all_lines)
+                            catch e
+                                result["error"] = "Failed to read log file: $(sprint(showerror, e))"
+                            end
+                        else
+                            result["error"] = "Log file not found"
+                        end
+                    else
+                        result["error"] = "No log files found for session: $session_id"
+                    end
+                else
+                    result["error"] = "Logs directory does not exist"
+                end
+            else
+                # List all available log files
+                log_dir = joinpath(dirname(@__DIR__), "logs")
+                if isdir(log_dir)
+                    files = readdir(log_dir)
+                    result["files"] = map(files) do f
+                        path = joinpath(log_dir, f)
+                        Dict(
+                            "name" => f,
+                            "size" => filesize(path),
+                            "modified" => string(Dates.unix2datetime(mtime(path)))
+                        )
+                    end
+                else
+                    result["files"] = []
+                end
+            end
+
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(result))
             return nothing
         end
 
@@ -1685,9 +1998,36 @@ function handle_request(http::HTTP.Stream)
             )
             return nothing
         elseif method == "initialize"
-            # Handle MCP initialize request
+            # Handle MCP initialize request according to spec
+            # Check for X-MCPRepl-Target header to determine routing
+            header_value = HTTP.header(req, "X-MCPRepl-Target")
+            target_repl_id = isempty(header_value) ? nothing : String(header_value)
+
+            # Get initialization parameters
+            params = get(request, "params", Dict())
+            client_info = get(params, "clientInfo", Dict())
+            client_name = get(client_info, "name", "unknown")
+
+            @info "MCP initialize request" target_repl_id = target_repl_id client_name = client_name
+
+            # X-MCPRepl-Target header is optional
+            # If specified, session will route to that REPL
+            # If not specified, session can use proxy tools to list/select/start REPLs
+            # Session is always created as per MCP spec
+
+            # Create MCP session with optional target REPL mapping
+            session = create_mcp_session(target_repl_id)
+
+            # Initialize the session using the Session module for proper capability negotiation
+            # Convert JSON.Object to Dict if necessary
+            params_dict = params isa Dict ? params : Dict(String(k) => v for (k, v) in pairs(params))
+            result = initialize_session!(session, params_dict)
+
+            # Respond with session ID header as per MCP spec
+            # The Mcp-Session-Id header tells the client to include this ID on all subsequent requests
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.setheader(http, "Mcp-Session-Id" => session.id)
             HTTP.startwrite(http)
             write(
                 http,
@@ -1695,12 +2035,7 @@ function handle_request(http::HTTP.Stream)
                     Dict(
                         "jsonrpc" => "2.0",
                         "id" => get(request, "id", nothing),
-                        "result" => Dict(
-                            "protocolVersion" => "2024-11-05",
-                            "capabilities" => Dict("tools" => Dict()),
-                            "serverInfo" =>
-                                Dict("name" => "mcprepl-proxy", "version" => "0.1.0"),
-                        ),
+                        "result" => result,
                     ),
                 ),
             )
@@ -1711,54 +2046,8 @@ function handle_request(http::HTTP.Stream)
             @info "tools/list handling" num_repls = length(repls) repl_ids =
                 [r.id for r in repls]
 
-            # Start with proxy tools (always available)
-            proxy_tools = [
-                Dict(
-                    "name" => "proxy_status",
-                    "description" => "Get the status of the MCP proxy server and connected REPL backends",
-                    "inputSchema" => Dict(
-                        "type" => "object",
-                        "properties" => Dict(),
-                        "required" => [],
-                    ),
-                ),
-                Dict(
-                    "name" => "list_agents",
-                    "description" => "List all registered REPL agents and their connection status",
-                    "inputSchema" => Dict(
-                        "type" => "object",
-                        "properties" => Dict(),
-                        "required" => [],
-                    ),
-                ),
-                Dict(
-                    "name" => "dashboard_url",
-                    "description" => "Get the URL to access the monitoring dashboard",
-                    "inputSchema" => Dict(
-                        "type" => "object",
-                        "properties" => Dict(),
-                        "required" => [],
-                    ),
-                ),
-                Dict(
-                    "name" => "start_agent",
-                    "description" => "Start a new Julia REPL agent process for a specific project. The agent will register with the proxy and be available for tool calls.",
-                    "inputSchema" => Dict(
-                        "type" => "object",
-                        "properties" => Dict(
-                            "project_path" => Dict(
-                                "type" => "string",
-                                "description" => "Path to the Julia project directory (containing Project.toml)",
-                            ),
-                            "agent_name" => Dict(
-                                "type" => "string",
-                                "description" => "Optional name for the agent (defaults to project directory name)",
-                            ),
-                        ),
-                        "required" => ["project_path"],
-                    ),
-                ),
-            ]
+            # Get proxy tools from registry
+            proxy_tools = get_proxy_tool_schemas()
 
             if isempty(repls)
                 # No backends - return only proxy tools
@@ -1850,92 +2139,56 @@ function handle_request(http::HTTP.Stream)
             params = get(request, "params", Dict())
             tool_name = get(params, "name", "")
             repls = list_repls()
-            num_repls = length(repls)
 
-            if tool_name == "proxy_status"
-                status_text = "MCP Proxy Status:\n- Port: 3000\n- Connected agents: $num_repls\n- Status: Running\n- Dashboard: http://localhost:3001"
-                if num_repls == 0
-                    status_text *= "\n\nNo backend REPL agents are currently connected. Start a backend REPL to enable Julia tools."
+            # Check if this is a proxy tool
+            if haskey(PROXY_TOOLS, tool_name)
+                tool = PROXY_TOOLS[tool_name]
+                args = get(params, "arguments", Dict())
+
+                # Call tool handler with appropriate context
+                result_text = if tool_name == "help"
+                    tool.handler(args)
+                elseif tool_name in ["proxy_status", "list_julia_sessions"]
+                    tool.handler(args, repls)
+                elseif tool_name == "dashboard_url"
+                    tool.handler(args)
+                elseif tool_name == "start_julia_session"
+                    # Special handling - continue to existing implementation below
+                    nothing
                 else
-                    status_text *= "\n\nConnected agents:\n"
-                    for repl in repls
-                        status_text *= "  - $(repl.id) (port $(repl.port), status: $(repl.status))\n"
-                    end
+                    tool.handler(args)
                 end
-                HTTP.setstatus(http, 200)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => get(request, "id", nothing),
-                            "result" => Dict(
-                                "content" =>
-                                    [Dict("type" => "text", "text" => status_text)],
+
+                # If start_julia_session, continue to existing code
+                if tool_name == "start_julia_session" && result_text === nothing
+                    # Fall through to existing implementation
+                elseif result_text !== nothing
+                    # Return result for other tools
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "result" => Dict(
+                                    "content" => [Dict("type" => "text", "text" => result_text)],
+                                ),
                             ),
                         ),
-                    ),
-                )
-                return nothing
-            elseif tool_name == "list_agents"
-                if isempty(repls)
-                    agent_text = "No REPL agents currently registered.\n\nTo connect a backend REPL:\n1. Start a Julia REPL with MCPRepl\n2. It will automatically register with this proxy\n3. Julia tools will become available"
-                else
-                    agent_text = "Connected REPL agents ($num_repls):\n\n"
-                    for repl in repls
-                        pid_str = repl.pid === nothing ? "N/A" : string(repl.pid)
-                        agent_text *= "**$(repl.id)**\n"
-                        agent_text *= "  - Port: $(repl.port)\n"
-                        agent_text *= "  - PID: $pid_str\n"
-                        agent_text *= "  - Status: $(repl.status)\n"
-                        agent_text *= "  - Last heartbeat: $(repl.last_heartbeat)\n\n"
-                    end
+                    )
+                    return nothing
                 end
-                HTTP.setstatus(http, 200)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => get(request, "id", nothing),
-                            "result" => Dict(
-                                "content" =>
-                                    [Dict("type" => "text", "text" => agent_text)],
-                            ),
-                        ),
-                    ),
-                )
-                return nothing
-            elseif tool_name == "dashboard_url"
-                HTTP.setstatus(http, 200)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => get(request, "id", nothing),
-                            "result" => Dict(
-                                "content" => [
-                                    Dict(
-                                        "type" => "text",
-                                        "text" => "Dashboard URL: http://localhost:3001\n\nThe dashboard provides real-time monitoring of:\n- Connected REPL agents\n- Tool calls and code execution\n- Event logs and metrics\n- Agent status and heartbeats",
-                                    ),
-                                ],
-                            ),
-                        ),
-                    ),
-                )
-                return nothing
-            elseif tool_name == "start_agent"
+            end
+
+            # Handle start_julia_session with special logic
+            if tool_name == "start_julia_session"
                 # Parse arguments
+                args = get(params, "arguments", Dict())
                 project_path = get(args, "project_path", "")
-                agent_name = get(args, "agent_name", basename(project_path))
+                session_name = get(args, "session_name", basename(project_path))
 
                 if isempty(project_path)
                     HTTP.setstatus(http, 200)
@@ -1957,8 +2210,8 @@ function handle_request(http::HTTP.Stream)
                     return nothing
                 end
 
-                # Check if agent already exists
-                existing = findfirst(r -> r.id == agent_name, repls)
+                # Check if Julia session already exists
+                existing = findfirst(r -> r.id == session_name, repls)
                 if existing !== nothing
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
@@ -1973,7 +2226,7 @@ function handle_request(http::HTTP.Stream)
                                     "content" => [
                                         Dict(
                                             "type" => "text",
-                                            "text" => "Agent '$agent_name' is already running on port $(repls[existing].port)",
+                                            "text" => "Julia session '$session_name' is already running on port $(repls[existing].port)",
                                         ),
                                     ],
                                 ),
@@ -1983,24 +2236,37 @@ function handle_request(http::HTTP.Stream)
                     return nothing
                 end
 
-                # Spawn new Julia REPL process
+                # Spawn new Julia session process
                 try
-                    julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=\"$agent_name\")"`
+                    @info "Starting Julia session" project_path = project_path session_id = session_name
 
-                    # Run in background
-                    proc = run(
-                        pipeline(julia_cmd, stdout=devnull, stderr=devnull),
-                        wait=false,
-                    )
+                    # Create log file for session output
+                    log_dir = joinpath(dirname(@__DIR__), "logs")
+                    mkpath(log_dir)
+                    log_file = joinpath(log_dir, "session_$(session_name)_$(round(Int, time())).log")
 
-                    # Wait for agent to register (max 10 seconds)
+                    # Build Julia command - inherit security config from the project itself
+                    # Pass workspace_dir=project_path so it checks for .mcprepl/security.json in the project
+                    # If project has .mcprepl/agents.json with this agent name, it uses that
+                    # Otherwise falls back to .mcprepl/security.json or lax mode with warning
+
+                    julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=$(repr(session_name)), workspace_dir=$(repr(project_path)))"`
+
+                    # Run in background, capture output to log file
+                    proc = run(pipeline(julia_cmd, stdout=log_file, stderr=log_file), wait=false)
+
+                    # Wait for Julia session to register (max 30 seconds to allow for precompilation)
+                    # When agent_name is provided, MCPRepl registers using that name directly
                     registered = false
-                    for i = 1:100
+                    expected_id = session_name
+                    for i = 1:300  # 30 seconds with 0.1s sleep
                         sleep(0.1)
-                        idx = findfirst(r -> r.id == agent_name, repls)
+                        current_repls = list_repls()
+                        # Check for the expected registration ID
+                        idx = findfirst(r -> r.id == expected_id, current_repls)
                         if idx !== nothing
                             registered = true
-                            new_agent = repls[idx]
+                            new_repl = current_repls[idx]
                             HTTP.setstatus(http, 200)
                             HTTP.setheader(http, "Content-Type" => "application/json")
                             HTTP.startwrite(http)
@@ -2014,7 +2280,7 @@ function handle_request(http::HTTP.Stream)
                                             "content" => [
                                                 Dict(
                                                     "type" => "text",
-                                                    "text" => "Successfully started agent '$agent_name' on port $(new_agent.port)\n\nProject: $project_path\nPID: $(new_agent.pid)\nStatus: $(new_agent.status)",
+                                                    "text" => "✅ Successfully started Julia session '$(new_repl.id)' on port $(new_repl.port)\n\nProject: $project_path\nPID: $(new_repl.pid)\nStatus: $(new_repl.status)\nLog: $log_file",
                                                 ),
                                             ],
                                         ),
@@ -2025,7 +2291,20 @@ function handle_request(http::HTTP.Stream)
                         end
                     end
 
-                    # Timeout
+                    # Timeout - read log file for diagnostics
+                    log_contents = ""
+                    try
+                        if isfile(log_file)
+                            log_contents = read(log_file, String)
+                            # Get last 500 characters
+                            if length(log_contents) > 500
+                                log_contents = "..." * log_contents[end-500:end]
+                            end
+                        end
+                    catch
+                        log_contents = "(unable to read log file)"
+                    end
+
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
@@ -2037,13 +2316,14 @@ function handle_request(http::HTTP.Stream)
                                 "id" => get(request, "id", nothing),
                                 "error" => Dict(
                                     "code" => -32603,
-                                    "message" => "Agent process started but did not register within 10 seconds. Check logs for details.",
+                                    "message" => "Julia session process started but did not register within 30 seconds.\n\nLog file: $log_file\n\nRecent output:\n$log_contents",
                                 ),
                             ),
                         ),
                     )
                     return nothing
                 catch e
+                    @error "Failed to start Julia session" exception = (e, catch_backtrace())
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
@@ -2055,7 +2335,7 @@ function handle_request(http::HTTP.Stream)
                                 "id" => get(request, "id", nothing),
                                 "error" => Dict(
                                     "code" => -32603,
-                                    "message" => "Failed to start agent: $(sprint(showerror, e))",
+                                    "message" => "Failed to start REPL backend: $(sprint(showerror, e))",
                                 ),
                             ),
                         ),
@@ -2078,7 +2358,7 @@ function handle_request(http::HTTP.Stream)
                                     "content" => [
                                         Dict(
                                             "type" => "text",
-                                            "text" => "⚠️ Tool '$tool_name' requires a Julia REPL backend.\n\nNo REPL agents are currently connected to the proxy.\n\nTo enable Julia tools:\n1. Start a Julia REPL\n2. Run: using MCPRepl; MCPRepl.start!()\n3. The REPL will automatically register with this proxy\n\nAvailable proxy tools: proxy_status, list_agents, dashboard_url",
+                                            "text" => "⚠️ Tool '$tool_name' requires a Julia session.\n\nNo Julia sessions are currently connected to the proxy.\n\nTo enable Julia tools:\n1. Start a Julia session\n2. Run: using MCPRepl; MCPRepl.start!()\n3. The session will automatically register with this proxy\n\nAvailable proxy tools: help, proxy_status, list_julia_sessions, dashboard_url, start_julia_session",
                                         ),
                                     ],
                                 ),
