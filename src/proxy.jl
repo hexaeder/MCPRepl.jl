@@ -592,8 +592,16 @@ function handle_request(http::HTTP.Stream)
         uri = HTTP.URI(req.target)
         path = uri.path
 
+        # Redirect /dashboard to /dashboard/ (Vite expects trailing slash)
+        if path == "/dashboard"
+            HTTP.setstatus(http, 301)
+            HTTP.setheader(http, "Location" => "/dashboard/")
+            HTTP.startwrite(http)
+            return nothing
+        end
+
         # Dashboard HTML page and static assets (React build or Vite dev server)
-        if (path == "/dashboard" || path == "/dashboard/" || startswith(path, "/dashboard/")) && !startswith(path, "/dashboard/api/")
+        if (path == "/dashboard/" || startswith(path, "/dashboard/")) && !startswith(path, "/dashboard/api/")
             # Try to proxy to Vite dev server first (for HMR during development)
             vite_port = 3001
             try
@@ -602,12 +610,8 @@ function handle_request(http::HTTP.Stream)
                 close(test_conn)
 
                 # Vite is running - proxy the request to it
-                # Strip /dashboard prefix since Vite serves from root
-                vite_path = replace(path, r"^/dashboard" => "")
-                if vite_path == ""
-                    vite_path = "/"
-                end
-                vite_url = "http://localhost:$(vite_port)$(vite_path)"
+                # Keep the full path including /dashboard since Vite is configured with base: '/dashboard/'
+                vite_url = "http://localhost:$(vite_port)$(path)"
                 vite_response = HTTP.get(vite_url, status_exception=false)
 
                 HTTP.setstatus(http, vite_response.status)
@@ -1263,7 +1267,7 @@ Stop the proxy server running on the specified port.
 function stop_server(port::Int=3000)
     # Stop Vite dev server first
     stop_vite_dev_server()
-    
+
     if SERVER[] !== nothing
         # Stop server in current process
         @info "Stopping proxy server"
@@ -1282,7 +1286,7 @@ function stop_server(port::Int=3000)
             end
             remove_pid_file(port)
         end
-        
+
         # Also kill any process listening on the port (in case PID file is stale)
         try
             if !Sys.iswindows()
@@ -1292,7 +1296,7 @@ function stop_server(port::Int=3000)
                 for pid_str in pids
                     if !isempty(pid_str)
                         pid_num = parse(Int, pid_str)
-                        @info "Killing process on port $port" pid=pid_num
+                        @info "Killing process on port $port" pid = pid_num
                         run(`kill $pid_num`, wait=false)
                     end
                 end
@@ -1301,7 +1305,7 @@ function stop_server(port::Int=3000)
             # Port might not be in use, that's okay
             @debug "No additional processes found on port $port"
         end
-        
+
         if pid === nothing && !is_server_running(port)
             @info "No proxy server found on port $port"
         end
