@@ -570,10 +570,10 @@ export const App: React.FC = () => {
                                     View startup and runtime logs for Julia sessions. Click any session card to view its logs,
                                     or use the dropdown below to access logs from previously ended sessions.
                                 </p>
-                                
+
                                 <div className="logs-controls">
-                                    <select 
-                                        value={logSessionId || ''} 
+                                    <select
+                                        value={logSessionId || ''}
                                         onChange={(e) => {
                                             const sessionId = e.target.value;
                                             setLogSessionId(sessionId);
