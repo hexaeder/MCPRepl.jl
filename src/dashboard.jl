@@ -25,9 +25,9 @@ using Scratch
     HEARTBEAT
 end
 
-# Structure for agent events
+# Structure for session events
 struct AgentEvent
-    id::String              # REPL/Agent ID
+    id::String              # Session ID
     event_type::EventType
     timestamp::DateTime
     data::Dict{String,Any}
@@ -46,7 +46,7 @@ const WS_CLIENTS_LOCK = ReentrantLock()
 """
     log_event(id::String, event_type::EventType, data::Dict; duration_ms=nothing)
 
-Log an agent event and broadcast to connected dashboard clients.
+Log a session event and broadcast to connected dashboard clients.
 """
 function log_event(id::String, event_type::EventType, data::Dict; duration_ms = nothing)
     event = AgentEvent(id, event_type, now(), data, duration_ms)
@@ -93,7 +93,7 @@ end
 """
     get_events(; id=nothing, limit=100)
 
-Retrieve recent events, optionally filtered by agent ID.
+Retrieve recent events, optionally filtered by session ID.
 """
 function get_events(; id = nothing, limit = 100)
     lock(EVENT_LOG_LOCK) do

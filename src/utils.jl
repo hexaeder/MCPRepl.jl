@@ -9,7 +9,7 @@ This function provides a cross-platform way to check process existence:
 - On Windows: Uses `tasklist` command
 - On Unix/Linux/macOS: Uses `kill -0` signal check
 
-Useful for supervisor health monitoring of agent processes.
+Useful for supervisor health monitoring of Julia sessions.
 
 # Examples
 ```julia
