@@ -1,18 +1,66 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchAgents, fetchEvents, subscribeToEvents } from './api';
-import { Agent, AgentEvent } from './types';
-import { AgentCard } from './components/AgentCard';
+import { fetchSessions, fetchEvents, subscribeToEvents, fetchTools, callTool, fetchLogs, fetchDirectories, ToolSchema, ToolsResponse } from './api';
+import { Session, SessionEvent } from './types';
+import { SessionCard } from './components/SessionCard';
 import { MetricCard } from './components/MetricCard';
 import { JsonViewer } from '@textea/json-viewer';
 import './App.css';
 
+// Convert ANSI escape codes to HTML with colors
+const convertAnsiToHtml = (text: string): string => {
+    // Handle carriage returns (\r) - keep only the last segment on each line
+    let html = text.split('\n').map(line => {
+        const segments = line.split('\r');
+        return segments[segments.length - 1]; // Keep only the final rewrite
+    }).join('\n');
+
+    // Remove cursor movement and clear codes
+    html = html
+        .replace(/\x1b\[K/g, '')
+        .replace(/\x1b\[[0-9;]*[ABCDEFGJKST]/g, '');
+
+    // ANSI color map
+    const colors: Record<string, string> = {
+        '30': '#000000', '31': '#cd3131', '32': '#0dbc79', '33': '#e5e510',
+        '34': '#2472c8', '35': '#bc3fbc', '36': '#11a8cd', '37': '#e5e5e5',
+        '90': '#666666', '91': '#f14c4c', '92': '#23d18b', '93': '#f5f543',
+        '94': '#3b8eea', '95': '#d670d6', '96': '#29b8db', '97': '#ffffff',
+    };
+
+    // Handle basic ANSI codes
+    html = html.replace(/\x1b\[([0-9;]+)m/g, (_match, codes) => {
+        const parts = codes.split(';');
+        let styles: string[] = [];
+
+        for (const code of parts) {
+            if (code === '0' || code === '') {
+                return '</span>';
+            } else if (code === '1') {
+                styles.push('font-weight: bold');
+            } else if (colors[code]) {
+                styles.push(`color: ${colors[code]}`);
+            } else if (code.startsWith('38;5;')) {
+                // 256 color support
+                const colorNum = parseInt(code.split(';')[2]);
+                if (colorNum === 24) styles.push('color: #076678');
+                else styles.push(`color: rgb(${colorNum}, ${colorNum}, ${colorNum})`);
+            }
+        }
+
+        return styles.length > 0 ? `<span style="${styles.join('; ')}">` : '';
+    });
+
+    // Escape HTML but preserve our spans
+    return html;
+};
+
 export const App: React.FC = () => {
-    const [agents, setAgents] = useState<Record<string, Agent>>({});
-    const [events, setEvents] = useState<AgentEvent[]>([]);
-    const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-    const [activeTab, setActiveTab] = useState<'overview' | 'events' | 'terminal'>('overview');
+    const [sessions, setSessions] = useState<Record<string, Session>>({});
+    const [events, setEvents] = useState<SessionEvent[]>([]);
+    const [selectedSession, setSelectedSession] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState<'overview' | 'events' | 'terminal' | 'tools' | 'logs'>('overview');
     const [eventFilter, setEventFilter] = useState<string>('interesting');
-    const [selectedEvent, setSelectedEvent] = useState<AgentEvent | null>(null);
+    const [selectedEvent, setSelectedEvent] = useState<SessionEvent | null>(null);
     const terminalRef = useRef<HTMLDivElement>(null);
     const terminalBottomRef = useRef<HTMLDivElement>(null);
     const [isNearBottom, setIsNearBottom] = useState(true);
@@ -22,15 +70,37 @@ export const App: React.FC = () => {
     const [proxyPid, setProxyPid] = useState<number | null>(null);
     const [proxyPort, setProxyPort] = useState<number | null>(null);
     const [proxyVersion, setProxyVersion] = useState<string>('loading...');
+    const [tools, setTools] = useState<ToolsResponse | null>(null);
+    const [selectedToolSession, setSelectedToolSession] = useState<string | null>(null);
+    const [selectedTool, setSelectedTool] = useState<ToolSchema | null>(null);
+    const [toolParams, setToolParams] = useState<Record<string, any>>({});
+    const [toolResult, setToolResult] = useState<any>(null);
+    const [toolExecuting, setToolExecuting] = useState(false);
+    const [logContent, setLogContent] = useState<string>('');
+    const [logSessionId, setLogSessionId] = useState<string | null>(null);
+    const [autoRefreshLogs, setAutoRefreshLogs] = useState(false);
+    const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
+    const [isJuliaProject, setIsJuliaProject] = useState<boolean>(false);
+
+    useEffect(() => {
+        if (autoRefreshLogs && activeTab === 'logs' && logSessionId) {
+            const interval = setInterval(() => {
+                fetchLogs(logSessionId).then(data => {
+                    if (data.content) setLogContent(data.content);
+                });
+            }, 2000);
+            return () => clearInterval(interval);
+        }
+    }, [autoRefreshLogs, activeTab, logSessionId]);
 
     useEffect(() => {
         const loadInitialData = async () => {
             try {
-                const [agentsData, eventsData] = await Promise.all([
-                    fetchAgents(),
+                const [sessionsData, eventsData] = await Promise.all([
+                    fetchSessions(),
                     fetchEvents(undefined, 1000)
                 ]);
-                setAgents(agentsData);
+                setSessions(sessionsData);
                 setEvents(eventsData);
 
                 // Fetch proxy info
@@ -41,6 +111,10 @@ export const App: React.FC = () => {
                     setProxyPort(proxyInfo.port);
                     setProxyVersion(proxyInfo.version || 'unknown');
                 }
+
+                // Fetch tools
+                const toolsData = await fetchTools();
+                setTools(toolsData);
             } catch (error) {
                 console.error('Failed to load initial data:', error);
             }
@@ -48,15 +122,15 @@ export const App: React.FC = () => {
 
         loadInitialData();
 
-        // Poll for agents updates (less frequently)
+        // Poll for agents updates more frequently to catch status changes
         const agentsInterval = setInterval(async () => {
             try {
-                const agentsData = await fetchAgents();
-                setAgents(agentsData);
+                const sessionsData = await fetchSessions();
+                setSessions(sessionsData);
             } catch (error) {
                 console.error('Failed to refresh agents:', error);
             }
-        }, 2000);
+        }, 500); // Poll every 500ms to catch rapid status changes
 
         // Subscribe to event stream
         const unsubscribe = subscribeToEvents((newEvent) => {
@@ -100,7 +174,7 @@ export const App: React.FC = () => {
         }
     };
 
-    const agentCount = Object.keys(agents).length;
+    const sessionCount = Object.keys(sessions).length;
     const eventCount = events.filter(e => e.type !== 'HEARTBEAT').length;
     const [startTime] = React.useState(new Date());
     const [uptime, setUptime] = React.useState('0s');
@@ -146,7 +220,7 @@ export const App: React.FC = () => {
                 <div className="header-stats">
                     <div className="stat">
                         <span className="stat-label">AGENTS</span>
-                        <span className="stat-value" id="header-agents">{agentCount}</span>
+                        <span className="stat-value" id="header-agents">{sessionCount}</span>
                     </div>
                     <div className="stat">
                         <span className="stat-label">EVENTS</span>
@@ -182,7 +256,7 @@ export const App: React.FC = () => {
                                 </div>
                                 <div className="info-row">
                                     <span className="info-label">Active Agents</span>
-                                    <span className="info-value">{Object.values(agents).filter(a => a.status === 'ready').length} / {agentCount}</span>
+                                    <span className="info-value">{Object.values(sessions).filter(a => a.status === 'ready').length} / {sessionCount}</span>
                                 </div>
                                 <div className="info-row">
                                     <span className="info-label">Total Events</span>
@@ -211,7 +285,7 @@ export const App: React.FC = () => {
                         </div>
                         <div className="modal-body">
                             <p className="confirm-message">
-                                Are you sure you want to shut down the proxy server? All active agent connections will be terminated.
+                                Are you sure you want to shut down the proxy server? All active session connections will be terminated.
                             </p>
                         </div>
                         <div className="modal-footer">
@@ -225,16 +299,24 @@ export const App: React.FC = () => {
             <div className="main-container">
                 <aside className="sidebar">
                     <div className="sidebar-header">
-                        <h2>Agents</h2>
-                        <span className="agent-count">{agentCount}</span>
+                        <h2>Sessions</h2>
+                        <span className="session-count">{sessionCount}</span>
                     </div>
-                    <div className="agent-list">
-                        {Object.entries(agents).map(([id, agent]) => (
-                            <AgentCard
+                    <div className="session-list">
+                        {Object.entries(sessions).map(([id, session]) => (
+                            <SessionCard
                                 key={id}
-                                agent={agent}
-                                isSelected={selectedAgent === id}
-                                onClick={() => setSelectedAgent(id)}
+                                session={session}
+                                isSelected={selectedSession === id}
+                                onClick={() => {
+                                    setSelectedSession(id);
+                                    setActiveTab('logs');
+                                    setLogSessionId(id);
+                                    fetchLogs(id).then(data => {
+                                        if (data.content) setLogContent(data.content);
+                                        else if (data.error) setLogContent(`Error: ${data.error}`);
+                                    });
+                                }}
                             />
                         ))}
                     </div>
@@ -260,6 +342,31 @@ export const App: React.FC = () => {
                         >
                             Terminal
                         </button>
+                        <button
+                            className={`tab ${activeTab === 'tools' ? 'active' : ''}`}
+                            onClick={() => {
+                                setActiveTab('tools');
+                                if (!tools) {
+                                    fetchTools().then(setTools);
+                                }
+                            }}
+                        >
+                            🛠️ Tools
+                        </button>
+                        <button
+                            className={`tab ${activeTab === 'logs' ? 'active' : ''}`}
+                            onClick={() => {
+                                setActiveTab('logs');
+                                if (!logSessionId && selectedSession) {
+                                    setLogSessionId(selectedSession);
+                                    fetchLogs(selectedSession).then(data => {
+                                        if (data.content) setLogContent(data.content);
+                                    });
+                                }
+                            }}
+                        >
+                            📋 Logs
+                        </button>
                     </div>
 
                     <div className="view-container">
@@ -269,13 +376,13 @@ export const App: React.FC = () => {
                                 <div className="metrics-grid">
                                     <MetricCard
                                         icon="👥"
-                                        label="Total Agents"
-                                        value={agentCount}
+                                        label="Total Sessions"
+                                        value={sessionCount}
                                     />
                                     <MetricCard
                                         icon="⚡"
                                         label="Active Agents"
-                                        value={Object.values(agents).filter(a => a.status === 'ready').length}
+                                        value={Object.values(sessions).filter(a => a.status === 'ready').length}
                                     />
                                     <MetricCard
                                         icon="📊"
@@ -336,7 +443,7 @@ export const App: React.FC = () => {
                                             <div key={idx} className={`event event-${event.type.toLowerCase()}`} onClick={() => setSelectedEvent(event)}>
                                                 <div className="event-type">{event.type}</div>
                                                 <div className="event-header">
-                                                    <span className="event-agent">{event.id}</span>
+                                                    <span className="event-session">{event.id}</span>
                                                     <span className="event-time">{event.timestamp}</span>
                                                     {event.duration_ms && (
                                                         <span className="event-duration">{event.duration_ms.toFixed(2)}ms</span>
@@ -365,9 +472,9 @@ export const App: React.FC = () => {
                                 </div>
                                 <div className="terminal">
                                     <div className="terminal-output" ref={terminalRef} onScroll={handleTerminalScroll}>
-                                        {selectedAgent ? (
+                                        {selectedSession ? (
                                             events
-                                                .filter(e => e.id === selectedAgent && e.type !== 'HEARTBEAT')
+                                                .filter(e => e.id === selectedSession && e.type !== 'HEARTBEAT')
                                                 .slice(-1000)
                                                 .filter(event => {
                                                     if (!terminalSearch) return true;
@@ -431,10 +538,10 @@ export const App: React.FC = () => {
                                                                         <span className="terminal-error">ERROR: {event.data.message || JSON.stringify(event.data)}</span>
                                                                     </>
                                                                 );
-                                                            case 'AGENT_START':
-                                                                return <span className="terminal-info">→ Agent started on port {event.data.port}</span>;
-                                                            case 'AGENT_STOP':
-                                                                return <span className="terminal-info">→ Agent stopped</span>;
+                                                            case 'SESSION_START':
+                                                                return <span className="terminal-info">→ Session started on port {event.data.port}</span>;
+                                                            case 'SESSION_STOP':
+                                                                return <span className="terminal-info">→ Session stopped</span>;
                                                             default:
                                                                 return <span className="terminal-default">{JSON.stringify(event.data)}</span>;
                                                         }
@@ -448,16 +555,454 @@ export const App: React.FC = () => {
                                                     );
                                                 })
                                         ) : (
-                                            <div className="log-placeholder">← Select an agent from the sidebar to view its REPL activity</div>
+                                            <div className="log-placeholder">← Select a session from the sidebar to view its REPL activity</div>
                                         )}
                                         <div ref={terminalBottomRef} />
                                     </div>
                                 </div>
                             </div>
                         )}
+
+                        {activeTab === 'logs' && (
+                            <div className="view active" id="logs-view">
+                                <h2>📋 Session Logs</h2>
+                                <p className="view-description">
+                                    View startup and runtime logs for Julia sessions. Click any session card to view its logs,
+                                    or use the dropdown below to access logs from previously ended sessions.
+                                </p>
+                                
+                                <div className="logs-controls">
+                                    <select 
+                                        value={logSessionId || ''} 
+                                        onChange={(e) => {
+                                            const sessionId = e.target.value;
+                                            setLogSessionId(sessionId);
+                                            if (sessionId) {
+                                                fetchLogs(sessionId).then(data => {
+                                                    if (data.content) setLogContent(data.content);
+                                                    else if (data.error) setLogContent(`Error: ${data.error}`);
+                                                });
+                                            }
+                                        }}
+                                        className="log-session-select"
+                                    >
+                                        <option value="">Select a session...</option>
+                                        {Object.keys(sessions).map(sessionId => (
+                                            <option key={sessionId} value={sessionId}>{sessionId}</option>
+                                        ))}
+                                    </select>                                    <label className="auto-refresh-label">
+                                        <input
+                                            type="checkbox"
+                                            checked={autoRefreshLogs}
+                                            onChange={(e) => setAutoRefreshLogs(e.target.checked)}
+                                        />
+                                        Auto-refresh (2s)
+                                    </label>
+
+                                    <button
+                                        onClick={() => {
+                                            if (logSessionId) {
+                                                fetchLogs(logSessionId).then(data => {
+                                                    if (data.content) setLogContent(data.content);
+                                                    else if (data.error) setLogContent(`Error: ${data.error}`);
+                                                });
+                                            }
+                                        }}
+                                        className="refresh-logs-btn"
+                                        disabled={!logSessionId}
+                                    >
+                                        🔄 Refresh
+                                    </button>
+                                </div>
+
+                                <div className="logs-viewer">
+                                    <pre className="log-content" dangerouslySetInnerHTML={{
+                                        __html: logContent ? convertAnsiToHtml(logContent) : 'Select a session to view logs'
+                                    }} />
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'tools' && (
+                            <div className="view active" id="tools-view">
+                                <h2>🛠️ Tools Explorer</h2>
+                                <p className="view-description">Browse and learn about available MCP tools</p>
+
+                                <div className="tools-selector">
+                                    <button
+                                        className={`tools-tab ${selectedToolSession === null ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setSelectedToolSession(null);
+                                            fetchTools().then(setTools);
+                                        }}
+                                    >
+                                        Proxy Tools
+                                    </button>
+                                    {Object.keys(sessions).map(sessionId => (
+                                        <button
+                                            key={sessionId}
+                                            className={`tools-tab ${selectedToolSession === sessionId ? 'active' : ''}`}
+                                            onClick={() => {
+                                                setSelectedToolSession(sessionId);
+                                                fetchTools(sessionId).then(setTools);
+                                            }}
+                                        >
+                                            {sessionId} Tools
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {tools && (
+                                    <div className="tools-grid">
+                                        {selectedToolSession === null ? (
+                                            // Show proxy tools
+                                            tools.proxy_tools.map((tool: ToolSchema) => (
+                                                <div key={tool.name} className="tool-card" onClick={() => setSelectedTool(tool)}>
+                                                    <div className="tool-header">
+                                                        <h3 className="tool-name">🔧 {tool.name}</h3>
+                                                        <span className="tool-badge proxy-badge">Proxy</span>
+                                                    </div>
+                                                    <p className="tool-description">{tool.description}</p>
+
+                                                    {tool.inputSchema?.properties && Object.keys(tool.inputSchema.properties).length > 0 && (
+                                                        <div className="tool-params">
+                                                            <h4>Parameters:</h4>
+                                                            <ul>
+                                                                {Object.entries(tool.inputSchema.properties).map(([name, schema]: [string, any]) => (
+                                                                    <li key={name}>
+                                                                        <code className="param-name">{name}</code>
+                                                                        {tool.inputSchema.required?.includes(name) && <span className="required">*</span>}
+                                                                        {schema.type && <span className="param-type">({schema.type})</span>}
+                                                                        {schema.description && <p className="param-desc">{schema.description}</p>}
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))
+                                        ) : (
+                                            // Show agent tools
+                                            tools.session_tools[selectedToolSession]?.map((tool: ToolSchema) => (
+                                                <div key={tool.name} className="tool-card" onClick={() => setSelectedTool(tool)}>
+                                                    <div className="tool-header">
+                                                        <h3 className="tool-name">⚡ {tool.name}</h3>
+                                                        <span className="tool-badge agent-badge">Julia</span>
+                                                    </div>
+                                                    <p className="tool-description">{tool.description}</p>
+
+                                                    {tool.inputSchema?.properties && Object.keys(tool.inputSchema.properties).length > 0 && (
+                                                        <div className="tool-params">
+                                                            <h4>Parameters:</h4>
+                                                            <ul>
+                                                                {Object.entries(tool.inputSchema.properties).map(([name, schema]: [string, any]) => (
+                                                                    <li key={name}>
+                                                                        <code className="param-name">{name}</code>
+                                                                        {tool.inputSchema.required?.includes(name) && <span className="required">*</span>}
+                                                                        {schema.type && <span className="param-type">({schema.type})</span>}
+                                                                        {schema.description && <p className="param-desc">{schema.description}</p>}
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </main>
             </div>
+
+            {selectedTool && (
+                <div className="modal-overlay" onClick={() => { setSelectedTool(null); setToolParams({}); setToolResult(null); }}>
+                    <div className="modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Tool Details: {selectedTool.name}</h2>
+                            <button className="modal-close" onClick={() => { setSelectedTool(null); setToolParams({}); setToolResult(null); }}>×</button>
+                        </div>
+                        <div className="modal-content">
+                            <div className="detail-row">
+                                <span className="detail-label">Name:</span>
+                                <span className="detail-value"><code>{selectedTool.name}</code></span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Description:</span>
+                                <span className="detail-value">{selectedTool.description}</span>
+                            </div>
+
+                            {selectedTool.inputSchema?.properties && Object.keys(selectedTool.inputSchema.properties).length > 0 && (
+                                <div className="tool-test-section">
+                                    <h3>Test Tool</h3>
+                                    <div className="tool-params-form">
+                                        {Object.entries(selectedTool.inputSchema.properties).map(([name, schema]: [string, any]) => (
+                                            <div key={name} className="param-input-group">
+                                                <label>
+                                                    {name}
+                                                    {selectedTool.inputSchema.required?.includes(name) && <span className="required">*</span>}
+                                                    <span className="param-type">({schema.type})</span>
+                                                </label>
+                                                {schema.description && <p className="param-help">{schema.description}</p>}
+                                                {schema.type === 'boolean' ? (
+                                                    <select
+                                                        value={toolParams[name] ?? ''}
+                                                        onChange={(e) => setToolParams({ ...toolParams, [name]: e.target.value === 'true' })}
+                                                        className="param-input"
+                                                    >
+                                                        <option value="">Select...</option>
+                                                        <option value="true">true</option>
+                                                        <option value="false">false</option>
+                                                    </select>
+                                                ) : schema.type === 'number' || schema.type === 'integer' ? (
+                                                    <input
+                                                        type="number"
+                                                        value={toolParams[name] ?? ''}
+                                                        onChange={(e) => setToolParams({ ...toolParams, [name]: e.target.valueAsNumber })}
+                                                        className="param-input"
+                                                        placeholder={`Enter ${name}...`}
+                                                    />
+                                                ) : name === 'project_path' || name.includes('path') || name.includes('directory') || name.includes('dir') ? (
+                                                    <>
+                                                        <input
+                                                            type="text"
+                                                            value={toolParams[name] ?? ''}
+                                                            onChange={async (e) => {
+                                                                const value = e.target.value;
+                                                                setToolParams({ ...toolParams, [name]: value });
+
+                                                                // Fetch directory suggestions and check if Julia project
+                                                                if (value.length > 0) {
+                                                                    try {
+                                                                        const result = await fetchDirectories(value);
+                                                                        setPathSuggestions(result.directories || []);
+                                                                        setIsJuliaProject(result.is_julia_project || false);
+                                                                    } catch (err) {
+                                                                        console.error('Failed to fetch directories:', err);
+                                                                    }
+                                                                } else {
+                                                                    setIsJuliaProject(false);
+                                                                }
+                                                            }}
+                                                            onBlur={async (e) => {
+                                                                // Auto-populate session_name when project_path loses focus
+                                                                // Only if it's a valid Julia project (has Project.toml)
+                                                                if (name === 'project_path' && selectedTool?.name === 'start_julia_session') {
+                                                                    const value = e.target.value;
+                                                                    if (value && !toolParams['session_name']) {
+                                                                        // Re-check if this is actually a Julia project before populating
+                                                                        try {
+                                                                            const result = await fetchDirectories(value);
+                                                                            if (result.is_julia_project) {
+                                                                                let projectName = value.split('/').filter(p => p.length > 0).pop() || '';
+                                                                                // Strip .jl extension if present
+                                                                                if (projectName.endsWith('.jl')) {
+                                                                                    projectName = projectName.slice(0, -3);
+                                                                                }
+                                                                                if (projectName) {
+                                                                                    setToolParams({ ...toolParams, [name]: value, 'session_name': projectName });
+                                                                                }
+                                                                            }
+                                                                        } catch (err) {
+                                                                            console.error('Failed to verify Julia project:', err);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }}
+                                                            onKeyDown={async (e) => {
+                                                                if (e.key === 'Tab') {
+                                                                    e.preventDefault();
+
+                                                                    // If we have suggestions, complete to first suggestion
+                                                                    if (pathSuggestions.length > 0) {
+                                                                        const firstSuggestion = pathSuggestions[0];
+                                                                        const newParams = { ...toolParams, [name]: firstSuggestion + '/' };
+
+                                                                        setToolParams(newParams);
+
+                                                                        // Fetch next level of suggestions
+                                                                        try {
+                                                                            const result = await fetchDirectories(firstSuggestion + '/');
+                                                                            setPathSuggestions(result.directories || []);
+                                                                            setIsJuliaProject(result.is_julia_project || false);
+
+                                                                            // Only auto-populate session_name if this completed path is a Julia project
+                                                                            if (name === 'project_path' && selectedTool?.name === 'start_julia_session' && result.is_julia_project && !toolParams['session_name']) {
+                                                                                let projectName = firstSuggestion.split('/').filter(p => p.length > 0).pop() || '';
+                                                                                // Strip .jl extension if present
+                                                                                if (projectName.endsWith('.jl')) {
+                                                                                    projectName = projectName.slice(0, -3);
+                                                                                }
+                                                                                if (projectName) {
+                                                                                    setToolParams({ ...newParams, 'session_name': projectName });
+                                                                                }
+                                                                            }
+                                                                        } catch (err) {
+                                                                            console.error('Failed to fetch directories:', err);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className={`param-input ${isJuliaProject ? 'julia-project-valid' : ''}`}
+                                                            placeholder={`Enter ${name}...`}
+                                                            list={`${name}-suggestions`}
+                                                        />
+                                                        <datalist id={`${name}-suggestions`}>
+                                                            {pathSuggestions.map((dir, idx) => (
+                                                                <option key={idx} value={dir} />
+                                                            ))}
+                                                        </datalist>
+                                                        {pathSuggestions.length > 0 && (
+                                                            <div className="path-suggestions-hint">
+                                                                Press Tab to complete • {pathSuggestions.length} matches
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <input
+                                                        type="text"
+                                                        value={toolParams[name] ?? ''}
+                                                        onChange={(e) => setToolParams({ ...toolParams, [name]: e.target.value })}
+                                                        className="param-input"
+                                                        placeholder={`Enter ${name}...`}
+                                                    />
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button
+                                        className="tool-execute-btn"
+                                        disabled={toolExecuting}
+                                        onClick={async () => {
+                                            setToolExecuting(true);
+                                            setToolResult(null);
+                                            try {
+                                                const result = await callTool({
+                                                    tool: selectedTool.name,
+                                                    arguments: toolParams,
+                                                    sessionId: selectedToolSession ?? undefined
+                                                });
+                                                setToolResult(result);
+                                            } catch (error) {
+                                                setToolResult({ error: String(error) });
+                                            } finally {
+                                                setToolExecuting(false);
+                                            }
+                                        }}
+                                    >
+                                        {toolExecuting ? 'Executing...' : '▶ Try it'}
+                                    </button>
+                                </div>
+                            )}
+
+                            {!selectedTool.inputSchema?.properties || Object.keys(selectedTool.inputSchema.properties).length === 0 && (
+                                <div className="tool-test-section">
+                                    <h3>Test Tool</h3>
+                                    <p className="param-help">This tool takes no parameters.</p>
+                                    <button
+                                        className="tool-execute-btn"
+                                        disabled={toolExecuting}
+                                        onClick={async () => {
+                                            setToolExecuting(true);
+                                            setToolResult(null);
+                                            try {
+                                                const result = await callTool({
+                                                    tool: selectedTool.name,
+                                                    arguments: {},
+                                                    sessionId: selectedToolSession ?? undefined
+                                                });
+                                                setToolResult(result);
+                                            } catch (error) {
+                                                setToolResult({ error: String(error) });
+                                            } finally {
+                                                setToolExecuting(false);
+                                            }
+                                        }}
+                                    >
+                                        {toolExecuting ? 'Executing...' : '▶ Try it'}
+                                    </button>
+                                </div>
+                            )}
+
+                            {toolResult && (
+                                <div className="tool-result-section">
+                                    <h3>{toolResult.error ? '❌ Error' : '✓ Result'}</h3>
+                                    {toolResult.error ? (
+                                        <div className="json-tree">
+                                            <JsonViewer
+                                                value={toolResult.error}
+                                                theme="dark"
+                                                defaultInspectDepth={3}
+                                                displayDataTypes={false}
+                                                rootName="error"
+                                            />
+                                        </div>
+                                    ) : toolResult.result?.content ? (
+                                        <>
+                                            {toolResult.result.content.map((item: any, idx: number) => (
+                                                <div key={idx} className="result-content">
+                                                    {item.type === 'text' ? (
+                                                        <pre className="result-text">{item.text}</pre>
+                                                    ) : (
+                                                        <div className="json-tree">
+                                                            <JsonViewer
+                                                                value={item}
+                                                                theme="dark"
+                                                                defaultInspectDepth={3}
+                                                                displayDataTypes={false}
+                                                                rootName={`content[${idx}]`}
+                                                            />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            <details className="raw-response">
+                                                <summary>Show raw response</summary>
+                                                <div className="json-tree">
+                                                    <JsonViewer
+                                                        value={toolResult}
+                                                        theme="dark"
+                                                        defaultInspectDepth={3}
+                                                        displayDataTypes={false}
+                                                        rootName="response"
+                                                    />
+                                                </div>
+                                            </details>
+                                        </>
+                                    ) : (
+                                        <div className="json-tree">
+                                            <JsonViewer
+                                                value={toolResult}
+                                                theme="dark"
+                                                defaultInspectDepth={3}
+                                                displayDataTypes={false}
+                                                rootName="response"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {selectedTool.inputSchema && (
+                                <div className="detail-row detail-data">
+                                    <span className="detail-label">Input Schema:</span>
+                                    <div className="detail-value json-tree">
+                                        <JsonViewer
+                                            value={selectedTool.inputSchema}
+                                            theme="dark"
+                                            defaultInspectDepth={2}
+                                            displayDataTypes={true}
+                                            rootName="inputSchema"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {selectedEvent && (
                 <div className="modal-overlay" onClick={() => setSelectedEvent(null)}>
