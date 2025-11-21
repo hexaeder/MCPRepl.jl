@@ -772,60 +772,123 @@ function handle_request(http::HTTP.Stream)
             )))
             return nothing
         elseif method == "tools/list"
-            # Return minimal proxy tools if no backend, or aggregate tools from all backends
+            # Always include proxy management tools, plus backend tools if available
             repls = list_repls()
             @info "tools/list handling" num_repls = length(repls) repl_ids = [r.id for r in repls]
+
+            # Start with proxy tools (always available)
+            proxy_tools = [
+                Dict(
+                    "name" => "proxy_status",
+                    "description" => "Get the status of the MCP proxy server and connected REPL backends",
+                    "inputSchema" => Dict(
+                        "type" => "object",
+                        "properties" => Dict(),
+                        "required" => []
+                    )
+                ),
+                Dict(
+                    "name" => "list_agents",
+                    "description" => "List all registered REPL agents and their connection status",
+                    "inputSchema" => Dict(
+                        "type" => "object",
+                        "properties" => Dict(),
+                        "required" => []
+                    )
+                ),
+                Dict(
+                    "name" => "dashboard_url",
+                    "description" => "Get the URL to access the monitoring dashboard",
+                    "inputSchema" => Dict(
+                        "type" => "object",
+                        "properties" => Dict(),
+                        "required" => []
+                    )
+                )
+            ]
+
             if isempty(repls)
-                # No backends - return minimal proxy management tools
+                # No backends - return only proxy tools
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
                 write(http, JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => get(request, "id", nothing),
-                    "result" => Dict("tools" => [
-                        Dict(
-                            "name" => "proxy_status",
-                            "description" => "Get the status of the MCP proxy server and connected REPL backends",
-                            "inputSchema" => Dict(
-                                "type" => "object",
-                                "properties" => Dict(),
-                                "required" => []
-                            )
-                        ),
-                        Dict(
-                            "name" => "list_agents",
-                            "description" => "List all registered REPL agents and their connection status",
-                            "inputSchema" => Dict(
-                                "type" => "object",
-                                "properties" => Dict(),
-                                "required" => []
-                            )
-                        ),
-                        Dict(
-                            "name" => "dashboard_url",
-                            "description" => "Get the URL to access the monitoring dashboard",
-                            "inputSchema" => Dict(
-                                "type" => "object",
-                                "properties" => Dict(),
-                                "required" => []
-                            )
-                        )
-                    ])
+                    "result" => Dict("tools" => proxy_tools)
                 )))
                 return nothing
             else
-                # Proxy to first available backend
+                # Fetch backend tools and combine with proxy tools
+                # Forward request to first available backend
                 request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
-                route_to_repl_streaming(request_dict, req, http)
+                target_id = first(repls).id
+                repl = get_repl(target_id)
+
+                if repl !== nothing && repl.status == :ready
+                    # Try to get tools from backend
+                    try
+                        backend_url = "http://127.0.0.1:$(repl.port)/"
+                        body_str = JSON.json(request)
+                        backend_response = HTTP.request(
+                            "POST",
+                            backend_url,
+                            ["Content-Type" => "application/json"],
+                            body_str;
+                            readtimeout=5,
+                            connect_timeout=2,
+                            status_exception=false
+                        )
+
+                        if backend_response.status == 200
+                            backend_data = JSON.parse(String(backend_response.body))
+                            if haskey(backend_data, "result") && haskey(backend_data["result"], "tools")
+                                # Combine proxy tools + backend tools
+                                all_tools = vcat(proxy_tools, backend_data["result"]["tools"])
+                                HTTP.setstatus(http, 200)
+                                HTTP.setheader(http, "Content-Type" => "application/json")
+                                HTTP.startwrite(http)
+                                write(http, JSON.json(Dict(
+                                    "jsonrpc" => "2.0",
+                                    "id" => get(request, "id", nothing),
+                                    "result" => Dict("tools" => all_tools)
+                                )))
+                                return nothing
+                            end
+                        end
+                    catch e
+                        @warn "Failed to fetch backend tools, returning proxy tools only" exception = e
+                    end
+                end
+
+                # Fallback: return only proxy tools if backend fetch failed
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "result" => Dict("tools" => proxy_tools)
+                )))
                 return nothing
             end
         elseif method == "tools/call"
-            # Handle proxy-level tools when no backend is available
+            # Handle proxy-level tools (always available)
             params = get(request, "params", Dict())
             tool_name = get(params, "name", "")
+            repls = list_repls()
+            num_repls = length(repls)
 
             if tool_name == "proxy_status"
+                status_text = "MCP Proxy Status:\n- Port: 3000\n- Connected agents: $num_repls\n- Status: Running\n- Dashboard: http://localhost:3001"
+                if num_repls == 0
+                    status_text *= "\n\nNo backend REPL agents are currently connected. Start a backend REPL to enable Julia tools."
+                else
+                    status_text *= "\n\nConnected agents:\n"
+                    for repl in repls
+                        status_text *= "  - $(repl.id) (port $(repl.port), status: $(repl.status))\n"
+                    end
+                end
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
@@ -835,12 +898,25 @@ function handle_request(http::HTTP.Stream)
                     "result" => Dict(
                         "content" => [Dict(
                             "type" => "text",
-                            "text" => "MCP Proxy Status:\n- Port: 3000\n- Connected agents: 0\n- Status: Running\n- Dashboard: http://localhost:3001\n\nNo backend REPL agents are currently connected. Start a backend REPL to enable Julia tools."
+                            "text" => status_text
                         )]
                     )
                 )))
                 return nothing
             elseif tool_name == "list_agents"
+                if isempty(repls)
+                    agent_text = "No REPL agents currently registered.\n\nTo connect a backend REPL:\n1. Start a Julia REPL with MCPRepl\n2. It will automatically register with this proxy\n3. Julia tools will become available"
+                else
+                    agent_text = "Connected REPL agents ($num_repls):\n\n"
+                    for repl in repls
+                        pid_str = repl.pid === nothing ? "N/A" : string(repl.pid)
+                        agent_text *= "**$(repl.id)**\n"
+                        agent_text *= "  - Port: $(repl.port)\n"
+                        agent_text *= "  - PID: $pid_str\n"
+                        agent_text *= "  - Status: $(repl.status)\n"
+                        agent_text *= "  - Last heartbeat: $(repl.last_heartbeat)\n\n"
+                    end
+                end
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
@@ -850,7 +926,7 @@ function handle_request(http::HTTP.Stream)
                     "result" => Dict(
                         "content" => [Dict(
                             "type" => "text",
-                            "text" => "No REPL agents currently registered.\n\nTo connect a backend REPL:\n1. Start a Julia REPL with MCPRepl\n2. It will automatically register with this proxy\n3. Julia tools will become available"
+                            "text" => agent_text
                         )]
                     )
                 )))
@@ -871,17 +947,50 @@ function handle_request(http::HTTP.Stream)
                 )))
                 return nothing
             else
-                # Unknown tool or requires backend
+                # Tool requires backend REPL - check if any are available
+                if isempty(repls)
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON.json(Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict(
+                            "content" => [Dict(
+                                "type" => "text",
+                                "text" => "⚠️ Tool '$tool_name' requires a Julia REPL backend.\n\nNo REPL agents are currently connected to the proxy.\n\nTo enable Julia tools:\n1. Start a Julia REPL\n2. Run: using MCPRepl; MCPRepl.start!()\n3. The REPL will automatically register with this proxy\n\nAvailable proxy tools: proxy_status, list_agents, dashboard_url"
+                            )]
+                        )
+                    )))
+                    return nothing
+                else
+                    # Route to backend
+                    request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
+                    route_to_repl_streaming(request_dict, req, http)
+                    return nothing
+                end
+            end
+        else
+            # Unknown method - route to backend if available
+            repls = list_repls()
+            if isempty(repls)
+                # No backends available - return a friendly message
+                @info "No backends available for method" method = method
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "result" => nothing  # Many MCP methods (like notifications) expect null result
+                )))
+                return nothing
+            else
+                # Route to backend REPL
                 request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
                 route_to_repl_streaming(request_dict, req, http)
                 return nothing
             end
-        else
-            # Route to backend REPL
-            # Convert JSON.Object to Dict if needed
-            request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
-            route_to_repl_streaming(request_dict, req, http)
-            return nothing
         end
 
     catch e
