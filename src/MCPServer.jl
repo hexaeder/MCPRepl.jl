@@ -390,7 +390,7 @@ function create_handler(
             if request["method"] == "notifications/initialized"
                 # This is a notification, no response needed
                 # Mark session as fully initialized if it's in INITIALIZED state
-                if session !== nothing && session.state == INITIALIZED
+                if session !== nothing && session.state == Session.INITIALIZED
                     @info "Session initialized" session_id = session.id
                 end
                 return HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
