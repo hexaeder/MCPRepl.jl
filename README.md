@@ -244,14 +244,49 @@ All LSP operations use the Julia Language Server already running in VS Code, ens
 
 > **Tip:** For documentation and type introspection, agents should use the REPL directly (`@doc`, `methods()`, `fieldnames()`, etc.) rather than LSP tools, as this provides richer information and context.
 
+## Using in Other Projects
 
-## Similar Packages
-- [ModelContexProtocol.jl](https://github.com/JuliaSMLM/ModelContextProtocol.jl) offers a way of defining your own servers. Since MCPRepl is using a HTTP server I decieded to not go with this package.
+MCPRepl can be used as a dependency in your own Julia projects. The package includes:
 
-- [REPLicant.jl](https://github.com/MichaelHatherly/REPLicant.jl) is very similar, but the focus of MCPRepl.jl is to integrate with the user repl so you can see what your agent is doing.
+### Proxy Server
+Start a persistent MCP proxy that routes requests to REPL backends:
 
+```julia
+using MCPRepl
+
+# Start proxy (auto-starts dashboard in development mode)
+MCPRepl.start_proxy(port=3000)
+
+# Or use the CLI
+# julia proxy.jl start --background
 ```
 
+The proxy provides:
+- **Persistent endpoint** - Stays up even when REPL backends restart
+- **Dashboard** - Web UI at `http://localhost:3000/dashboard` for monitoring
+- **Session routing** - Route requests to specific REPL instances
+- **Zero-downtime** - REPL can restart without breaking client connections
+
+### Dashboard
+
+The dashboard is automatically available when the proxy is running:
+- **Development**: Auto-starts Vite dev server with hot reload
+- **Production**: Serves pre-built static files (no Node.js required)
+
+Access at: `http://localhost:3000/dashboard`
+
+### Programmatic Usage
+
+```julia
+using MCPRepl
+
+# Start a REPL backend
+MCPRepl.start!(port=4000)
+
+# In another project, connect to the proxy
+# Your AI agent connects to port 3000 (proxy)
+# Proxy forwards to port 4000 (your REPL)
+```
 
 ## Similar Packages
 - [ModelContexProtocol.jl](https://github.com/JuliaSMLM/ModelContextProtocol.jl) offers a way of defining your own servers. Since MCPRepl is using a HTTP server I decieded to not go with this package.
