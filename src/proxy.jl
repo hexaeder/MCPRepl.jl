@@ -603,15 +603,14 @@ function handle_request(http::HTTP.Stream)
             return nothing
         end
 
-        @info "Body is NOT empty - proceeding to parse JSON"
         # Parse JSON-RPC request
-        @info "About to parse JSON" body_length = length(body)
         request = JSON.parse(body)
-        @info "Parsed JSON request"
 
-        # Handle proxy-specific methods
+        # Log all incoming requests with full details
         method = get(request, "method", "")
-        @info "Handling method" method = method
+        request_id = get(request, "id", nothing)
+        params = get(request, "params", nothing)
+        @info "📨 MCP Request" method = method id = request_id has_params = !isnothing(params)
 
         if method == "proxy/status"
             repls = list_repls()
@@ -1150,9 +1149,35 @@ function stop_server(port::Int=3000)
             end
             remove_pid_file(port)
         else
-            @warn "No proxy server found on port $port"
+            @info "No proxy server found on port $port"
         end
     end
+end
+
+"""
+    restart_server(port::Int=3000; background::Bool=false)
+
+Restart the proxy server (stop existing if running, then start new).
+
+# Arguments
+- `port::Int=3000`: Port to listen on
+- `background::Bool=false`: If true, run in background process
+
+# Returns
+- HTTP.Server if running in foreground
+- nothing if started in background
+"""
+function restart_server(port::Int=3000; background::Bool=false)
+    # Stop existing server if running (won't error if not running)
+    if is_server_running(port)
+        @info "Stopping existing proxy server on port $port"
+        stop_server(port)
+        sleep(1)  # Give it time to shutdown
+    end
+
+    # Start new server
+    @info "Starting proxy server on port $port"
+    return start_server(port; background=background)
 end
 
 end # module Proxy
