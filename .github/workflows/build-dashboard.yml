@@ -47,7 +47,8 @@ jobs:
       - name: Compute git-tree-sha1
         id: tree_sha
         run: |
-          TREE_SHA=$(git hash-object -t tree dashboard-ui/dist)
+          cd dashboard-ui/dist
+          TREE_SHA=$(git write-tree)
           echo "tree_sha=$TREE_SHA" >> $GITHUB_OUTPUT
           echo "Tree SHA: $TREE_SHA"
       
