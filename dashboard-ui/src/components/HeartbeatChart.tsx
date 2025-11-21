@@ -2,10 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Line } from 'recharts';
 import { LineChart, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { subscribeToEvents } from '../api';
-import { AgentEvent } from '../types';
+import type { SessionEvent } from '../types';
 
 interface HeartbeatChartProps {
-    agentId: string;
+    sessionId: string;
 }
 
 interface DataPoint {
@@ -13,7 +13,7 @@ interface DataPoint {
     value: number;
 }
 
-export const HeartbeatChart: React.FC<HeartbeatChartProps> = ({ agentId }) => {
+export const HeartbeatChart: React.FC<HeartbeatChartProps> = ({ sessionId }) => {
     const [data, setData] = useState<DataPoint[]>([]);
     const dataRef = useRef<DataPoint[]>([]);
     const lastBeatRef = useRef<number>(0);
@@ -39,8 +39,8 @@ export const HeartbeatChart: React.FC<HeartbeatChartProps> = ({ agentId }) => {
         let frameCount = 0;
 
         // Subscribe to real-time heartbeat events via SSE
-        const unsubscribe = subscribeToEvents((event: AgentEvent) => {
-            if (event.type === 'HEARTBEAT' && event.id === agentId) {
+        const unsubscribe = subscribeToEvents((event: SessionEvent) => {
+            if (event.type === 'HEARTBEAT' && event.id === sessionId) {
                 const eventTime = new Date(event.timestamp).getTime();
                 const now = Date.now();
 
@@ -56,7 +56,7 @@ export const HeartbeatChart: React.FC<HeartbeatChartProps> = ({ agentId }) => {
                     };
                 }
             }
-        }, agentId);
+        }, sessionId);
 
         // Animate
         let animationId: number;
@@ -106,7 +106,7 @@ export const HeartbeatChart: React.FC<HeartbeatChartProps> = ({ agentId }) => {
             cancelAnimationFrame(animationId);
             unsubscribe();
         };
-    }, [agentId]);
+    }, [sessionId]);
 
     return (
         <ResponsiveContainer width="100%" height="100%">

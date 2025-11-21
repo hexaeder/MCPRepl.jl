@@ -1,4 +1,4 @@
-.agent-card {
+.session-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -8,7 +8,7 @@
     position: relative;
 }
 
-.agent-card::before {
+.session-card::before {
     content: '';
     position: absolute;
     inset: 0;
@@ -19,31 +19,41 @@
     box-shadow: 0 0 20px rgba(125, 211, 252, 0.1);
 }
 
-.agent-card:hover::before {
+.session-card:hover::before {
     opacity: 1;
 }
 
-.agent-card:hover {
+.session-card:hover {
     transform: translateX(4px);
     box-shadow: 0 0 20px rgba(125, 211, 252, 0.15);
 }
 
-.agent-card.selected {
+.session-card.selected {
     border-color: var(--accent-primary);
     box-shadow: 0 0 20px rgba(125, 211, 252, 0.2);
 }
 
-.agent-header {
+.session-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 0.5rem;
 }
 
-.agent-id {
+.session-id {
     font-weight: 600;
     font-size: 0.875rem;
     color: var(--text-primary);
+}
+
+.logs-indicator {
+    opacity: 0.5;
+    transition: opacity 0.2s;
+    font-size: 0.875rem;
+}
+
+.session-card:hover .logs-indicator {
+    opacity: 1;
 }
 
 .status-line {
@@ -60,7 +70,7 @@
     text-transform: uppercase;
 }
 
-.agent-meta {
+.session-meta {
     display: flex;
     flex-direction: column;
     gap: 0.375rem;

@@ -1,15 +1,15 @@
 import React from 'react';
-import { Agent } from '../types';
-import './AgentCard.css';
+import { Session } from '../types';
+import './SessionCard.css';
 import { HeartbeatChart } from './HeartbeatChart';
 
-interface AgentCardProps {
-    agent: Agent;
+interface SessionCardProps {
+    session: Session;
     isSelected: boolean;
     onClick: () => void;
 }
 
-export const AgentCard: React.FC<AgentCardProps> = ({ agent, isSelected, onClick }) => {
+export const SessionCard: React.FC<SessionCardProps> = ({ session, isSelected, onClick }) => {
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'ready': return '#10b981';       // Green
@@ -24,35 +24,37 @@ export const AgentCard: React.FC<AgentCardProps> = ({ agent, isSelected, onClick
 
     return (
         <div
-            className={`agent-card ${isSelected ? 'selected' : ''}`}
+            className={`session-card ${isSelected ? 'selected' : ''}`}
             onClick={onClick}
+            title="Click to view logs"
         >
-            <div className="agent-header">
-                <span className="agent-id">{agent.id}</span>
+            <div className="session-header">
+                <span className="session-id">{session.id}</span>
+                <span className="logs-indicator">📋</span>
             </div>
 
             <div className="status-line">
                 <span
                     className="status-badge"
-                    style={{ backgroundColor: getStatusColor(agent.status) }}
+                    style={{ backgroundColor: getStatusColor(session.status) }}
                 >
-                    {agent.status}
+                    {session.status}
                 </span>
             </div>
 
-            <div className="agent-meta">
+            <div className="session-meta">
                 <div className="meta-item">
                     <span className="meta-label">Port:</span>
-                    <span className="meta-value">{agent.port}</span>
+                    <span className="meta-value">{session.port}</span>
                 </div>
                 <div className="meta-item">
                     <span className="meta-label">PID:</span>
-                    <span className="meta-value">{agent.pid}</span>
+                    <span className="meta-value">{session.pid}</span>
                 </div>
             </div>
 
             <div className="heartbeat-container">
-                <HeartbeatChart agentId={agent.id} />
+                <HeartbeatChart sessionId={session.id} />
             </div>
         </div>
     );
