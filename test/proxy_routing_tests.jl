@@ -12,7 +12,7 @@ using .Proxy
 
         # Start a mock MCP server that responds to tools/list
         mock_port = 19001
-        mock_server = HTTP.serve!(mock_port; verbose=false) do req
+        mock_server = HTTP.serve!(mock_port; verbose = false) do req
             body = String(req.body)
             request = JSON.parse(body)
 
@@ -34,7 +34,7 @@ using .Proxy
 
         try
             # Register the mock backend
-            Proxy.register_repl("test-backend", mock_port; pid=Int(getpid()))
+            Proxy.register_repl("test-backend", mock_port; pid = Int(getpid()))
 
             # Create a proxy request
             req_headers =
@@ -74,7 +74,7 @@ using .Proxy
 
         # Start a mock MCP server that responds to tools/call
         mock_port = 19002
-        mock_server = HTTP.serve!(mock_port; verbose=false) do req
+        mock_server = HTTP.serve!(mock_port; verbose = false) do req
             body = String(req.body)
             request = JSON.parse(body)
 
@@ -103,7 +103,7 @@ using .Proxy
 
         try
             # Register the mock backend
-            Proxy.register_repl("test-backend-2", mock_port; pid=Int(getpid()))
+            Proxy.register_repl("test-backend-2", mock_port; pid = Int(getpid()))
 
             # Create a proxy request for tools/call
             req_headers = [

@@ -49,8 +49,8 @@ end
         Proxy.register_repl(
             "test-repl-1",
             3001;
-            pid=12345,
-            metadata=Dict("test" => "data"),
+            pid = 12345,
+            metadata = Dict("test" => "data"),
         )
 
         # Verify it's in the registry
@@ -107,18 +107,18 @@ end
         @test repl.status == :ready
 
         # Simulate first error - should increment counter but stay ready
-        Proxy.update_repl_status("heartbeat-test", :ready; error="Error 1")
+        Proxy.update_repl_status("heartbeat-test", :ready; error = "Error 1")
         repl = Proxy.get_repl("heartbeat-test")
         @test repl.missed_heartbeats == 1
         @test repl.last_error == "Error 1"
 
         # Second error - still ready
-        Proxy.update_repl_status("heartbeat-test", :ready; error="Error 2")
+        Proxy.update_repl_status("heartbeat-test", :ready; error = "Error 2")
         repl = Proxy.get_repl("heartbeat-test")
         @test repl.missed_heartbeats == 2
 
         # Third error - now should be stopped
-        Proxy.update_repl_status("heartbeat-test", :ready; error="Error 3")
+        Proxy.update_repl_status("heartbeat-test", :ready; error = "Error 3")
         repl = Proxy.get_repl("heartbeat-test")
         @test repl.missed_heartbeats == 3
 
@@ -210,7 +210,7 @@ end
         empty!(Proxy.REPL_REGISTRY)
 
         # Register a test REPL
-        Proxy.register_repl("route-test", 3006; pid=Int(getpid()))
+        Proxy.register_repl("route-test", 3006; pid = Int(getpid()))
 
         # Create a JSON request string (as would come from HTTP)
         json_str = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""
@@ -256,7 +256,7 @@ end
     @testset "Actual HTTP.post call with exact proxy pattern" begin
         # Start a simple echo server to test against
         echo_port = 9999
-        echo_server = HTTP.serve!(echo_port; verbose=false) do req
+        echo_server = HTTP.serve!(echo_port; verbose = false) do req
             # Echo back the request body
             return HTTP.Response(200, req.body)
         end
@@ -276,8 +276,8 @@ end
                 backend_url,
                 headers,
                 body_str;
-                readtimeout=5,
-                connect_timeout=2,
+                readtimeout = 5,
+                connect_timeout = 2,
             )
 
             @test response.status == 200
@@ -292,7 +292,7 @@ end
     @testset "Full handle_request → route_to_repl → HTTP.post integration" begin
         # This tests the COMPLETE flow from handle_request to actual backend call
         echo_port = 9998
-        echo_server = HTTP.serve!(echo_port; verbose=false) do req
+        echo_server = HTTP.serve!(echo_port; verbose = false) do req
             # Return a mock MCP response
             mock_response = Dict(
                 "jsonrpc" => "2.0",
@@ -305,7 +305,7 @@ end
         try
             # Register a REPL pointing to our echo server
             empty!(Proxy.REPL_REGISTRY)
-            Proxy.register_repl("integration-test", echo_port; pid=Int(getpid()))
+            Proxy.register_repl("integration-test", echo_port; pid = Int(getpid()))
 
             # Create HTTP request exactly as it would come from a client
             request_body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""

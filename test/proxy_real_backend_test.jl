@@ -14,7 +14,7 @@ include("../src/proxy.jl")
     # Start proxy in background
     proxy_port = 3000
     if !Proxy.is_server_running(proxy_port)
-        Proxy.start_server(proxy_port; background=true)
+        Proxy.start_server(proxy_port; background = true)
         sleep(1)  # Give proxy time to start
     end
     @test Proxy.is_server_running(proxy_port)
@@ -103,7 +103,7 @@ include("../src/proxy.jl")
 
     # Start server using HTTP.serve!
     backend_server =
-        HTTP.serve!(backend_handler, "127.0.0.1", backend_port; verbose=false)
+        HTTP.serve!(backend_handler, "127.0.0.1", backend_port; verbose = false)
     sleep(0.5)  # Give backend time to start
 
     # Register the backend with proxy

@@ -64,7 +64,7 @@ Create a new uninitialized MCP session.
 # Arguments
 - `target_repl_id::Union{String,Nothing}=nothing`: Optional target REPL ID for proxy routing
 """
-function MCPSession(; target_repl_id::Union{String,Nothing}=nothing)
+function MCPSession(; target_repl_id::Union{String,Nothing} = nothing)
     now_time = now()
     return MCPSession(
         string(uuid4()),                    # id

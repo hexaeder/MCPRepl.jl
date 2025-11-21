@@ -20,7 +20,7 @@ function SecurityConfig(
     mode::Symbol,
     api_keys::Vector{String},
     allowed_ips::Vector{String},
-    port::Int=3000,
+    port::Int = 3000,
 )
     return SecurityConfig(mode, api_keys, allowed_ips, port, Int64(round(time())))
 end
@@ -44,7 +44,7 @@ end
 
 Get the path to the security configuration file for a workspace.
 """
-function get_security_config_path(workspace_dir::String=pwd())
+function get_security_config_path(workspace_dir::String = pwd())
     config_dir = joinpath(workspace_dir, ".mcprepl")
     return joinpath(config_dir, "security.json")
 end
@@ -58,9 +58,9 @@ Returns nothing if no configuration exists.
 If port is not specified in configuration, defaults to 0 (dynamic port assignment in 40000-49999 range).
 """
 function load_security_config(
-    workspace_dir::String=pwd(),
-    agent_name::String="",
-    supervisor::Bool=false,
+    workspace_dir::String = pwd(),
+    agent_name::String = "",
+    supervisor::Bool = false,
 )
     config_path = get_security_config_path(workspace_dir)
 
@@ -89,7 +89,8 @@ function load_security_config(
                 else
                     # Agent not in agents.json - fall back to lax mode with warning
                     available = collect(keys(get(agents_config, "agents", Dict())))
-                    @warn "Agent '$agent_name' not found in agents.json" path = agents_config_path available = available fallback = "lax mode with dynamic port"
+                    @warn "Agent '$agent_name' not found in agents.json" path =
+                        agents_config_path available = available fallback = "lax mode with dynamic port"
                     created_at = Int64(round(time()))
                     return SecurityConfig(:lax, String[], String[], 0, created_at)
                 end
@@ -101,7 +102,8 @@ function load_security_config(
             end
         else
             # No agents.json found - fall back to lax mode with warning
-            @warn "Agents config file not found for agent '$agent_name'" path = agents_config_path fallback = "lax mode with dynamic port"
+            @warn "Agents config file not found for agent '$agent_name'" path =
+                agents_config_path fallback = "lax mode with dynamic port"
             created_at = Int64(round(time()))
             return SecurityConfig(:lax, String[], String[], 0, created_at)
         end
@@ -147,7 +149,7 @@ function load_security_config(
 
     try
         content = read(config_path, String)
-        data = JSON.parse(content; dicttype=Dict{String,Any})
+        data = JSON.parse(content; dicttype = Dict{String,Any})
 
         mode = Symbol(get(data, "mode", "strict"))
         api_keys = get(data, "api_keys", String[])
@@ -167,7 +169,7 @@ end
 
 Save security configuration to workspace .mcprepl/security.json file.
 """
-function save_security_config(config::SecurityConfig, workspace_dir::String=pwd())
+function save_security_config(config::SecurityConfig, workspace_dir::String = pwd())
     config_path = get_security_config_path(workspace_dir)
     config_dir = dirname(config_path)
 
@@ -329,7 +331,7 @@ end
 Generate and add a new API key to the security configuration.
 Returns the new key.
 """
-function add_api_key!(workspace_dir::String=pwd())
+function add_api_key!(workspace_dir::String = pwd())
     config = load_security_config(workspace_dir)
     if config === nothing
         error("No security configuration found. Run MCPRepl.setup() first.")
@@ -358,7 +360,7 @@ end
 
 Remove an API key from the security configuration.
 """
-function remove_api_key!(key::String, workspace_dir::String=pwd())
+function remove_api_key!(key::String, workspace_dir::String = pwd())
     config = load_security_config(workspace_dir)
     if config === nothing
         error("No security configuration found. Run MCPRepl.setup() first.")
@@ -391,7 +393,7 @@ end
 
 Add an IP address to the allowlist.
 """
-function add_allowed_ip!(ip::String, workspace_dir::String=pwd())
+function add_allowed_ip!(ip::String, workspace_dir::String = pwd())
     config = load_security_config(workspace_dir)
     if config === nothing
         error("No security configuration found. Run MCPRepl.setup() first.")
@@ -424,7 +426,7 @@ end
 
 Remove an IP address from the allowlist.
 """
-function remove_allowed_ip!(ip::String, workspace_dir::String=pwd())
+function remove_allowed_ip!(ip::String, workspace_dir::String = pwd())
     config = load_security_config(workspace_dir)
     if config === nothing
         error("No security configuration found. Run MCPRepl.setup() first.")
@@ -457,7 +459,7 @@ end
 
 Change the security mode (:strict, :relaxed, or :lax).
 """
-function change_security_mode!(mode::Symbol, workspace_dir::String=pwd())
+function change_security_mode!(mode::Symbol, workspace_dir::String = pwd())
     if !(mode in [:strict, :relaxed, :lax])
         error("Invalid security mode. Must be :strict, :relaxed, or :lax")
     end

@@ -36,7 +36,7 @@ function setup_proxy_logging(port::Int)
     log_file = joinpath(cache_dir, "proxy-$port.log")
 
     # Use FileLogger with automatic flushing
-    logger = LoggingExtras.FileLogger(log_file; append=true, always_flush=true)
+    logger = LoggingExtras.FileLogger(log_file; append = true, always_flush = true)
     global_logger(logger)
 
     @info "Proxy logging initialized" log_file = log_file
@@ -73,7 +73,7 @@ const VITE_DEV_PORT = 3001
 
 Check if a proxy server is already running on the specified port.
 """
-function is_server_running(port::Int=3000)
+function is_server_running(port::Int = 3000)
     try
         # Try to connect to the port
         sock = connect(ip"127.0.0.1", port)
@@ -90,7 +90,7 @@ end
 Get the PID of the running proxy server from the PID file.
 Returns nothing if no PID file exists or process is not running.
 """
-function get_server_pid(port::Int=3000)
+function get_server_pid(port::Int = 3000)
     pid_file = get_pid_file_path(port)
 
     if !isfile(pid_file)
@@ -107,7 +107,7 @@ function get_server_pid(port::Int=3000)
                 return pid
             else
                 # Stale PID file, remove it
-                rm(pid_file, force=true)
+                rm(pid_file, force = true)
                 return nothing
             end
         else
@@ -124,7 +124,7 @@ end
 
 Get the path to the PID file for a proxy server on the given port.
 """
-function get_pid_file_path(port::Int=3000)
+function get_pid_file_path(port::Int = 3000)
     cache_dir = get(ENV, "XDG_CACHE_HOME") do
         if Sys.iswindows()
             joinpath(ENV["LOCALAPPDATA"], "MCPRepl")
@@ -142,7 +142,7 @@ end
 
 Write the current process PID to the PID file.
 """
-function write_pid_file(port::Int=3000)
+function write_pid_file(port::Int = 3000)
     pid_file = get_pid_file_path(port)
     write(pid_file, string(getpid()))
     SERVER_PID_FILE[] = pid_file
@@ -153,9 +153,9 @@ end
 
 Remove the PID file for the proxy server.
 """
-function remove_pid_file(port::Int=3000)
+function remove_pid_file(port::Int = 3000)
     pid_file = get_pid_file_path(port)
-    rm(pid_file, force=true)
+    rm(pid_file, force = true)
 end
 
 # ============================================================================
@@ -225,7 +225,7 @@ function start_vite_dev_server()
         # Start npm run dev in the background
         # Need to change directory before running
         proc = cd(dashboard_dir) do
-            run(pipeline(`npm run dev`, stdout=devnull, stderr=devnull), wait=false)
+            run(pipeline(`npm run dev`, stdout = devnull, stderr = devnull), wait = false)
         end
 
         VITE_DEV_PROCESS[] = proc
@@ -281,14 +281,15 @@ Register a REPL with the proxy server so it can route requests to it.
 function register_repl(
     id::String,
     port::Int;
-    pid::Union{Int,Nothing}=nothing,
-    metadata::Dict=Dict(),
+    pid::Union{Int,Nothing} = nothing,
+    metadata::Dict = Dict(),
 )
     # Check for pending requests and copy them outside the lock
     pending = lock(REPL_REGISTRY_LOCK) do
         # Check if this is a re-registration (reconnection)
         existing = get(REPL_REGISTRY, id, nothing)
-        pending_requests = existing !== nothing ? existing.pending_requests : Tuple{Dict,HTTP.Stream}[]
+        pending_requests =
+            existing !== nothing ? existing.pending_requests : Tuple{Dict,HTTP.Stream}[]
 
         if existing !== nothing && !isempty(pending_requests)
             @info "REPL re-registering with buffered requests" id = id port = port pid = pid buffer_size = length(pending_requests)
@@ -360,7 +361,7 @@ end
 Create a new MCP session for a client connection.
 """
 function create_mcp_session(target_repl_id::Union{String,Nothing})
-    session = MCPSession(target_repl_id=target_repl_id)
+    session = MCPSession(target_repl_id = target_repl_id)
 
     lock(SESSION_LOCK) do
         SESSION_REGISTRY[session.id] = session
@@ -402,10 +403,11 @@ end
 
 Remove sessions that haven't been active for longer than max_age.
 """
-function cleanup_inactive_sessions!(max_age::Dates.Period=Dates.Hour(1))
+function cleanup_inactive_sessions!(max_age::Dates.Period = Dates.Hour(1))
     cutoff = now() - max_age
     lock(SESSION_LOCK) do
-        inactive = [id for (id, session) in SESSION_REGISTRY if session.last_activity < cutoff]
+        inactive =
+            [id for (id, session) in SESSION_REGISTRY if session.last_activity < cutoff]
         for id in inactive
             session = SESSION_REGISTRY[id]
             close_session!(session)
@@ -434,7 +436,7 @@ Update the status of a registered REPL, optionally storing error information.
 function update_repl_status(
     id::String,
     status::Symbol;
-    error::Union{String,Nothing}=nothing,
+    error::Union{String,Nothing} = nothing,
 )
     lock(REPL_REGISTRY_LOCK) do
         if haskey(REPL_REGISTRY, id)
@@ -493,9 +495,9 @@ function try_reconnect(repl_id::String)
                         "params" => Dict(),
                     ),
                 );
-                readtimeout=2,
-                connect_timeout=2,
-                status_exception=false,
+                readtimeout = 2,
+                connect_timeout = 2,
+                status_exception = false,
             )
 
             if response.status == 200
@@ -599,7 +601,8 @@ Process all buffered requests for a REPL that has reconnected.
 Forwards each buffered request to the REPL and returns responses to waiting clients.
 """
 function flush_pending_requests(repl_id::String, pending::Vector{Tuple{Dict,HTTP.Stream}})
-    @info "Flushing buffered requests to reconnected REPL" repl_id = repl_id count = length(pending)
+    @info "Flushing buffered requests to reconnected REPL" repl_id = repl_id count =
+        length(pending)
 
     repl = get_repl(repl_id)
     if repl === nothing
@@ -613,7 +616,8 @@ function flush_pending_requests(repl_id::String, pending::Vector{Tuple{Dict,HTTP
             backend_url = "http://127.0.0.1:$(repl.port)/"
             body_str = JSON.json(request)
 
-            @debug "Executing buffered request" repl_id = repl_id request_id = get(request, "id", nothing)
+            @debug "Executing buffered request" repl_id = repl_id request_id =
+                get(request, "id", nothing)
 
             # Execute the request
             backend_response = HTTP.request(
@@ -621,9 +625,9 @@ function flush_pending_requests(repl_id::String, pending::Vector{Tuple{Dict,HTTP
                 backend_url,
                 ["Content-Type" => "application/json"],
                 body_str;
-                readtimeout=30,
-                connect_timeout=5,
-                status_exception=false,
+                readtimeout = 30,
+                connect_timeout = 5,
+                status_exception = false,
             )
 
             # Try to send response back to client if stream is still open
@@ -633,12 +637,15 @@ function flush_pending_requests(repl_id::String, pending::Vector{Tuple{Dict,HTTP
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
                     write(http, String(backend_response.body))
-                    @info "Buffered request executed and response sent to client" repl_id = repl_id request_id = get(request, "id", nothing)
+                    @info "Buffered request executed and response sent to client" repl_id =
+                        repl_id request_id = get(request, "id", nothing)
                 catch stream_err
-                    @debug "Client stream closed, response discarded" repl_id = repl_id exception = stream_err
+                    @debug "Client stream closed, response discarded" repl_id = repl_id exception =
+                        stream_err
                 end
             else
-                @debug "Client stream already closed" repl_id = repl_id request_id = get(request, "id", nothing)
+                @debug "Client stream already closed" repl_id = repl_id request_id =
+                    get(request, "id", nothing)
             end
         catch e
             @error "Error executing buffered request" repl_id = repl_id exception = e
@@ -648,14 +655,19 @@ function flush_pending_requests(repl_id::String, pending::Vector{Tuple{Dict,HTTP
                     HTTP.setstatus(http, 500)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON.json(Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => get(request, "id", nothing),
-                        "error" => Dict(
-                            "code" => -32603,
-                            "message" => "Error executing buffered request: $(sprint(showerror, e))"
-                        )
-                    )))
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "error" => Dict(
+                                    "code" => -32603,
+                                    "message" => "Error executing buffered request: $(sprint(showerror, e))",
+                                ),
+                            ),
+                        ),
+                    )
                 catch
                 end
             end
@@ -711,7 +723,8 @@ function send_reconnection_updates(repl_id::String, request::Dict, http::HTTP.St
                     last_update = elapsed
                     @debug "Sent reconnection update" repl_id = repl_id elapsed = elapsed
                 catch e
-                    @debug "Error sending update, client may have disconnected" exception = e
+                    @debug "Error sending update, client may have disconnected" exception =
+                        e
                     return
                 end
             end
@@ -724,7 +737,8 @@ function send_reconnection_updates(repl_id::String, request::Dict, http::HTTP.St
                     last_keepalive = elapsed
                     @debug "Sent keepalive" repl_id = repl_id elapsed = elapsed
                 catch e
-                    @debug "Error sending keepalive, client may have disconnected" exception = e
+                    @debug "Error sending keepalive, client may have disconnected" exception =
+                        e
                     return
                 end
             end
@@ -749,14 +763,19 @@ function send_reconnection_updates(repl_id::String, request::Dict, http::HTTP.St
             HTTP.setstatus(http, 503)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "error" => Dict(
-                    "code" => -32005,
-                    "message" => "REPL reconnection timeout after $(max_wait) seconds"
-                )
-            )))
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32005,
+                            "message" => "REPL reconnection timeout after $(max_wait) seconds",
+                        ),
+                    ),
+                ),
+            )
         end
     catch e
         @debug "Error sending timeout response" exception = e
@@ -801,7 +820,8 @@ function monitor_heartbeats()
                     time_since_heartbeat = now() - repl.last_heartbeat
                     if time_since_heartbeat > Second(30)
                         @warn "REPL heartbeat timeout, marking as disconnected" id = repl_id last_heartbeat =
-                            repl.last_heartbeat time_since = time_since_heartbeat status_before = repl.status
+                            repl.last_heartbeat time_since = time_since_heartbeat status_before =
+                            repl.status
 
                         REPL_REGISTRY[repl_id].status = :disconnected
                         REPL_REGISTRY[repl_id].disconnect_time = now()
@@ -1049,9 +1069,9 @@ function route_to_repl_streaming(
             backend_url,
             ["Content-Type" => "application/json"],
             body_str;
-            readtimeout=30,
-            connect_timeout=5,
-            status_exception=false,
+            readtimeout = 30,
+            connect_timeout = 5,
+            status_exception = false,
         )
 
         duration_ms = (time() - start_time) * 1000
@@ -1085,7 +1105,7 @@ function route_to_repl_streaming(
             target_id,
             Dashboard.OUTPUT,
             response_data;
-            duration_ms=duration_ms,
+            duration_ms = duration_ms,
         )
 
         # Update last heartbeat
@@ -1210,7 +1230,7 @@ function handle_request(http::HTTP.Stream)
                 # Vite is running - proxy the request to it
                 # Keep the full path including /dashboard since Vite is configured with base: '/dashboard/'
                 vite_url = "http://localhost:$(vite_port)$(path)"
-                vite_response = HTTP.get(vite_url, status_exception=false)
+                vite_response = HTTP.get(vite_url, status_exception = false)
 
                 HTTP.setstatus(http, vite_response.status)
                 for (name, value) in vite_response.headers
@@ -1297,7 +1317,8 @@ function handle_request(http::HTTP.Stream)
         if startswith(path, "/dashboard/api/session/") &&
            endswith(path, "/restart") &&
            req.method == "POST"
-            session_id = replace(path, r"^/dashboard/api/session/" => "", r"/restart$" => "")
+            session_id =
+                replace(path, r"^/dashboard/api/session/" => "", r"/restart$" => "")
 
             success = lock(REPL_REGISTRY_LOCK) do
                 if haskey(REPL_REGISTRY, session_id)
@@ -1311,8 +1332,8 @@ function handle_request(http::HTTP.Stream)
                             "method" => "tools/call",
                             "params" => Dict(
                                 "name" => "exit",
-                                "arguments" => Dict("restart" => true)
-                            )
+                                "arguments" => Dict("restart" => true),
+                            ),
                         )
                         write(conn.socket, JSON.json(restart_req) * "\n")
                         @info "Session restart requested" session_id
@@ -1330,10 +1351,7 @@ function handle_request(http::HTTP.Stream)
             HTTP.setstatus(http, success ? 200 : 404)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(
-                http,
-                JSON.json(Dict("success" => success, "session_id" => session_id))
-            )
+            write(http, JSON.json(Dict("success" => success, "session_id" => session_id)))
             return nothing
         end
 
@@ -1341,7 +1359,8 @@ function handle_request(http::HTTP.Stream)
         if startswith(path, "/dashboard/api/session/") &&
            endswith(path, "/shutdown") &&
            req.method == "POST"
-            session_id = replace(path, r"^/dashboard/api/session/" => "", r"/shutdown$" => "")
+            session_id =
+                replace(path, r"^/dashboard/api/session/" => "", r"/shutdown$" => "")
 
             success = lock(REPL_REGISTRY_LOCK) do
                 if haskey(REPL_REGISTRY, session_id)
@@ -1360,7 +1379,7 @@ function handle_request(http::HTTP.Stream)
                             "jsonrpc" => "2.0",
                             "id" => rand(1:999999),
                             "method" => "shutdown",
-                            "params" => Dict()
+                            "params" => Dict(),
                         )
                         write(conn.socket, JSON.json(shutdown_req) * "\n")
 
@@ -1371,7 +1390,8 @@ function handle_request(http::HTTP.Stream)
                     catch e
                         # If write fails, just unregister anyway
                         delete!(REPL_REGISTRY, session_id)
-                        @warn "Failed to send shutdown request, unregistered anyway" session_id error = e
+                        @warn "Failed to send shutdown request, unregistered anyway" session_id error =
+                            e
                         return true
                     end
                 else
@@ -1383,10 +1403,7 @@ function handle_request(http::HTTP.Stream)
             HTTP.setstatus(http, success ? 200 : 404)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(
-                http,
-                JSON.json(Dict("success" => success, "session_id" => session_id))
-            )
+            write(http, JSON.json(Dict("success" => success, "session_id" => session_id)))
             return nothing
         end
 
@@ -1402,7 +1419,7 @@ function handle_request(http::HTTP.Stream)
 
             result = Dict{String,Any}(
                 "proxy_tools" => get_proxy_tool_schemas(),
-                "agent_tools" => Dict{String,Any}()
+                "agent_tools" => Dict{String,Any}(),
             )
 
             # If agent_id specified, fetch tools from that agent
@@ -1415,24 +1432,27 @@ function handle_request(http::HTTP.Stream)
                             "jsonrpc" => "2.0",
                             "id" => 1,
                             "method" => "tools/list",
-                            "params" => Dict()
+                            "params" => Dict(),
                         )
 
                         agent_resp = HTTP.post(
                             "http://127.0.0.1:$(conn.port)/",
                             ["Content-Type" => "application/json"],
                             JSON.json(agent_req);
-                            readtimeout=5
+                            readtimeout = 5,
                         )
 
                         if agent_resp.status == 200
                             agent_data = JSON.parse(String(agent_resp.body))
-                            if haskey(agent_data, "result") && haskey(agent_data["result"], "tools")
-                                result["agent_tools"][agent_id] = agent_data["result"]["tools"]
+                            if haskey(agent_data, "result") &&
+                               haskey(agent_data["result"], "tools")
+                                result["agent_tools"][agent_id] =
+                                    agent_data["result"]["tools"]
                             end
                         end
                     catch e
-                        @warn "Failed to fetch tools from agent" agent_id = agent_id exception = e
+                        @warn "Failed to fetch tools from agent" agent_id = agent_id exception =
+                            e
                     end
                 end
             end
@@ -1455,7 +1475,8 @@ function handle_request(http::HTTP.Stream)
                 path_prefix = get(params, "path", "")
             end
 
-            result = Dict{String,Any}("directories" => String[], "is_julia_project" => false)
+            result =
+                Dict{String,Any}("directories" => String[], "is_julia_project" => false)
 
             try
                 # Expand ~ to home directory
@@ -1478,7 +1499,7 @@ function handle_request(http::HTTP.Stream)
                 end
 
                 if isdir(base_dir)
-                    entries = readdir(base_dir, join=false)
+                    entries = readdir(base_dir, join = false)
 
                     # Filter directories only
                     for entry in entries
@@ -1487,9 +1508,15 @@ function handle_request(http::HTTP.Stream)
                         if isdir(full_path) && startswith(entry, filter_prefix)
                             # Return path relative to what user typed
                             if endswith(expanded_path, "/") || isdir(expanded_path)
-                                result["directories"] = push!(result["directories"], joinpath(path_prefix, entry))
+                                result["directories"] = push!(
+                                    result["directories"],
+                                    joinpath(path_prefix, entry),
+                                )
                             else
-                                result["directories"] = push!(result["directories"], joinpath(dirname(path_prefix), entry))
+                                result["directories"] = push!(
+                                    result["directories"],
+                                    joinpath(dirname(path_prefix), entry),
+                                )
                             end
                         end
                     end
@@ -1537,7 +1564,10 @@ function handle_request(http::HTTP.Stream)
                 log_dir = joinpath(dirname(@__DIR__), "logs")
                 if isdir(log_dir)
                     # Find most recent log file for this session
-                    log_files = filter(f -> startswith(f, "session_$(session_id)_"), readdir(log_dir))
+                    log_files = filter(
+                        f -> startswith(f, "session_$(session_id)_"),
+                        readdir(log_dir),
+                    )
                     if !isempty(log_files)
                         latest_log = joinpath(log_dir, sort(log_files)[end])
                         if isfile(latest_log)
@@ -1545,7 +1575,8 @@ function handle_request(http::HTTP.Stream)
                                 content = read(latest_log, String)
                                 # Get last N lines
                                 all_lines = split(content, '\n')
-                                selected_lines = all_lines[max(1, length(all_lines) - lines + 1):end]
+                                selected_lines =
+                                    all_lines[max(1, length(all_lines) - lines + 1):end]
                                 result["content"] = join(selected_lines, '\n')
                                 result["file"] = latest_log
                                 result["total_lines"] = length(all_lines)
@@ -1571,7 +1602,7 @@ function handle_request(http::HTTP.Stream)
                         Dict(
                             "name" => f,
                             "size" => filesize(path),
-                            "modified" => string(Dates.unix2datetime(mtime(path)))
+                            "modified" => string(Dates.unix2datetime(mtime(path))),
                         )
                     end
                 else
@@ -1633,7 +1664,7 @@ function handle_request(http::HTTP.Stream)
                         """
 
                         @info "Spawning restart process (will wait for port to clear)..."
-                        run(`sh -c $restart_cmd`, wait=false)
+                        run(`sh -c $restart_cmd`, wait = false)
 
                         @info "Removing PID file..."
                         remove_pid_file(port)
@@ -1712,7 +1743,7 @@ function handle_request(http::HTTP.Stream)
             id = get(query_params, "id", nothing)
             limit = parse(Int, get(query_params, "limit", "100"))
 
-            events = Dashboard.get_events(id=id, limit=limit)
+            events = Dashboard.get_events(id = id, limit = limit)
             events_json = [
                 Dict(
                     "id" => e.id,
@@ -1752,7 +1783,7 @@ function handle_request(http::HTTP.Stream)
             try
                 while isopen(http)
                     # Get events since last check
-                    events = Dashboard.get_events(id=id, limit=50)
+                    events = Dashboard.get_events(id = id, limit = 50)
                     new_events = filter(e -> e.timestamp > last_event_time, events)
 
                     for event in new_events
@@ -1804,14 +1835,14 @@ function handle_request(http::HTTP.Stream)
                     "tool" => "ex",
                     "arguments" => Dict("e" => "println(\"Hello, World!\")"),
                 ),
-                duration_ms=12.5,
+                duration_ms = 12.5,
             )
 
             Dashboard.log_event(
                 test_agent,
                 Dashboard.CODE_EXECUTION,
                 Dict("expression" => "2 + 2", "result" => "4"),
-                duration_ms=0.8,
+                duration_ms = 0.8,
             )
 
             Dashboard.log_event(
@@ -1986,7 +2017,7 @@ function handle_request(http::HTTP.Stream)
                 return nothing
             end
 
-            register_repl(id, port; pid=pid, metadata=metadata)
+            register_repl(id, port; pid = pid, metadata = metadata)
 
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
@@ -2112,7 +2143,8 @@ function handle_request(http::HTTP.Stream)
             client_info = get(params, "clientInfo", Dict())
             client_name = get(client_info, "name", "unknown")
 
-            @info "MCP initialize request" target_repl_id = target_repl_id client_name = client_name
+            @info "MCP initialize request" target_repl_id = target_repl_id client_name =
+                client_name
 
             # X-MCPRepl-Target header is optional
             # If specified, session will route to that REPL
@@ -2124,7 +2156,8 @@ function handle_request(http::HTTP.Stream)
 
             # Initialize the session using the Session module for proper capability negotiation
             # Convert JSON.Object to Dict if necessary
-            params_dict = params isa Dict ? params : Dict(String(k) => v for (k, v) in pairs(params))
+            params_dict =
+                params isa Dict ? params : Dict(String(k) => v for (k, v) in pairs(params))
             result = initialize_session!(session, params_dict)
 
             # Respond with session ID header as per MCP spec
@@ -2188,9 +2221,9 @@ function handle_request(http::HTTP.Stream)
                             backend_url,
                             ["Content-Type" => "application/json"],
                             body_str;
-                            readtimeout=5,
-                            connect_timeout=2,
-                            status_exception=false,
+                            readtimeout = 5,
+                            connect_timeout = 2,
+                            status_exception = false,
                         )
 
                         if backend_response.status == 200
@@ -2278,7 +2311,8 @@ function handle_request(http::HTTP.Stream)
                                 "jsonrpc" => "2.0",
                                 "id" => get(request, "id", nothing),
                                 "result" => Dict(
-                                    "content" => [Dict("type" => "text", "text" => result_text)],
+                                    "content" =>
+                                        [Dict("type" => "text", "text" => result_text)],
                                 ),
                             ),
                         ),
@@ -2308,7 +2342,8 @@ function handle_request(http::HTTP.Stream)
                                 pid = conn.pid
 
                                 # Check proxy port filter if specified
-                                if proxy_port_filter !== nothing && string(conn.port) != string(proxy_port_filter)
+                                if proxy_port_filter !== nothing &&
+                                   string(conn.port) != string(proxy_port_filter)
                                     continue
                                 end
 
@@ -2316,7 +2351,10 @@ function handle_request(http::HTTP.Stream)
                                 if conn.status == :disconnected
                                     is_stale = true
                                     if force || is_stale
-                                        push!(stale_processes, (pid, session_name, is_stale))
+                                        push!(
+                                            stale_processes,
+                                            (pid, session_name, is_stale),
+                                        )
                                     end
                                 elseif force
                                     # Force mode - include all active sessions too
@@ -2331,7 +2369,9 @@ function handle_request(http::HTTP.Stream)
                         else
                             result_text = "Found $(length(stale_processes)) MCPRepl session(s):\n\n"
                             for (pid, session_name, is_stale) in stale_processes
-                                status = is_stale ? "❌ STALE (not registered)" : "✅ Active (registered)"
+                                status =
+                                    is_stale ? "❌ STALE (not registered)" :
+                                    "✅ Active (registered)"
                                 result_text *= "  PID $pid: $session_name - $status\n"
                             end
 
@@ -2369,7 +2409,8 @@ function handle_request(http::HTTP.Stream)
                             "jsonrpc" => "2.0",
                             "id" => get(request, "id", nothing),
                             "result" => Dict(
-                                "content" => [Dict("type" => "text", "text" => result_text)],
+                                "content" =>
+                                    [Dict("type" => "text", "text" => result_text)],
                             ),
                         ),
                     ),
@@ -2432,12 +2473,16 @@ function handle_request(http::HTTP.Stream)
 
                 # Spawn new Julia session process
                 try
-                    @info "Starting Julia session" project_path = project_path session_id = session_name
+                    @info "Starting Julia session" project_path = project_path session_id =
+                        session_name
 
                     # Create log file for session output
                     log_dir = joinpath(dirname(@__DIR__), "logs")
                     mkpath(log_dir)
-                    log_file = joinpath(log_dir, "session_$(session_name)_$(round(Int, time())).log")
+                    log_file = joinpath(
+                        log_dir,
+                        "session_$(session_name)_$(round(Int, time())).log",
+                    )
 
                     # Build Julia command - inherit security config from the project itself
                     # Pass workspace_dir=project_path so it checks for .mcprepl/security.json in the project
@@ -2450,10 +2495,18 @@ function handle_request(http::HTTP.Stream)
                     # Add environment variable tag for easy identification
                     env = copy(ENV)
                     env["MCPREPL_SESSION"] = session_name
-                    env["MCPREPL_PROXY_PORT"] = string(get(ENV, "MCPREPL_PROXY_PORT", "3000"))
+                    env["MCPREPL_PROXY_PORT"] =
+                        string(get(ENV, "MCPREPL_PROXY_PORT", "3000"))
 
                     # Run in background, capture output to log file
-                    proc = run(pipeline(setenv(julia_cmd, env), stdout=log_file, stderr=log_file), wait=false)
+                    proc = run(
+                        pipeline(
+                            setenv(julia_cmd, env),
+                            stdout = log_file,
+                            stderr = log_file,
+                        ),
+                        wait = false,
+                    )
 
                     # Wait for Julia session to register (max 30 seconds to allow for precompilation)
                     # When agent_name is provided, MCPRepl registers using that name directly
@@ -2523,7 +2576,8 @@ function handle_request(http::HTTP.Stream)
                     )
                     return nothing
                 catch e
-                    @error "Failed to start Julia session" exception = (e, catch_backtrace())
+                    @error "Failed to start Julia session" exception =
+                        (e, catch_backtrace())
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
@@ -2641,7 +2695,7 @@ Start the persistent MCP proxy server.
 - HTTP.Server if running in foreground
 - nothing if started in background
 """
-function start_server(port::Int=3000; background::Bool=false, status_callback=nothing)
+function start_server(port::Int = 3000; background::Bool = false, status_callback = nothing)
     if is_server_running(port)
         existing_pid = get_server_pid(port)
         if existing_pid !== nothing
@@ -2652,7 +2706,7 @@ function start_server(port::Int=3000; background::Bool=false, status_callback=no
 
     if background
         # Start server in background process
-        return start_background_server(port; status_callback=status_callback)
+        return start_background_server(port; status_callback = status_callback)
     else
         # Start server in current process
         return start_foreground_server(port)
@@ -2664,7 +2718,7 @@ end
 
 Start the proxy server in the current process.
 """
-function start_foreground_server(port::Int=3000)
+function start_foreground_server(port::Int = 3000)
     if SERVER[] !== nothing
         @warn "Server already running in this process"
         return SERVER[]
@@ -2690,7 +2744,7 @@ function start_foreground_server(port::Int=3000)
 
     # Start HTTP server with streaming support
     server =
-        HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose=false, stream=true)
+        HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose = false, stream = true)
     SERVER[] = server
 
     # Start background heartbeat monitor AFTER setting SERVER[]
@@ -2709,7 +2763,7 @@ Start the proxy server in a detached background process.
 If `status_callback` is provided, it will be called with status updates instead of
 printing directly (useful when parent has its own spinner).
 """
-function start_background_server(port::Int=3000; status_callback=nothing)
+function start_background_server(port::Int = 3000; status_callback = nothing)
     # Create a Julia script that starts the server
     script = """
     using Pkg
@@ -2737,12 +2791,12 @@ function start_background_server(port::Int=3000; status_callback=nothing)
 
     if Sys.iswindows()
         # Windows: use START command
-        run(`cmd /c start julia $script_file`, wait=false)
+        run(`cmd /c start julia $script_file`, wait = false)
     else
         # Unix: use nohup and discard stdout/stderr (all logs go to proxy-$port.log via FileLogger)
         run(
-            pipeline(`nohup julia $script_file`, stdout=devnull, stderr=devnull),
-            wait=false,
+            pipeline(`nohup julia $script_file`, stdout = devnull, stderr = devnull),
+            wait = false,
         )
     end
 
@@ -2789,7 +2843,7 @@ end
 
 Stop the proxy server running on the specified port.
 """
-function stop_server(port::Int=3000)
+function stop_server(port::Int = 3000)
     # Stop Vite dev server first
     stop_vite_dev_server()
 
@@ -2805,9 +2859,9 @@ function stop_server(port::Int=3000)
         if pid !== nothing
             @info "Stopping background proxy server" pid = pid
             if Sys.iswindows()
-                run(`taskkill /PID $pid /F`, wait=false)
+                run(`taskkill /PID $pid /F`, wait = false)
             else
-                run(`kill $pid`, wait=false)
+                run(`kill $pid`, wait = false)
             end
             remove_pid_file(port)
         end
@@ -2822,7 +2876,7 @@ function stop_server(port::Int=3000)
                     if !isempty(pid_str)
                         pid_num = parse(Int, pid_str)
                         @info "Killing process on port $port" pid = pid_num
-                        run(`kill $pid_num`, wait=false)
+                        run(`kill $pid_num`, wait = false)
                     end
                 end
             end
@@ -2850,7 +2904,7 @@ Restart the proxy server (stop existing if running, then start new).
 - HTTP.Server if running in foreground
 - nothing if started in background
 """
-function restart_server(port::Int=3000; background::Bool=false)
+function restart_server(port::Int = 3000; background::Bool = false)
     # Stop existing server if running (won't error if not running)
     if is_server_running(port)
         @info "Stopping existing proxy server on port $port"
@@ -2860,7 +2914,7 @@ function restart_server(port::Int=3000; background::Bool=false)
 
     # Start new server
     @info "Starting proxy server on port $port"
-    return start_server(port; background=background)
+    return start_server(port; background = background)
 end
 
 end # module Proxy
