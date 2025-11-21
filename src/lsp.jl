@@ -104,9 +104,9 @@ Uses the bidirectional communication mechanism to get responses.
 # Returns
 - Dict with LSP response or error information
 """
-function send_lsp_request(method::String, params::Dict; timeout::Float64=10.0)
+function send_lsp_request(method::String, params::Dict; timeout::Float64 = 10.0)
     # Generate unique request ID
-    request_id = string(rand(UInt64), base=16)
+    request_id = string(rand(UInt64), base = 16)
 
     try
         # Build the LSP request payload
@@ -202,7 +202,7 @@ Execute a VS Code command and wait for the result using bidirectional communicat
 """
 function execute_vscode_command_with_result(command::String, args::Vector, timeout::Float64)
     # Generate unique request ID for tracking
-    request_id = string(rand(UInt64), base=16)
+    request_id = string(rand(UInt64), base = 16)
 
     # Generate a single-use nonce for this specific request
     nonce = generate_nonce()
@@ -215,10 +215,10 @@ function execute_vscode_command_with_result(command::String, args::Vector, timeo
     args_json = isempty(args) ? nothing : JSON.json(args)
     uri = build_vscode_uri(
         command;
-        args=args_json === nothing ? nothing : HTTP.URIs.escapeuri(args_json),
-        request_id=request_id,
-        mcp_port=server_port,
-        nonce=nonce,
+        args = args_json === nothing ? nothing : HTTP.URIs.escapeuri(args_json),
+        request_id = request_id,
+        mcp_port = server_port,
+        nonce = nonce,
     )
 
     # Trigger the command
@@ -226,7 +226,7 @@ function execute_vscode_command_with_result(command::String, args::Vector, timeo
 
     # Wait for response
     try
-        result, error = retrieve_vscode_response(request_id; timeout=timeout)
+        result, error = retrieve_vscode_response(request_id; timeout = timeout)
 
         if error !== nothing
             return Dict("error" => error)

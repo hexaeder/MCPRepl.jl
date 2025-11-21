@@ -48,7 +48,7 @@ const WS_CLIENTS_LOCK = ReentrantLock()
 
 Log an agent event and broadcast to connected dashboard clients.
 """
-function log_event(id::String, event_type::EventType, data::Dict; duration_ms=nothing)
+function log_event(id::String, event_type::EventType, data::Dict; duration_ms = nothing)
     event = AgentEvent(id, event_type, now(), data, duration_ms)
 
     lock(EVENT_LOG_LOCK) do
@@ -69,13 +69,15 @@ end
 Send event to all connected WebSocket clients.
 """
 function broadcast_event(event::AgentEvent)
-    event_json = JSON.json(Dict(
-        "id" => event.id,
-        "type" => string(event.event_type),
-        "timestamp" => Dates.format(event.timestamp, "yyyy-mm-dd HH:MM:SS.sss"),
-        "data" => event.data,
-        "duration_ms" => event.duration_ms
-    ))
+    event_json = JSON.json(
+        Dict(
+            "id" => event.id,
+            "type" => string(event.event_type),
+            "timestamp" => Dates.format(event.timestamp, "yyyy-mm-dd HH:MM:SS.sss"),
+            "data" => event.data,
+            "duration_ms" => event.duration_ms,
+        ),
+    )
 
     lock(WS_CLIENTS_LOCK) do
         for client in WS_CLIENTS
@@ -93,7 +95,7 @@ end
 
 Retrieve recent events, optionally filtered by agent ID.
 """
-function get_events(; id=nothing, limit=100)
+function get_events(; id = nothing, limit = 100)
     lock(EVENT_LOG_LOCK) do
         events = if id === nothing
             EVENT_LOG
@@ -125,8 +127,8 @@ function dashboard_html()
     if !isfile(template_path)
         error("Dashboard template not found: $template_path")
     end
-    tmp = Template(template_path, config=Dict("autoescape" => false))
-    return tmp(init=Dict())
+    tmp = Template(template_path, config = Dict("autoescape" => false))
+    return tmp(init = Dict())
 end
 
 """
@@ -138,26 +140,26 @@ Returns the path to the extracted dashboard directory.
 function download_dashboard_if_needed()
     cache_dir = @get_scratch!("dashboard-cache")
     dashboard_dir = joinpath(cache_dir, "dist")
-    
+
     # Check if already downloaded
     if isdir(dashboard_dir) && isfile(joinpath(dashboard_dir, "index.html"))
         return dashboard_dir
     end
-    
+
     # Download from GitHub release
     url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-latest/dashboard-dist.tar.gz"
     tarball = joinpath(cache_dir, "dashboard-dist.tar.gz")
-    
+
     @info "Downloading dashboard from GitHub..." url
     Downloads.download(url, tarball)
-    
+
     # Extract
     @info "Extracting dashboard..."
     Tar.extract(tarball, cache_dir)
-    
+
     # Clean up tarball
-    rm(tarball; force=true)
-    
+    rm(tarball; force = true)
+
     return dashboard_dir
 end
 
@@ -172,10 +174,10 @@ function serve_static_file(filepath::String)
     if isempty(filepath)
         filepath = "index.html"
     end
-    
+
     # Try local dist first (development), then download from GitHub (production)
     local_dist = abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
-    
+
     react_dist = if isdir(local_dist) && isfile(joinpath(local_dist, "index.html"))
         # Development mode - use local build
         local_dist
@@ -205,14 +207,14 @@ function serve_static_file(filepath::String)
         ".png" => "image/png",
         ".jpg" => "image/jpeg",
         ".svg" => "image/svg+xml",
-        ".ico" => "image/x-icon"
+        ".ico" => "image/x-icon",
     )
 
     ext = lowercase(splitext(fullpath)[2])
     mime_type = get(mime_types, ext, "application/octet-stream")
 
     content = read(fullpath)
-    return HTTP.Response(200, ["Content-Type" => mime_type], body=content)
+    return HTTP.Response(200, ["Content-Type" => mime_type], body = content)
 end
 
 end # module Dashboard

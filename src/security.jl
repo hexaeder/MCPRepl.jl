@@ -79,15 +79,20 @@ function load_security_config(
                     allowed_ips = get(agent_config, "allowed_ips", String[])
                     # Port is required in agent config
                     if !haskey(agent_config, "port")
-                        error("Agent '$agent_name' missing required 'port' field in agents.json")
+                        error(
+                            "Agent '$agent_name' missing required 'port' field in agents.json",
+                        )
                     end
                     port = agent_config["port"]
                     created_at = Int64(round(time()))
 
-                    @info "Loaded security config for agent from agents.json" agent=agent_name mode=mode port=port path=agents_config_path
+                    @info "Loaded security config for agent from agents.json" agent =
+                        agent_name mode = mode port = port path = agents_config_path
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
                 else
-                    error("Agent '$agent_name' not found in agents.json at $agents_config_path. Available agents: $(collect(keys(get(agents_config, "agents", Dict()))))")
+                    error(
+                        "Agent '$agent_name' not found in agents.json at $agents_config_path. Available agents: $(collect(keys(get(agents_config, "agents", Dict()))))",
+                    )
                 end
             catch e
                 if e isa ErrorException && contains(e.msg, "not found in agents.json")
@@ -96,7 +101,9 @@ function load_security_config(
                 error("Failed to load agent config from agents.json: $e")
             end
         else
-            error("Agents config file not found for agent '$agent_name' at $agents_config_path")
+            error(
+                "Agents config file not found for agent '$agent_name' at $agents_config_path",
+            )
         end
     end
 
@@ -118,10 +125,13 @@ function load_security_config(
                     port = supervisor_config["port"]
                     created_at = Int64(round(time()))
 
-                    @info "Loaded security config for supervisor from agents.json" mode=mode port=port path=agents_config_path
+                    @info "Loaded security config for supervisor from agents.json" mode =
+                        mode port = port path = agents_config_path
                     return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)
                 else
-                    error("Supervisor config not found in agents.json at $agents_config_path")
+                    error(
+                        "Supervisor config not found in agents.json at $agents_config_path",
+                    )
                 end
             catch e
                 if e isa ErrorException && contains(e.msg, "Supervisor config not found")
@@ -294,7 +304,7 @@ Display current security configuration in a readable format.
 function show_security_status(config::SecurityConfig)
     println()
     println("🔒 Security Configuration")
-    println("=" ^ 50)
+    println("="^50)
     println()
     println("Mode: ", config.mode)
     println("  • :strict  - API key + IP allowlist required")
@@ -303,7 +313,7 @@ function show_security_status(config::SecurityConfig)
     println()
     println("API Keys: ", length(config.api_keys))
     for (i, key) in enumerate(config.api_keys)
-        masked_key = key[1:min(15, length(key))] * "..." * key[max(1, end-3):end]
+        masked_key = key[1:min(15, length(key))] * "..." * key[max(1, end - 3):end]
         println("  $i. $masked_key")
     end
     println()

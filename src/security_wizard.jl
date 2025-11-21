@@ -397,7 +397,7 @@ function breathing_dragon_animation()
             for _ = 1:18
                 spread = rand(5:44)
                 fire_col = mouth_col_start - spread
-                fire_row = mouth_row + rand((-max(2, spread÷4)):max(2, spread÷4))
+                fire_row = mouth_row + rand((-max(2, spread ÷ 4)):max(2, spread ÷ 4))
 
                 if fire_row > 0 && fire_row <= rows && fire_col > 2
                     move_cursor(fire_row, fire_col)
@@ -647,7 +647,7 @@ function supportive_message_box(title::String, messages::Vector{String})
     printstyled("║  ", color = :light_magenta)
     printstyled("$title", color = :cyan, bold = true)
     padding = 65 - length(title)
-    print(" " ^ (padding-2))
+    print(" "^(padding - 2))
     printstyled("║\n", color = :light_magenta)
     printstyled(
         "╚═══════════════════════════════════════════════════════════════════╝\n",
@@ -1114,14 +1114,14 @@ function security_setup_wizard(
     if should_save
         # Show final summary
         printstyled("📋 Configuration Summary\n", color = :cyan, bold = true)
-        println("─" ^ 50)
+        println("─"^50)
         println("Mode:         $mode_choice")
         if mode_choice != :lax
             println("API Keys:     $(length(api_keys)) key(s) generated")
         end
         println("Allowed IPs:  $(length(allowed_ips)) IP(s)")
         println("Config file:  $(get_security_config_path(workspace_dir))")
-        println("─" ^ 50)
+        println("─"^50)
         println()
 
         if mode_choice != :lax

@@ -8,10 +8,7 @@ goto_definition_tool = @mcp_tool(
                 "type" => "string",
                 "description" => "Absolute path to the file",
             ),
-            "line" => Dict(
-                "type" => "integer",
-                "description" => "Line number (1-indexed)",
-            ),
+            "line" => Dict("type" => "integer", "description" => "Line number (1-indexed)"),
             "column" => Dict(
                 "type" => "integer",
                 "description" => "Column number (1-indexed)",
@@ -65,10 +62,7 @@ find_references_tool = @mcp_tool(
                 "type" => "string",
                 "description" => "Absolute path to the file",
             ),
-            "line" => Dict(
-                "type" => "integer",
-                "description" => "Line number (1-indexed)",
-            ),
+            "line" => Dict("type" => "integer", "description" => "Line number (1-indexed)"),
             "column" => Dict(
                 "type" => "integer",
                 "description" => "Column number (1-indexed)",
@@ -213,10 +207,7 @@ rename_tool = @mcp_tool(
                 "type" => "string",
                 "description" => "Absolute path to the file",
             ),
-            "line" => Dict(
-                "type" => "integer",
-                "description" => "Line number (1-indexed)",
-            ),
+            "line" => Dict("type" => "integer", "description" => "Line number (1-indexed)"),
             "column" => Dict(
                 "type" => "integer",
                 "description" => "Column number (1-indexed)",
@@ -331,10 +322,8 @@ code_actions_tool = @mcp_tool(
                         "line" => start_line - 1,
                         "character" => start_column - 1,
                     ),
-                    "end" => Dict(
-                        "line" => end_line - 1,
-                        "character" => end_column - 1,
-                    ),
+                    "end" =>
+                        Dict("line" => end_line - 1, "character" => end_column - 1),
                 ),
             ]
 

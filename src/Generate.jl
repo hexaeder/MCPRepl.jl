@@ -111,10 +111,10 @@ MCPRepl.Generate.generate("MyProject", path="/Users/name/projects")
 """
 function generate(
     project_name::String;
-    security_mode::Symbol=:lax,
-    port::Int=3000,
-    path::String=pwd(),
-    emoticon::String="🐉",
+    security_mode::Symbol = :lax,
+    port::Int = 3000,
+    path::String = pwd(),
+    emoticon::String = "🐉",
 )
     # Validate inputs
     if !(security_mode in [:strict, :relaxed, :lax])
@@ -347,7 +347,7 @@ function create_tools_config(project_path::String)
                 "enabled" => true,
                 "description" => "Test execution and coverage reporting",
                 "tokens" => "~200",
-                "tools" => ["run_tests"]
+                "tools" => ["run_tests"],
             ),
             "vscode" => Dict(
                 "enabled" => false,
@@ -434,18 +434,15 @@ function render_template(template_name::String; kwargs...)
     if !isfile(template_path)
         error("Template file not found: $template_path")
     end
-    tmp = Template(template_path, config=Dict("autoescape" => false))
-    tmp(init=Dict(kwargs))
+    tmp = Template(template_path, config = Dict("autoescape" => false))
+    tmp(init = Dict(kwargs))
 end
 
-function create_startup_script(project_path::String, port::Int, emoticon::String="🐉")
+function create_startup_script(project_path::String, port::Int, emoticon::String = "🐉")
     println("📝 Creating Julia startup script...")
 
     # Use template rendering for startup script
-    startup_content = render_template(
-        "julia-startup.jl";
-        emoticon=emoticon
-    )
+    startup_content = render_template("julia-startup.jl"; emoticon = emoticon)
 
     startup_path = joinpath(project_path, ".julia-startup.jl")
     write(startup_path, startup_content)
@@ -576,15 +573,15 @@ end
 function create_env_file(
     project_path::String,
     port::Int,
-    api_key::Union{String,Nothing}=nothing,
+    api_key::Union{String,Nothing} = nothing,
 )
     println("🔐 Creating .env file...")
 
     env_content = render_template(
         "env";
-        has_api_key=api_key !== nothing,
-        api_key=api_key,
-        port=port
+        has_api_key = api_key !== nothing,
+        api_key = api_key,
+        port = port,
     )
 
     env_path = joinpath(project_path, ".env")
@@ -596,7 +593,7 @@ end
 function create_claude_env_settings(
     project_path::String,
     port::Int,
-    api_key::Union{String,Nothing}=nothing,
+    api_key::Union{String,Nothing} = nothing,
 )
     println("🔐 Creating .claude/settings.local.json...")
 
@@ -605,10 +602,10 @@ function create_claude_env_settings(
 
     settings_content = render_template(
         "claude-settings.local.json";
-        has_api_key=api_key !== nothing,
-        api_key=api_key,
-        port=string(port),
-        session_name="default"
+        has_api_key = api_key !== nothing,
+        api_key = api_key,
+        port = string(port),
+        session_name = "default",
     )
 
     settings_path = joinpath(claude_dir, "settings.local.json")
@@ -620,7 +617,7 @@ end
 function create_vscode_config(
     project_path::String,
     port::Int,
-    api_key::Union{String,Nothing}=nothing,
+    api_key::Union{String,Nothing} = nothing,
 )
     println("⚙️  Creating VS Code MCP configuration...")
 
@@ -632,10 +629,10 @@ function create_vscode_config(
     # So we hardcode the values here and add the file to .gitignore
     mcp_content = render_template(
         "vscode-mcp.json";
-        port=port,
-        has_api_key=api_key !== nothing,
-        api_key=api_key,
-        session_name="default"
+        port = port,
+        has_api_key = api_key !== nothing,
+        api_key = api_key,
+        session_name = "default",
     )
 
     mcp_path = joinpath(vscode_dir, "mcp.json")
@@ -655,7 +652,7 @@ function create_vscode_settings(project_path::String)
 
     settings_content = render_template(
         "vscode-settings.json";
-        allowed_commands_json=allowed_commands_json
+        allowed_commands_json = allowed_commands_json,
     )
 
     settings_path = joinpath(vscode_dir, "settings.json")
@@ -665,14 +662,14 @@ end
 function create_claude_config_template(
     project_path::String,
     _port::Int,  # Unused - template uses ${JULIA_MCP_PORT} placeholder
-    api_key::Union{String,Nothing}=nothing,
+    api_key::Union{String,Nothing} = nothing,
 )
     println("🤖 Creating Claude Desktop config template...")
 
     config_content = render_template(
         "claude-mcp-config.json";
-        has_api_key=api_key !== nothing,
-        session_name="default"
+        has_api_key = api_key !== nothing,
+        session_name = "default",
     )
 
     template_path = joinpath(project_path, ".mcp.json")
@@ -684,7 +681,7 @@ end
 function create_gemini_config_template(
     project_path::String,
     _port::Int,  # Unused - template uses ${JULIA_MCP_PORT} placeholder
-    api_key::Union{String,Nothing}=nothing,
+    api_key::Union{String,Nothing} = nothing,
 )
     println("💎 Creating Gemini config...")
 
@@ -723,7 +720,12 @@ function create_gemini_config_template(
     return true
 end
 
-function create_kilocode_config(project_path::String, port::Int, tools::Vector{String}, api_key::Union{String,Nothing}=nothing)
+function create_kilocode_config(
+    project_path::String,
+    port::Int,
+    tools::Vector{String},
+    api_key::Union{String,Nothing} = nothing,
+)
     println("🧩 Creating KiloCode config...")
 
     kilocode_dir = joinpath(project_path, ".kilocode")
@@ -732,16 +734,17 @@ function create_kilocode_config(project_path::String, port::Int, tools::Vector{S
     # Generate list of all available tool names
     # This would be populated from the actual tool registry, but for template generation
     # we'll use a placeholder that the user can customize
-    tool_names = String["ex", "ping", "investigate_environment", "tool_help", "usage_instructions"]
+    tool_names =
+        String["ex", "ping", "investigate_environment", "tool_help", "usage_instructions"]
     tools_json = JSON.json(tool_names, 4)
 
     config_content = render_template(
         "kilocode-mcp-config.json";
-        has_api_key=api_key !== nothing,
-        api_key=api_key,
-        port=port,
-        tool_list=tools_json,
-        session_name="default"
+        has_api_key = api_key !== nothing,
+        api_key = api_key,
+        port = port,
+        tool_list = tools_json,
+        session_name = "default",
     )
 
     config_path = joinpath(kilocode_dir, "mcp.json")
@@ -1219,7 +1222,7 @@ function add_mcprepl_dependency(project_path::String)
             @suppress Pkg.add("MCPRepl")
         catch
             # If not registered, add from GitHub
-            @suppress Pkg.add(url="https://github.com/kahliburke/MCPRepl.jl")
+            @suppress Pkg.add(url = "https://github.com/kahliburke/MCPRepl.jl")
         end
 
         # Add recommended development tools

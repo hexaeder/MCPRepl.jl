@@ -224,7 +224,7 @@ function kill_process_on_port(port::Int)::Union{Int,Nothing}
         output = read(`lsof -ti:$port`, String)
         pid = parse(Int, strip(output))
 
-        @warn "Killing process on port $port" pid=pid
+        @warn "Killing process on port $port" pid = pid
         run(`kill -9 $pid`)
 
         # Wait for port to be released
@@ -232,7 +232,7 @@ function kill_process_on_port(port::Int)::Union{Int,Nothing}
 
         return pid
     catch e
-        @debug "Could not find/kill process on port $port" exception=e
+        @debug "Could not find/kill process on port $port" exception = e
         return nothing
     end
 end
@@ -245,12 +245,12 @@ Force kill an agent by PID or by finding it on its configured port.
 function force_kill_agent(agent::AgentState)::Bool
     if agent.pid !== nothing
         try
-            @warn "Force killing agent" name=agent.name pid=agent.pid
+            @warn "Force killing agent" name = agent.name pid = agent.pid
             run(`kill -9 $(agent.pid)`)
             sleep(2)
             return true
         catch e
-            @warn "Failed to kill agent by PID, trying port" name=agent.name exception=e
+            @warn "Failed to kill agent by PID, trying port" name = agent.name exception = e
         end
     end
 
@@ -269,7 +269,7 @@ function start_agent(agent::AgentState)::Bool
     repl_script = "./repl"
 
     if !isfile(repl_script)
-        @error "Project repl script not found" name=agent.name path=repl_script
+        @error "Project repl script not found" name = agent.name path = repl_script
         return false
     end
 
@@ -280,7 +280,7 @@ function start_agent(agent::AgentState)::Bool
         # Ignore chmod errors on Windows
     end
 
-    @info "Starting agent" name=agent.name directory=agent.directory port=agent.port
+    @info "Starting agent" name = agent.name directory = agent.directory port = agent.port
 
     try
         # Launch in background using @async and detach so it:
@@ -294,7 +294,7 @@ function start_agent(agent::AgentState)::Bool
 
         return true
     catch e
-        @error "Failed to start agent" name=agent.name exception=e
+        @error "Failed to start agent" name = agent.name exception = e
         agent.status = :dead
         return false
     end
@@ -306,7 +306,7 @@ end
 Restart an agent (kill if running, then start).
 """
 function restart_agent(agent::AgentState)::Bool
-    @info "Restarting agent" name=agent.name restarts=agent.restarts
+    @info "Restarting agent" name = agent.name restarts = agent.restarts
 
     # Force kill if running
     if agent.status != :stopped
@@ -327,18 +327,19 @@ Stop an agent gracefully (or forcefully if force=true).
 """
 function stop_agent(agent::AgentState; force::Bool = false)::Bool
     if force
-        @info "Force stopping agent" name=agent.name
+        @info "Force stopping agent" name = agent.name
         success = force_kill_agent(agent)
     else
         # Try graceful shutdown first (send SIGTERM)
         if agent.pid !== nothing
             try
-                @info "Gracefully stopping agent" name=agent.name pid=agent.pid
+                @info "Gracefully stopping agent" name = agent.name pid = agent.pid
                 run(`kill -15 $(agent.pid)`)
                 sleep(2)
                 success = true
             catch e
-                @warn "Graceful shutdown failed, using force" name=agent.name exception=e
+                @warn "Graceful shutdown failed, using force" name = agent.name exception =
+                    e
                 success = force_kill_agent(agent)
             end
         else
@@ -388,7 +389,8 @@ function supervisor_monitor_loop(registry::AgentRegistry)
                         startup_seconds = Dates.value(startup_duration) ÷ 1000
                         # Give agents 60 seconds to start and send first heartbeat
                         if startup_seconds > 60
-                            @warn "Agent stuck in starting state" name=name startup_seconds=startup_seconds
+                            @warn "Agent stuck in starting state" name = name startup_seconds =
+                                startup_seconds
                             lock(registry.lock) do
                                 agent.status = :dead
                                 if should_restart(agent, registry)
@@ -411,20 +413,24 @@ function supervisor_monitor_loop(registry::AgentRegistry)
 
                         # Update status based on missed heartbeats
                         if agent.missed_heartbeats >= registry.heartbeat_timeout_count
-                            @warn "Agent is dead (missed heartbeats)" name=name missed=agent.missed_heartbeats
+                            @warn "Agent is dead (missed heartbeats)" name = name missed =
+                                agent.missed_heartbeats
                             agent.status = :dead
 
                             # Attempt restart based on policy
                             if should_restart(agent, registry)
                                 restart_agent(agent)
                             else
-                                @warn "Not restarting agent (policy or restart limit)" name=name policy=agent.restart_policy restarts=agent.restarts
+                                @warn "Not restarting agent (policy or restart limit)" name =
+                                    name policy = agent.restart_policy restarts =
+                                    agent.restarts
                             end
                         elseif agent.missed_heartbeats >=
                                div(registry.heartbeat_timeout_count, 2)
                             # Agent is degraded (slow to respond)
                             if agent.status == :healthy
-                                @warn "Agent is degraded" name=name missed=agent.missed_heartbeats
+                                @warn "Agent is degraded" name = name missed =
+                                    agent.missed_heartbeats
                                 agent.status = :degraded
                             end
                         end
@@ -432,7 +438,7 @@ function supervisor_monitor_loop(registry::AgentRegistry)
                 end
             end
         catch e
-            @error "Error in supervisor monitor loop" exception=e
+            @error "Error in supervisor monitor loop" exception = e
         end
     end
 
@@ -458,7 +464,8 @@ function should_restart(agent::AgentState, registry::AgentRegistry)::Bool
     # TODO: Track restart timestamps and enforce max_restarts_per_hour
     # For now, just check total restarts
     if agent.restarts >= registry.max_restarts_per_hour
-        @warn "Agent has reached max restarts limit" name=agent.name restarts=agent.restarts limit=registry.max_restarts_per_hour
+        @warn "Agent has reached max restarts limit" name = agent.name restarts =
+            agent.restarts limit = registry.max_restarts_per_hour
         return false
     end
 
@@ -499,7 +506,7 @@ function stop_supervisor(registry::AgentRegistry; stop_agents::Bool = true)
         return
     end
 
-    @info "Stopping supervisor" stop_agents=stop_agents
+    @info "Stopping supervisor" stop_agents = stop_agents
 
     registry.running = false
 
@@ -558,7 +565,7 @@ function load_agents_config(
     path::String = ".mcprepl/agents.json",
 )::Union{AgentRegistry,Nothing}
     if !isfile(path)
-        @warn "Agents config file not found" path=path
+        @warn "Agents config file not found" path = path
         return nothing
     end
 
@@ -599,11 +606,12 @@ function load_agents_config(
             register_agent!(registry, agent)
         end
 
-        @info "Loaded agents configuration" path=path agent_count=length(registry.agents)
+        @info "Loaded agents configuration" path = path agent_count =
+            length(registry.agents)
 
         return registry
     catch e
-        @error "Failed to load agents config" path=path exception=e
+        @error "Failed to load agents config" path = path exception = e
         return nothing
     end
 end

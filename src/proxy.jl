@@ -29,7 +29,7 @@ function setup_proxy_logging(port::Int)
     log_file = joinpath(cache_dir, "proxy-$port.log")
 
     # Use FileLogger with automatic flushing
-    logger = LoggingExtras.FileLogger(log_file; append=true, always_flush=true)
+    logger = LoggingExtras.FileLogger(log_file; append = true, always_flush = true)
     global_logger(logger)
 
     @info "Proxy logging initialized" log_file = log_file
@@ -62,7 +62,7 @@ const VITE_DEV_PORT = 3001
 
 Check if a proxy server is already running on the specified port.
 """
-function is_server_running(port::Int=3000)
+function is_server_running(port::Int = 3000)
     try
         # Try to connect to the port
         sock = connect(ip"127.0.0.1", port)
@@ -79,7 +79,7 @@ end
 Get the PID of the running proxy server from the PID file.
 Returns nothing if no PID file exists or process is not running.
 """
-function get_server_pid(port::Int=3000)
+function get_server_pid(port::Int = 3000)
     pid_file = get_pid_file_path(port)
 
     if !isfile(pid_file)
@@ -96,7 +96,7 @@ function get_server_pid(port::Int=3000)
                 return pid
             else
                 # Stale PID file, remove it
-                rm(pid_file, force=true)
+                rm(pid_file, force = true)
                 return nothing
             end
         else
@@ -113,7 +113,7 @@ end
 
 Get the path to the PID file for a proxy server on the given port.
 """
-function get_pid_file_path(port::Int=3000)
+function get_pid_file_path(port::Int = 3000)
     cache_dir = get(ENV, "XDG_CACHE_HOME") do
         if Sys.iswindows()
             joinpath(ENV["LOCALAPPDATA"], "MCPRepl")
@@ -131,7 +131,7 @@ end
 
 Write the current process PID to the PID file.
 """
-function write_pid_file(port::Int=3000)
+function write_pid_file(port::Int = 3000)
     pid_file = get_pid_file_path(port)
     write(pid_file, string(getpid()))
     SERVER_PID_FILE[] = pid_file
@@ -142,9 +142,9 @@ end
 
 Remove the PID file for the proxy server.
 """
-function remove_pid_file(port::Int=3000)
+function remove_pid_file(port::Int = 3000)
     pid_file = get_pid_file_path(port)
-    rm(pid_file, force=true)
+    rm(pid_file, force = true)
 end
 
 # ============================================================================
@@ -214,7 +214,7 @@ function start_vite_dev_server()
         # Start npm run dev in the background
         # Need to change directory before running
         proc = cd(dashboard_dir) do
-            run(pipeline(`npm run dev`, stdout=devnull, stderr=devnull), wait=false)
+            run(pipeline(`npm run dev`, stdout = devnull, stderr = devnull), wait = false)
         end
 
         VITE_DEV_PROCESS[] = proc
@@ -267,26 +267,23 @@ Register a REPL with the proxy server so it can route requests to it.
 - `pid::Union{Int,Nothing}=nothing`: Process ID of the REPL (optional)
 - `metadata::Dict=Dict()`: Additional metadata (project path, etc.)
 """
-function register_repl(id::String, port::Int; pid::Union{Int,Nothing}=nothing, metadata::Dict=Dict())
+function register_repl(
+    id::String,
+    port::Int;
+    pid::Union{Int,Nothing} = nothing,
+    metadata::Dict = Dict(),
+)
     lock(REPL_REGISTRY_LOCK) do
-        REPL_REGISTRY[id] = REPLConnection(
-            id,
-            port,
-            pid,
-            :ready,
-            now(),
-            metadata,
-            nothing,
-            0
-        )
+        REPL_REGISTRY[id] =
+            REPLConnection(id, port, pid, :ready, now(), metadata, nothing, 0)
         @info "REPL registered with proxy" id = id port = port pid = pid
 
         # Log registration event to dashboard
-        Dashboard.log_event(id, Dashboard.AGENT_START, Dict(
-            "port" => port,
-            "pid" => pid,
-            "metadata" => metadata
-        ))
+        Dashboard.log_event(
+            id,
+            Dashboard.AGENT_START,
+            Dict("port" => port, "pid" => pid, "metadata" => metadata),
+        )
     end
 end
 
@@ -334,7 +331,11 @@ end
 
 Update the status of a registered REPL, optionally storing error information.
 """
-function update_repl_status(id::String, status::Symbol; error::Union{String,Nothing}=nothing)
+function update_repl_status(
+    id::String,
+    status::Symbol;
+    error::Union{String,Nothing} = nothing,
+)
     lock(REPL_REGISTRY_LOCK) do
         if haskey(REPL_REGISTRY, id)
             REPL_REGISTRY[id].status = status
@@ -360,7 +361,11 @@ Route a request to the appropriate backend REPL with streaming support.
 Uses the X-MCPRepl-Target header to determine which REPL to route to.
 If no header is present, routes to the first available REPL.
 """
-function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http::HTTP.Stream)
+function route_to_repl_streaming(
+    request::Dict,
+    original_req::HTTP.Request,
+    http::HTTP.Stream,
+)
     # Determine target REPL
     header_value = HTTP.header(original_req, "X-MCPRepl-Target")
     # HTTP.header returns a SubString{String} or String
@@ -373,14 +378,19 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
             HTTP.setstatus(http, 503)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "error" => Dict(
-                    "code" => -32001,
-                    "message" => "No REPLs registered with proxy. Please start a REPL with MCPRepl.start!()"
-                )
-            )))
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32001,
+                            "message" => "No REPLs registered with proxy. Please start a REPL with MCPRepl.start!()",
+                        ),
+                    ),
+                ),
+            )
             return nothing
         end
 
@@ -402,14 +412,17 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
         HTTP.setstatus(http, 404)
         HTTP.setheader(http, "Content-Type" => "application/json")
         HTTP.startwrite(http)
-        write(http, JSON.json(Dict(
-            "jsonrpc" => "2.0",
-            "id" => get(request, "id", nothing),
-            "error" => Dict(
-                "code" => -32002,
-                "message" => "REPL not found: $target_id"
-            )
-        )))
+        write(
+            http,
+            JSON.json(
+                Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" =>
+                        Dict("code" => -32002, "message" => "REPL not found: $target_id"),
+                ),
+            ),
+        )
         return nothing
     end
 
@@ -424,28 +437,38 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
                 HTTP.setstatus(http, 503)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "error" => Dict(
-                        "code" => -32003,
-                        "message" => "REPL not ready: $(repl.status)"
-                    )
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "error" => Dict(
+                                "code" => -32003,
+                                "message" => "REPL not ready: $(repl.status)",
+                            ),
+                        ),
+                    ),
+                )
                 return nothing
             end
         else
             HTTP.setstatus(http, 503)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "error" => Dict(
-                    "code" => -32003,
-                    "message" => "REPL not ready: $(repl.status)"
-                )
-            )))
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32003,
+                            "message" => "REPL not ready: $(repl.status)",
+                        ),
+                    ),
+                ),
+            )
             return nothing
         end
     end
@@ -463,20 +486,23 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
             params = get(request, "params", Dict())
             tool_name = get(params, "name", "unknown")
             tool_args = get(params, "arguments", Dict())
-            Dashboard.log_event(target_id, Dashboard.TOOL_CALL, Dict(
-                "tool" => tool_name,
-                "method" => method,
-                "arguments" => tool_args
-            ))
+            Dashboard.log_event(
+                target_id,
+                Dashboard.TOOL_CALL,
+                Dict("tool" => tool_name, "method" => method, "arguments" => tool_args),
+            )
         elseif !isempty(method)
             # Log other methods as code execution
-            Dashboard.log_event(target_id, Dashboard.CODE_EXECUTION, Dict(
-                "method" => method
-            ))
+            Dashboard.log_event(
+                target_id,
+                Dashboard.CODE_EXECUTION,
+                Dict("method" => method),
+            )
         end
 
         start_time = time()
-        @info "Sending request to backend" url = backend_url method = method body_length = length(body_str)
+        @info "Sending request to backend" url = backend_url method = method body_length =
+            length(body_str)
 
         # Make request to backend - use simple HTTP.request with response streaming disabled
         backend_response = HTTP.request(
@@ -484,9 +510,9 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
             backend_url,
             ["Content-Type" => "application/json"],
             body_str;
-            readtimeout=30,
-            connect_timeout=5,
-            status_exception=false
+            readtimeout = 30,
+            connect_timeout = 5,
+            status_exception = false,
         )
 
         duration_ms = (time() - start_time) * 1000
@@ -497,7 +523,8 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
             response_headers[name] = value
         end
 
-        @info "Received response from backend" status = response_status body_length = length(response_body)
+        @info "Received response from backend" status = response_status body_length =
+            length(response_body)
 
         # Parse response to extract result/error for dashboard
         response_data = Dict("status" => response_status[], "method" => method)
@@ -515,13 +542,19 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
         end
 
         # Log successful execution with result
-        Dashboard.log_event(target_id, Dashboard.OUTPUT, response_data; duration_ms=duration_ms)
+        Dashboard.log_event(
+            target_id,
+            Dashboard.OUTPUT,
+            response_data;
+            duration_ms = duration_ms,
+        )
 
         # Update last heartbeat
         update_repl_status(target_id, :ready)
 
         # Forward response to client with proper headers
-        @info "Returning response to client" status = response_status body_length = length(response_body)
+        @info "Returning response to client" status = response_status body_length =
+            length(response_body)
         HTTP.setstatus(http, response_status)
 
         # Forward all headers from backend, ensuring Content-Type is set
@@ -554,30 +587,38 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
 
                 if REPL_REGISTRY[target_id].missed_heartbeats >= 3
                     REPL_REGISTRY[target_id].status = :stopped
-                    @warn "REPL marked as stopped after 3 consecutive failures" id = target_id
+                    @warn "REPL marked as stopped after 3 consecutive failures" id =
+                        target_id
                 else
-                    @info "REPL error ($(REPL_REGISTRY[target_id].missed_heartbeats)/3 failures)" id = target_id
+                    @info "REPL error ($(REPL_REGISTRY[target_id].missed_heartbeats)/3 failures)" id =
+                        target_id
                 end
             end
         end
 
         # Log error event
-        Dashboard.log_event(target_id, Dashboard.ERROR, Dict(
-            "message" => sprint(showerror, e),
-            "method" => get(request, "method", "")
-        ))
+        Dashboard.log_event(
+            target_id,
+            Dashboard.ERROR,
+            Dict("message" => sprint(showerror, e), "method" => get(request, "method", "")),
+        )
 
         HTTP.setstatus(http, 502)
         HTTP.setheader(http, "Content-Type" => "application/json")
         HTTP.startwrite(http)
-        write(http, JSON.json(Dict(
-            "jsonrpc" => "2.0",
-            "id" => get(request, "id", nothing),
-            "error" => Dict(
-                "code" => -32004,
-                "message" => "Failed to connect to REPL: $(sprint(showerror, e))"
-            )
-        )))
+        write(
+            http,
+            JSON.json(
+                Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" => Dict(
+                        "code" => -32004,
+                        "message" => "Failed to connect to REPL: $(sprint(showerror, e))",
+                    ),
+                ),
+            ),
+        )
         return nothing
     end
 end
@@ -595,7 +636,8 @@ function handle_request(http::HTTP.Stream)
         body = String(read(http))
 
         # Log all incoming requests for debugging
-        @info "Incoming request" method = req.method target = req.target content_length = length(body)
+        @info "Incoming request" method = req.method target = req.target content_length =
+            length(body)
 
         # Handle dashboard HTTP routes
         uri = HTTP.URI(req.target)
@@ -610,7 +652,8 @@ function handle_request(http::HTTP.Stream)
         end
 
         # Dashboard HTML page and static assets (React build or Vite dev server)
-        if (path == "/dashboard/" || startswith(path, "/dashboard/")) && !startswith(path, "/dashboard/api/")
+        if (path == "/dashboard/" || startswith(path, "/dashboard/")) &&
+           !startswith(path, "/dashboard/api/")
             # Try to proxy to Vite dev server first (for HMR during development)
             vite_port = 3001
             try
@@ -621,7 +664,7 @@ function handle_request(http::HTTP.Stream)
                 # Vite is running - proxy the request to it
                 # Keep the full path including /dashboard since Vite is configured with base: '/dashboard/'
                 vite_url = "http://localhost:$(vite_port)$(path)"
-                vite_response = HTTP.get(vite_url, status_exception=false)
+                vite_response = HTTP.get(vite_url, status_exception = false)
 
                 HTTP.setstatus(http, vite_response.status)
                 for (name, value) in vite_response.headers
@@ -654,7 +697,8 @@ function handle_request(http::HTTP.Stream)
                     "port" => conn.port,
                     "pid" => conn.pid,
                     "status" => string(conn.status),
-                    "last_heartbeat" => Dates.format(conn.last_heartbeat, "yyyy-mm-dd HH:MM:SS")
+                    "last_heartbeat" =>
+                        Dates.format(conn.last_heartbeat, "yyyy-mm-dd HH:MM:SS"),
                 )
             end
             HTTP.setstatus(http, 200)
@@ -670,14 +714,16 @@ function handle_request(http::HTTP.Stream)
             id = get(query_params, "id", nothing)
             limit = parse(Int, get(query_params, "limit", "100"))
 
-            events = Dashboard.get_events(id=id, limit=limit)
-            events_json = [Dict(
-                "id" => e.id,
-                "type" => string(e.event_type),
-                "timestamp" => Dates.format(e.timestamp, "yyyy-mm-dd HH:MM:SS.sss"),
-                "data" => e.data,
-                "duration_ms" => e.duration_ms
-            ) for e in events]
+            events = Dashboard.get_events(id = id, limit = limit)
+            events_json = [
+                Dict(
+                    "id" => e.id,
+                    "type" => string(e.event_type),
+                    "timestamp" => Dates.format(e.timestamp, "yyyy-mm-dd HH:MM:SS.sss"),
+                    "data" => e.data,
+                    "duration_ms" => e.duration_ms,
+                ) for e in events
+            ]
 
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
@@ -708,16 +754,19 @@ function handle_request(http::HTTP.Stream)
             try
                 while isopen(http)
                     # Get events since last check
-                    events = Dashboard.get_events(id=id, limit=50)
+                    events = Dashboard.get_events(id = id, limit = 50)
                     new_events = filter(e -> e.timestamp > last_event_time, events)
 
                     for event in new_events
                         event_data = Dict(
                             "id" => event.id,
                             "type" => string(event.event_type),
-                            "timestamp" => Dates.format(event.timestamp, "yyyy-mm-dd HH:MM:SS.sss"),
+                            "timestamp" => Dates.format(
+                                event.timestamp,
+                                "yyyy-mm-dd HH:MM:SS.sss",
+                            ),
                             "data" => event.data,
-                            "duration_ms" => event.duration_ms
+                            "duration_ms" => event.duration_ms,
                         )
 
                         write(http, "event: update\n")
@@ -744,33 +793,57 @@ function handle_request(http::HTTP.Stream)
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            
+
             test_agent = "test-agent"
-            
+
             # Generate sample events of all types
             Dashboard.log_event(test_agent, Dashboard.HEARTBEAT, Dict("status" => "ok"))
-            
-            Dashboard.log_event(test_agent, Dashboard.TOOL_CALL, 
-                Dict("tool" => "ex", "arguments" => Dict("e" => "println(\"Hello, World!\")")),
-                duration_ms=12.5)
-            
-            Dashboard.log_event(test_agent, Dashboard.CODE_EXECUTION,
+
+            Dashboard.log_event(
+                test_agent,
+                Dashboard.TOOL_CALL,
+                Dict(
+                    "tool" => "ex",
+                    "arguments" => Dict("e" => "println(\"Hello, World!\")"),
+                ),
+                duration_ms = 12.5,
+            )
+
+            Dashboard.log_event(
+                test_agent,
+                Dashboard.CODE_EXECUTION,
                 Dict("expression" => "2 + 2", "result" => "4"),
-                duration_ms=0.8)
-            
-            Dashboard.log_event(test_agent, Dashboard.OUTPUT,
-                Dict("text" => "Hello, World!"))
-            
-            Dashboard.log_event(test_agent, Dashboard.ERROR,
-                Dict("message" => "UndefVarError: x not defined", "stacktrace" => "..."))
-            
-            Dashboard.log_event(test_agent, Dashboard.AGENT_START,
-                Dict("port" => 3000, "pid" => getpid()))
-            
-            Dashboard.log_event(test_agent, Dashboard.AGENT_STOP,
-                Dict("reason" => "shutdown"))
-            
-            write(http, JSON.json(Dict("status" => "ok", "message" => "Test events generated")))
+                duration_ms = 0.8,
+            )
+
+            Dashboard.log_event(
+                test_agent,
+                Dashboard.OUTPUT,
+                Dict("text" => "Hello, World!"),
+            )
+
+            Dashboard.log_event(
+                test_agent,
+                Dashboard.ERROR,
+                Dict("message" => "UndefVarError: x not defined", "stacktrace" => "..."),
+            )
+
+            Dashboard.log_event(
+                test_agent,
+                Dashboard.AGENT_START,
+                Dict("port" => 3000, "pid" => getpid()),
+            )
+
+            Dashboard.log_event(
+                test_agent,
+                Dashboard.AGENT_STOP,
+                Dict("reason" => "shutdown"),
+            )
+
+            write(
+                http,
+                JSON.json(Dict("status" => "ok", "message" => "Test events generated")),
+            )
             return nothing
         end
 
@@ -791,7 +864,10 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Access-Control-Allow-Origin" => "*")
                 HTTP.setheader(http, "Access-Control-Allow-Methods" => "GET, POST, OPTIONS")
-                HTTP.setheader(http, "Access-Control-Allow-Headers" => "Content-Type, Authorization")
+                HTTP.setheader(
+                    http,
+                    "Access-Control-Allow-Headers" => "Content-Type, Authorization",
+                )
                 HTTP.setheader(http, "Access-Control-Max-Age" => "86400")
                 HTTP.setheader(http, "Content-Length" => "0")
                 HTTP.startwrite(http)
@@ -803,28 +879,38 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "status" => "ok",
-                    "type" => "mcprepl-proxy",
-                    "version" => "0.1.0",
-                    "pid" => getpid(),
-                    "uptime" => time(),
-                    "protocol" => "MCP 2024-11-05"
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "status" => "ok",
+                            "type" => "mcprepl-proxy",
+                            "version" => "0.1.0",
+                            "pid" => getpid(),
+                            "uptime" => time(),
+                            "protocol" => "MCP 2024-11-05",
+                        ),
+                    ),
+                )
                 return nothing
             end
             # Empty POST body - invalid request
             HTTP.setstatus(http, 400)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "error" => Dict(
-                    "code" => -32700,
-                    "message" => "Parse error: empty request body"
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "error" => Dict(
+                            "code" => -32700,
+                            "message" => "Parse error: empty request body",
+                        ),
+                        "id" => nothing,
+                    ),
                 ),
-                "id" => nothing
-            )))
+            )
             return nothing
         end
 
@@ -835,31 +921,39 @@ function handle_request(http::HTTP.Stream)
         method = get(request, "method", "")
         request_id = get(request, "id", nothing)
         params = get(request, "params", nothing)
-        @info "📨 MCP Request" method = method id = request_id has_params = !isnothing(params)
+        @info "📨 MCP Request" method = method id = request_id has_params =
+            !isnothing(params)
 
         if method == "proxy/status"
             repls = list_repls()
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "result" => Dict(
-                    "status" => "running",
-                    "pid" => getpid(),
-                    "port" => SERVER_PORT[],
-                    "connected_repls" => length(repls),
-                    "repls" => [Dict(
-                        "id" => r.id,
-                        "port" => r.port,
-                        "status" => string(r.status),
-                        "pid" => r.pid,
-                        "last_error" => r.last_error
-                    ) for r in repls],
-                    "uptime" => time()
-                )
-            )))
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict(
+                            "status" => "running",
+                            "pid" => getpid(),
+                            "port" => SERVER_PORT[],
+                            "connected_repls" => length(repls),
+                            "repls" => [
+                                Dict(
+                                    "id" => r.id,
+                                    "port" => r.port,
+                                    "status" => string(r.status),
+                                    "pid" => r.pid,
+                                    "last_error" => r.last_error,
+                                ) for r in repls
+                            ],
+                            "uptime" => time(),
+                        ),
+                    ),
+                ),
+            )
             return nothing
         elseif method == "proxy/register"
             # Register a new REPL
@@ -870,33 +964,45 @@ function handle_request(http::HTTP.Stream)
             metadata_raw = get(params, "metadata", Dict())
 
             # Convert JSON.Object to Dict if needed
-            metadata = metadata_raw isa Dict ? metadata_raw : Dict(String(k) => v for (k, v) in pairs(metadata_raw))
+            metadata =
+                metadata_raw isa Dict ? metadata_raw :
+                Dict(String(k) => v for (k, v) in pairs(metadata_raw))
 
             if id === nothing || port === nothing
                 HTTP.setstatus(http, 400)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "error" => Dict(
-                        "code" => -32602,
-                        "message" => "Invalid params: 'id' and 'port' are required"
-                    )
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "error" => Dict(
+                                "code" => -32602,
+                                "message" => "Invalid params: 'id' and 'port' are required",
+                            ),
+                        ),
+                    ),
+                )
                 return nothing
             end
 
-            register_repl(id, port; pid=pid, metadata=metadata)
+            register_repl(id, port; pid = pid, metadata = metadata)
 
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "result" => Dict("status" => "registered", "id" => id)
-            )))
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict("status" => "registered", "id" => id),
+                    ),
+                ),
+            )
             return nothing
         elseif method == "proxy/unregister"
             # Unregister a REPL
@@ -907,14 +1013,19 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 400)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "error" => Dict(
-                        "code" => -32602,
-                        "message" => "Invalid params: 'id' is required"
-                    )
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "error" => Dict(
+                                "code" => -32602,
+                                "message" => "Invalid params: 'id' is required",
+                            ),
+                        ),
+                    ),
+                )
                 return nothing
             end
 
@@ -923,11 +1034,16 @@ function handle_request(http::HTTP.Stream)
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "result" => Dict("status" => "unregistered", "id" => id)
-            )))
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict("status" => "unregistered", "id" => id),
+                    ),
+                ),
+            )
             return nothing
         elseif method == "proxy/heartbeat"
             # REPL sends heartbeat to indicate it's alive
@@ -938,14 +1054,19 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 400)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "error" => Dict(
-                        "code" => -32602,
-                        "message" => "Invalid params: 'id' is required"
-                    )
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "error" => Dict(
+                                "code" => -32602,
+                                "message" => "Invalid params: 'id' is required",
+                            ),
+                        ),
+                    ),
+                )
                 return nothing
             end
 
@@ -969,36 +1090,43 @@ function handle_request(http::HTTP.Stream)
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "result" => Dict("status" => "ok")
-            )))
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict("status" => "ok"),
+                    ),
+                ),
+            )
             return nothing
         elseif method == "initialize"
             # Handle MCP initialize request
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(Dict(
-                "jsonrpc" => "2.0",
-                "id" => get(request, "id", nothing),
-                "result" => Dict(
-                    "protocolVersion" => "2024-11-05",
-                    "capabilities" => Dict(
-                        "tools" => Dict()
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict(
+                            "protocolVersion" => "2024-11-05",
+                            "capabilities" => Dict("tools" => Dict()),
+                            "serverInfo" =>
+                                Dict("name" => "mcprepl-proxy", "version" => "0.1.0"),
+                        ),
                     ),
-                    "serverInfo" => Dict(
-                        "name" => "mcprepl-proxy",
-                        "version" => "0.1.0"
-                    )
-                )
-            )))
+                ),
+            )
             return nothing
         elseif method == "tools/list"
             # Always include proxy management tools, plus backend tools if available
             repls = list_repls()
-            @info "tools/list handling" num_repls = length(repls) repl_ids = [r.id for r in repls]
+            @info "tools/list handling" num_repls = length(repls) repl_ids =
+                [r.id for r in repls]
 
             # Start with proxy tools (always available)
             proxy_tools = [
@@ -1008,8 +1136,8 @@ function handle_request(http::HTTP.Stream)
                     "inputSchema" => Dict(
                         "type" => "object",
                         "properties" => Dict(),
-                        "required" => []
-                    )
+                        "required" => [],
+                    ),
                 ),
                 Dict(
                     "name" => "list_agents",
@@ -1017,8 +1145,8 @@ function handle_request(http::HTTP.Stream)
                     "inputSchema" => Dict(
                         "type" => "object",
                         "properties" => Dict(),
-                        "required" => []
-                    )
+                        "required" => [],
+                    ),
                 ),
                 Dict(
                     "name" => "dashboard_url",
@@ -1026,8 +1154,8 @@ function handle_request(http::HTTP.Stream)
                     "inputSchema" => Dict(
                         "type" => "object",
                         "properties" => Dict(),
-                        "required" => []
-                    )
+                        "required" => [],
+                    ),
                 ),
                 Dict(
                     "name" => "start_agent",
@@ -1037,16 +1165,16 @@ function handle_request(http::HTTP.Stream)
                         "properties" => Dict(
                             "project_path" => Dict(
                                 "type" => "string",
-                                "description" => "Path to the Julia project directory (containing Project.toml)"
+                                "description" => "Path to the Julia project directory (containing Project.toml)",
                             ),
                             "agent_name" => Dict(
                                 "type" => "string",
-                                "description" => "Optional name for the agent (defaults to project directory name)"
-                            )
+                                "description" => "Optional name for the agent (defaults to project directory name)",
+                            ),
                         ),
-                        "required" => ["project_path"]
-                    )
-                )
+                        "required" => ["project_path"],
+                    ),
+                ),
             ]
 
             if isempty(repls)
@@ -1054,16 +1182,23 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "result" => Dict("tools" => proxy_tools)
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "result" => Dict("tools" => proxy_tools),
+                        ),
+                    ),
+                )
                 return nothing
             else
                 # Fetch backend tools and combine with proxy tools
                 # Forward request to first available backend
-                request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
+                request_dict =
+                    request isa Dict ? request :
+                    Dict(String(k) => v for (k, v) in pairs(request))
                 target_id = first(repls).id
                 repl = get_repl(target_id)
 
@@ -1077,29 +1212,37 @@ function handle_request(http::HTTP.Stream)
                             backend_url,
                             ["Content-Type" => "application/json"],
                             body_str;
-                            readtimeout=5,
-                            connect_timeout=2,
-                            status_exception=false
+                            readtimeout = 5,
+                            connect_timeout = 2,
+                            status_exception = false,
                         )
 
                         if backend_response.status == 200
                             backend_data = JSON.parse(String(backend_response.body))
-                            if haskey(backend_data, "result") && haskey(backend_data["result"], "tools")
+                            if haskey(backend_data, "result") &&
+                               haskey(backend_data["result"], "tools")
                                 # Combine proxy tools + backend tools
-                                all_tools = vcat(proxy_tools, backend_data["result"]["tools"])
+                                all_tools =
+                                    vcat(proxy_tools, backend_data["result"]["tools"])
                                 HTTP.setstatus(http, 200)
                                 HTTP.setheader(http, "Content-Type" => "application/json")
                                 HTTP.startwrite(http)
-                                write(http, JSON.json(Dict(
-                                    "jsonrpc" => "2.0",
-                                    "id" => get(request, "id", nothing),
-                                    "result" => Dict("tools" => all_tools)
-                                )))
+                                write(
+                                    http,
+                                    JSON.json(
+                                        Dict(
+                                            "jsonrpc" => "2.0",
+                                            "id" => get(request, "id", nothing),
+                                            "result" => Dict("tools" => all_tools),
+                                        ),
+                                    ),
+                                )
                                 return nothing
                             end
                         end
                     catch e
-                        @warn "Failed to fetch backend tools, returning proxy tools only" exception = e
+                        @warn "Failed to fetch backend tools, returning proxy tools only" exception =
+                            e
                     end
                 end
 
@@ -1107,11 +1250,16 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "result" => Dict("tools" => proxy_tools)
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "result" => Dict("tools" => proxy_tools),
+                        ),
+                    ),
+                )
                 return nothing
             end
         elseif method == "tools/call"
@@ -1134,16 +1282,19 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "result" => Dict(
-                        "content" => [Dict(
-                            "type" => "text",
-                            "text" => status_text
-                        )]
-                    )
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "result" => Dict(
+                                "content" =>
+                                    [Dict("type" => "text", "text" => status_text)],
+                            ),
+                        ),
+                    ),
+                )
                 return nothing
             elseif tool_name == "list_agents"
                 if isempty(repls)
@@ -1162,31 +1313,41 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "result" => Dict(
-                        "content" => [Dict(
-                            "type" => "text",
-                            "text" => agent_text
-                        )]
-                    )
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "result" => Dict(
+                                "content" =>
+                                    [Dict("type" => "text", "text" => agent_text)],
+                            ),
+                        ),
+                    ),
+                )
                 return nothing
             elseif tool_name == "dashboard_url"
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "result" => Dict(
-                        "content" => [Dict(
-                            "type" => "text",
-                            "text" => "Dashboard URL: http://localhost:3001\n\nThe dashboard provides real-time monitoring of:\n- Connected REPL agents\n- Tool calls and code execution\n- Event logs and metrics\n- Agent status and heartbeats"
-                        )]
-                    )
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "result" => Dict(
+                                "content" => [
+                                    Dict(
+                                        "type" => "text",
+                                        "text" => "Dashboard URL: http://localhost:3001\n\nThe dashboard provides real-time monitoring of:\n- Connected REPL agents\n- Tool calls and code execution\n- Event logs and metrics\n- Agent status and heartbeats",
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ),
+                )
                 return nothing
             elseif tool_name == "start_agent"
                 # Parse arguments
@@ -1197,14 +1358,19 @@ function handle_request(http::HTTP.Stream)
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON.json(Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => get(request, "id", nothing),
-                        "error" => Dict(
-                            "code" => -32602,
-                            "message" => "project_path is required"
-                        )
-                    )))
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "error" => Dict(
+                                    "code" => -32602,
+                                    "message" => "project_path is required",
+                                ),
+                            ),
+                        ),
+                    )
                     return nothing
                 end
 
@@ -1214,16 +1380,23 @@ function handle_request(http::HTTP.Stream)
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON.json(Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => get(request, "id", nothing),
-                        "result" => Dict(
-                            "content" => [Dict(
-                                "type" => "text",
-                                "text" => "Agent '$agent_name' is already running on port $(repls[existing].port)"
-                            )]
-                        )
-                    )))
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "result" => Dict(
+                                    "content" => [
+                                        Dict(
+                                            "type" => "text",
+                                            "text" => "Agent '$agent_name' is already running on port $(repls[existing].port)",
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ),
+                    )
                     return nothing
                 end
 
@@ -1232,11 +1405,14 @@ function handle_request(http::HTTP.Stream)
                     julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=\"$agent_name\")"`
 
                     # Run in background
-                    proc = run(pipeline(julia_cmd, stdout=devnull, stderr=devnull), wait=false)
+                    proc = run(
+                        pipeline(julia_cmd, stdout = devnull, stderr = devnull),
+                        wait = false,
+                    )
 
                     # Wait for agent to register (max 10 seconds)
                     registered = false
-                    for i in 1:100
+                    for i = 1:100
                         sleep(0.1)
                         idx = findfirst(r -> r.id == agent_name, repls)
                         if idx !== nothing
@@ -1245,16 +1421,23 @@ function handle_request(http::HTTP.Stream)
                             HTTP.setstatus(http, 200)
                             HTTP.setheader(http, "Content-Type" => "application/json")
                             HTTP.startwrite(http)
-                            write(http, JSON.json(Dict(
-                                "jsonrpc" => "2.0",
-                                "id" => get(request, "id", nothing),
-                                "result" => Dict(
-                                    "content" => [Dict(
-                                        "type" => "text",
-                                        "text" => "Successfully started agent '$agent_name' on port $(new_agent.port)\n\nProject: $project_path\nPID: $(new_agent.pid)\nStatus: $(new_agent.status)"
-                                    )]
-                                )
-                            )))
+                            write(
+                                http,
+                                JSON.json(
+                                    Dict(
+                                        "jsonrpc" => "2.0",
+                                        "id" => get(request, "id", nothing),
+                                        "result" => Dict(
+                                            "content" => [
+                                                Dict(
+                                                    "type" => "text",
+                                                    "text" => "Successfully started agent '$agent_name' on port $(new_agent.port)\n\nProject: $project_path\nPID: $(new_agent.pid)\nStatus: $(new_agent.status)",
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                ),
+                            )
                             return nothing
                         end
                     end
@@ -1263,27 +1446,37 @@ function handle_request(http::HTTP.Stream)
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON.json(Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => get(request, "id", nothing),
-                        "error" => Dict(
-                            "code" => -32603,
-                            "message" => "Agent process started but did not register within 10 seconds. Check logs for details."
-                        )
-                    )))
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "error" => Dict(
+                                    "code" => -32603,
+                                    "message" => "Agent process started but did not register within 10 seconds. Check logs for details.",
+                                ),
+                            ),
+                        ),
+                    )
                     return nothing
                 catch e
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON.json(Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => get(request, "id", nothing),
-                        "error" => Dict(
-                            "code" => -32603,
-                            "message" => "Failed to start agent: $(sprint(showerror, e))"
-                        )
-                    )))
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "error" => Dict(
+                                    "code" => -32603,
+                                    "message" => "Failed to start agent: $(sprint(showerror, e))",
+                                ),
+                            ),
+                        ),
+                    )
                     return nothing
                 end
             else
@@ -1292,20 +1485,29 @@ function handle_request(http::HTTP.Stream)
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
                     HTTP.startwrite(http)
-                    write(http, JSON.json(Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => get(request, "id", nothing),
-                        "result" => Dict(
-                            "content" => [Dict(
-                                "type" => "text",
-                                "text" => "⚠️ Tool '$tool_name' requires a Julia REPL backend.\n\nNo REPL agents are currently connected to the proxy.\n\nTo enable Julia tools:\n1. Start a Julia REPL\n2. Run: using MCPRepl; MCPRepl.start!()\n3. The REPL will automatically register with this proxy\n\nAvailable proxy tools: proxy_status, list_agents, dashboard_url"
-                            )]
-                        )
-                    )))
+                    write(
+                        http,
+                        JSON.json(
+                            Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "result" => Dict(
+                                    "content" => [
+                                        Dict(
+                                            "type" => "text",
+                                            "text" => "⚠️ Tool '$tool_name' requires a Julia REPL backend.\n\nNo REPL agents are currently connected to the proxy.\n\nTo enable Julia tools:\n1. Start a Julia REPL\n2. Run: using MCPRepl; MCPRepl.start!()\n3. The REPL will automatically register with this proxy\n\nAvailable proxy tools: proxy_status, list_agents, dashboard_url",
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ),
+                    )
                     return nothing
                 else
                     # Route to backend
-                    request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
+                    request_dict =
+                        request isa Dict ? request :
+                        Dict(String(k) => v for (k, v) in pairs(request))
                     route_to_repl_streaming(request_dict, req, http)
                     return nothing
                 end
@@ -1319,15 +1521,22 @@ function handle_request(http::HTTP.Stream)
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "application/json")
                 HTTP.startwrite(http)
-                write(http, JSON.json(Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "result" => nothing  # Many MCP methods (like notifications) expect null result
-                )))
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "result" => nothing,  # Many MCP methods (like notifications) expect null result
+                        ),
+                    ),
+                )
                 return nothing
             else
                 # Route to backend REPL
-                request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
+                request_dict =
+                    request isa Dict ? request :
+                    Dict(String(k) => v for (k, v) in pairs(request))
                 route_to_repl_streaming(request_dict, req, http)
                 return nothing
             end
@@ -1338,14 +1547,19 @@ function handle_request(http::HTTP.Stream)
         HTTP.setstatus(http, 500)
         HTTP.setheader(http, "Content-Type" => "application/json")
         HTTP.startwrite(http)
-        write(http, JSON.json(Dict(
-            "jsonrpc" => "2.0",
-            "error" => Dict(
-                "code" => -32603,
-                "message" => "Internal error: $(sprint(showerror, e))"
+        write(
+            http,
+            JSON.json(
+                Dict(
+                    "jsonrpc" => "2.0",
+                    "error" => Dict(
+                        "code" => -32603,
+                        "message" => "Internal error: $(sprint(showerror, e))",
+                    ),
+                    "id" => nothing,
+                ),
             ),
-            "id" => nothing
-        )))
+        )
         return nothing
     end
 end
@@ -1364,7 +1578,7 @@ Start the persistent MCP proxy server.
 - HTTP.Server if running in foreground
 - nothing if started in background
 """
-function start_server(port::Int=3000; background::Bool=false, status_callback=nothing)
+function start_server(port::Int = 3000; background::Bool = false, status_callback = nothing)
     if is_server_running(port)
         existing_pid = get_server_pid(port)
         if existing_pid !== nothing
@@ -1375,7 +1589,7 @@ function start_server(port::Int=3000; background::Bool=false, status_callback=no
 
     if background
         # Start server in background process
-        return start_background_server(port; status_callback=status_callback)
+        return start_background_server(port; status_callback = status_callback)
     else
         # Start server in current process
         return start_foreground_server(port)
@@ -1387,7 +1601,7 @@ end
 
 Start the proxy server in the current process.
 """
-function start_foreground_server(port::Int=3000)
+function start_foreground_server(port::Int = 3000)
     if SERVER[] !== nothing
         @warn "Server already running in this process"
         return SERVER[]
@@ -1412,7 +1626,8 @@ function start_foreground_server(port::Int=3000)
     end)
 
     # Start HTTP server with streaming support
-    server = HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose=false, stream=true)
+    server =
+        HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose = false, stream = true)
     SERVER[] = server
 
     @info "MCP Proxy Server started successfully" port = port pid = getpid()
@@ -1428,7 +1643,7 @@ Start the proxy server in a detached background process.
 If `status_callback` is provided, it will be called with status updates instead of
 printing directly (useful when parent has its own spinner).
 """
-function start_background_server(port::Int=3000; status_callback=nothing)
+function start_background_server(port::Int = 3000; status_callback = nothing)
     # Create a Julia script that starts the server
     script = """
     using Pkg
@@ -1456,11 +1671,14 @@ function start_background_server(port::Int=3000; status_callback=nothing)
 
     if Sys.iswindows()
         # Windows: use START command
-        run(`cmd /c start julia $script_file`, wait=false)
+        run(`cmd /c start julia $script_file`, wait = false)
     else
         # Unix: use nohup and redirect output
         log_file = joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
-        run(pipeline(`nohup julia $script_file`, stdout=log_file, stderr=log_file), wait=false)
+        run(
+            pipeline(`nohup julia $script_file`, stdout = log_file, stderr = log_file),
+            wait = false,
+        )
     end
 
     # Wait for server to start
@@ -1473,7 +1691,9 @@ function start_background_server(port::Int=3000; status_callback=nothing)
         if status_callback !== nothing
             elapsed_sec = round(Int, elapsed)
             # Color the number with coral/salmon (203 = coral pink)
-            status_callback("Starting MCPRepl (waiting for proxy server... \033[38;5;203m$(elapsed_sec)s\033[0m)")
+            status_callback(
+                "Starting MCPRepl (waiting for proxy server... \033[38;5;203m$(elapsed_sec)s\033[0m)",
+            )
         end
 
         if is_server_running(port)
@@ -1482,7 +1702,8 @@ function start_background_server(port::Int=3000; status_callback=nothing)
                 status_callback("Starting MCPRepl (proxy server ready)")
             end
             pid = get_server_pid(port)
-            @debug "Background proxy server started" port = port pid = pid elapsed_time = elapsed
+            @debug "Background proxy server started" port = port pid = pid elapsed_time =
+                elapsed
             return nothing
         end
 
@@ -1494,7 +1715,8 @@ function start_background_server(port::Int=3000; status_callback=nothing)
     @error "Failed to start background proxy server" timeout = max_wait
 
     # Show log contents to help debug
-    background_log = joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
+    background_log =
+        joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
     if isfile(background_log)
         log_contents = read(background_log, String)
         if !isempty(log_contents)
@@ -1510,7 +1732,7 @@ end
 
 Stop the proxy server running on the specified port.
 """
-function stop_server(port::Int=3000)
+function stop_server(port::Int = 3000)
     # Stop Vite dev server first
     stop_vite_dev_server()
 
@@ -1526,9 +1748,9 @@ function stop_server(port::Int=3000)
         if pid !== nothing
             @info "Stopping background proxy server" pid = pid
             if Sys.iswindows()
-                run(`taskkill /PID $pid /F`, wait=false)
+                run(`taskkill /PID $pid /F`, wait = false)
             else
-                run(`kill $pid`, wait=false)
+                run(`kill $pid`, wait = false)
             end
             remove_pid_file(port)
         end
@@ -1543,7 +1765,7 @@ function stop_server(port::Int=3000)
                     if !isempty(pid_str)
                         pid_num = parse(Int, pid_str)
                         @info "Killing process on port $port" pid = pid_num
-                        run(`kill $pid_num`, wait=false)
+                        run(`kill $pid_num`, wait = false)
                     end
                 end
             end
@@ -1571,7 +1793,7 @@ Restart the proxy server (stop existing if running, then start new).
 - HTTP.Server if running in foreground
 - nothing if started in background
 """
-function restart_server(port::Int=3000; background::Bool=false)
+function restart_server(port::Int = 3000; background::Bool = false)
     # Stop existing server if running (won't error if not running)
     if is_server_running(port)
         @info "Stopping existing proxy server on port $port"
@@ -1581,7 +1803,7 @@ function restart_server(port::Int=3000; background::Bool=false)
 
     # Start new server
     @info "Starting proxy server on port $port"
-    return start_server(port; background=background)
+    return start_server(port; background = background)
 end
 
 end # module Proxy
