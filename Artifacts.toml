@@ -3,5 +3,5 @@ lazy = true
 git-tree-sha1 = "79446129d0de83dacac24ce7a38addfa56b52897"
 
     [[dashboard.download]]
-    url = "file:///Users/kburke/.julia/dev/MCPRepl/dashboard-dist.tar.gz"
+    url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-latest/dashboard-dist.tar.gz"
     sha256 = "59b3c693435f0210026db5303a7f02108a3f320d38e281daba92c2e33218559d"

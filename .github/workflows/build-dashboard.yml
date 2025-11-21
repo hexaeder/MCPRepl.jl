@@ -1,0 +1,80 @@
+name: Build Dashboard Artifact
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'dashboard-ui/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: dashboard-ui/package-lock.json
+      
+      - name: Install dependencies
+        run: |
+          cd dashboard-ui
+          npm ci
+      
+      - name: Build dashboard
+        run: |
+          cd dashboard-ui
+          npm run build
+      
+      - name: Create tarball
+        run: |
+          cd dashboard-ui/dist
+          tar -czf ../../dashboard-dist.tar.gz .
+      
+      - name: Compute SHA256
+        id: sha
+        run: |
+          SHA256=$(sha256sum dashboard-dist.tar.gz | awk '{print $1}')
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+      
+      - name: Compute git-tree-sha1
+        id: tree_sha
+        run: |
+          TREE_SHA=$(git hash-object -t tree dashboard-ui/dist)
+          echo "tree_sha=$TREE_SHA" >> $GITHUB_OUTPUT
+          echo "Tree SHA: $TREE_SHA"
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-dist
+          path: dashboard-dist.tar.gz
+          retention-days: 90
+      
+      - name: Create Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: dashboard-${{ github.sha }}
+          name: Dashboard Build ${{ github.sha }}
+          files: dashboard-dist.tar.gz
+          body: |
+            Dashboard build from commit ${{ github.sha }}
+            
+            To update Artifacts.toml:
+            ```toml
+            [dashboard]
+            lazy = true
+            git-tree-sha1 = "${{ steps.tree_sha.outputs.tree_sha }}"
+            
+                [[dashboard.download]]
+                url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-${{ github.sha }}/dashboard-dist.tar.gz"
+                sha256 = "${{ steps.sha.outputs.sha256 }}"
+            ```
