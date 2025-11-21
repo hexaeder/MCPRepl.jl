@@ -3,7 +3,7 @@ import { Session, SessionEvent } from './types';
 const API_BASE = '/dashboard/api';
 
 export async function fetchSessions(): Promise<Record<string, Session>> {
-    const response = await fetch(`${API_BASE}/agents`);
+    const response = await fetch(`${API_BASE}/sessions`);
     if (!response.ok) throw new Error('Failed to fetch sessions');
     return response.json();
 }
@@ -155,3 +155,101 @@ export async function fetchDirectories(path: string): Promise<DirectoriesRespons
     if (!response.ok) throw new Error('Failed to fetch directories');
     return response.json();
 }
+
+export interface ShutdownSessionResponse {
+    success: boolean;
+    session_id: string;
+}
+
+export async function shutdownSession(sessionId: string): Promise<ShutdownSessionResponse> {
+    const response = await fetch(`${API_BASE}/session/${sessionId}/shutdown`, {
+        method: 'POST'
+    });
+    if (!response.ok) throw new Error('Failed to shutdown session');
+    return response.json();
+}
+
+export async function restartSession(sessionId: string): Promise<ShutdownSessionResponse> {
+    const response = await fetch(`${API_BASE}/session/${sessionId}/restart`, {
+        method: 'POST'
+    });
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to restart session: ${response.status} ${text}`);
+    }
+    return response.json();
+}
+
+export interface StaleSession {
+    pid: number;
+    session_name: string;
+    is_stale: boolean;
+}
+
+export interface StaleSessionsResponse {
+    sessions: StaleSession[];
+    count: number;
+}
+
+export async function listStaleSessions(): Promise<StaleSessionsResponse> {
+    const mcpRequest = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+            name: "kill_stale_sessions",
+            arguments: { dry_run: true }
+        }
+    };
+
+    const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mcpRequest)
+    });
+
+    if (!response.ok) throw new Error('Failed to list stale sessions');
+    const data = await response.json();
+
+    // Parse the text response
+    const text = data.result?.content?.[0]?.text || '';
+    const sessions: StaleSession[] = [];
+
+    const lines = text.split('\n');
+    for (const line of lines) {
+        const match = line.match(/PID (\d+): ([^\s]+) - (.*?)$/);
+        if (match) {
+            sessions.push({
+                pid: parseInt(match[1]),
+                session_name: match[2],
+                is_stale: match[3].includes('STALE')
+            });
+        }
+    }
+
+    return { sessions, count: sessions.length };
+}
+
+export async function killStaleSessions(force: boolean = false): Promise<string> {
+    const mcpRequest = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+            name: "kill_stale_sessions",
+            arguments: { dry_run: false, force }
+        }
+    };
+
+    const response = await fetch(API_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mcpRequest)
+    });
+
+    if (!response.ok) throw new Error('Failed to kill stale sessions');
+    const data = await response.json();
+    return data.result?.content?.[0]?.text || 'Unknown result';
+}
+
+// Quick start now uses callTool() directly

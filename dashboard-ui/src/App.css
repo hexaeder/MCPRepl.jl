@@ -214,6 +214,27 @@
     border-color: rgba(220, 38, 38, 0.4);
 }
 
+.modal-button.primary {
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+    color: white;
+    border: none;
+}
+
+.modal-button.primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(125, 211, 252, 0.3);
+}
+
+.modal-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.modal-button:disabled:hover {
+    transform: none;
+    box-shadow: none;
+}
+
 .confirm-dialog {
     max-width: 400px;
 }

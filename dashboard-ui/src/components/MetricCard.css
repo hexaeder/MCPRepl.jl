@@ -11,6 +11,12 @@
     overflow: hidden;
 }
 
+.metric-card.clickable:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(125, 211, 252, 0.2);
+    border-color: var(--accent-primary);
+}
+
 .metric-card::before {
     content: '';
     position: absolute;

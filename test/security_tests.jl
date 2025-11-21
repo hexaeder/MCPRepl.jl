@@ -95,7 +95,7 @@ using JSON
             # Remove any existing config
             config_dir = joinpath(test_dir, ".mcprepl")
             if isdir(config_dir)
-                rm(config_dir; recursive = true)
+                rm(config_dir; recursive=true)
             end
 
             # Quick setup with lax mode (default port 3000)
@@ -114,7 +114,7 @@ using JSON
             # Start fresh
             config_dir = joinpath(test_dir, ".mcprepl")
             if isdir(config_dir)
-                rm(config_dir; recursive = true)
+                rm(config_dir; recursive=true)
             end
             mkpath(config_dir)
 
@@ -194,7 +194,7 @@ using JSON
             # Start fresh
             config_dir = joinpath(test_dir, ".mcprepl")
             if isdir(config_dir)
-                rm(config_dir; recursive = true)
+                rm(config_dir; recursive=true)
             end
 
             # Create initial config (default port 3000)
@@ -247,8 +247,8 @@ using JSON
             server = MCPRepl.start_mcp_server(
                 [test_tool],
                 test_port;
-                verbose = false,
-                security_config = security_config,
+                verbose=false,
+                security_config=security_config,
             )
 
             # Give server plenty of time to start and stabilize
@@ -271,10 +271,10 @@ using JSON
                             "Authorization" => "Bearer $api_key",
                         ],
                         test_body;
-                        status_exception = false,
-                        readtimeout = 5,
-                        retry = false,
-                        connect_timeout = 5,
+                        status_exception=false,
+                        readtimeout=5,
+                        retry=false,
+                        connect_timeout=5,
                     )
                     # Any response (even error) means server is ready
                     if response.status >= 100
@@ -310,9 +310,9 @@ using JSON
                 "http://localhost:$test_port/",
                 ["Content-Type" => "application/json"],
                 request_body;
-                status_exception = false,
-                readtimeout = 10,
-                retry = false,
+                status_exception=false,
+                readtimeout=10,
+                retry=false,
             )
 
             @test response.status == 401  # Unauthorized
@@ -327,9 +327,9 @@ using JSON
                     "Authorization" => "Bearer invalid_key",
                 ],
                 request_body;
-                status_exception = false,
-                readtimeout = 10,
-                retry = false,
+                status_exception=false,
+                readtimeout=10,
+                retry=false,
             )
 
             @test response.status == 403  # Forbidden
@@ -344,9 +344,9 @@ using JSON
                     "Authorization" => "Bearer $api_key",
                 ],
                 request_body;
-                status_exception = false,
-                readtimeout = 10,
-                retry = false,
+                status_exception=false,
+                readtimeout=10,
+                retry=false,
             )
 
             @test response.status == 200
@@ -361,6 +361,6 @@ using JSON
 
     finally
         cd(original_dir)
-        rm(test_dir; recursive = true, force = true)
+        rm(test_dir; recursive=true, force=true)
     end
 end

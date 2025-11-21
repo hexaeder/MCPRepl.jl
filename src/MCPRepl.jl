@@ -738,7 +738,7 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
                 config = JSON.parsefile(config_path)
                 supervisor_port = get(get(config, "supervisor", Dict()), "port", nothing)
                 if supervisor_port === nothing
-                    @warn "Supervisor port not found in $config_path, heartbeat disabled"
+                    # No supervisor configured, skip supervisor heartbeat
                     return
                 end
             catch e
@@ -746,7 +746,7 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
                 return
             end
         else
-            @warn "Agents config file not found at $config_path, heartbeat disabled"
+            # No agents config file, skip supervisor heartbeat
             return
         end
 

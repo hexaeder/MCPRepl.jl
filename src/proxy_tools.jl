@@ -72,6 +72,7 @@ const HELP_TOOL = @mcp_tool :help "Get comprehensive information about the MCPRe
     - **proxy_status**: Current proxy status and connected sessions
     - **list_julia_sessions**: List all Julia execution sessions
     - **start_julia_session**: Spawn a new Julia backend
+    - **kill_stale_sessions**: Find and kill detached MCPRepl sessions
     - **dashboard_url**: Get monitoring dashboard link
 
     When a Julia session is connected, additional Julia-specific tools become available (code execution, introspection, LSP features, etc.).
@@ -159,6 +160,31 @@ const DASHBOARD_URL_TOOL = @mcp_tool :dashboard_url "Get the URL to access the m
 end
 
 """
+Kill stale sessions tool - finds and kills detached MCPRepl Julia processes
+"""
+const KILL_STALE_SESSIONS_TOOL = @mcp_tool :kill_stale_sessions "Find and kill detached or stale MCPRepl Julia session processes. Useful for cleaning up orphaned sessions." Dict(
+    "type" => "object",
+    "properties" => Dict(
+        "dry_run" => Dict(
+            "type" => "boolean",
+            "description" => "If true, only list stale processes without killing them (default: true)"
+        ),
+        "force" => Dict(
+            "type" => "boolean",
+            "description" => "If true, kill all MCPRepl sessions including registered ones (default: false)"
+        ),
+        "proxy_port" => Dict(
+            "type" => "string",
+            "description" => "Only target sessions for specific proxy port (optional)"
+        )
+    ),
+    "required" => []
+) (args, repls, list_repls_fn) -> begin
+    # This tool needs special handling in proxy.jl due to system process access
+    :kill_stale_sessions_special
+end
+
+"""
 Start Julia session tool - spawns a new Julia backend process
 """
 const START_JULIA_SESSION_TOOL = @mcp_tool :start_julia_session "Start a new Julia execution session for a specific project. The session will register with the proxy and provide Julia tools." Dict(
@@ -190,6 +216,7 @@ const PROXY_TOOLS = Dict{String,MCPTool}(
     "proxy_status" => PROXY_STATUS_TOOL,
     "list_julia_sessions" => LIST_JULIA_SESSIONS_TOOL,
     "dashboard_url" => DASHBOARD_URL_TOOL,
+    "kill_stale_sessions" => KILL_STALE_SESSIONS_TOOL,
     "start_julia_session" => START_JULIA_SESSION_TOOL,
 )
 

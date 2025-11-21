@@ -7,6 +7,7 @@ interface MetricCardProps {
     value: number;
     valueColor?: string;
     trend?: number; // positive or negative change
+    onClick?: () => void;
 }
 
 export const MetricCard: React.FC<MetricCardProps> = ({
@@ -14,10 +15,15 @@ export const MetricCard: React.FC<MetricCardProps> = ({
     label,
     value,
     valueColor = '#7dd3fc',
-    trend
+    trend,
+    onClick
 }) => {
     return (
-        <div className="metric-card">
+        <div
+            className={`metric-card ${onClick ? 'clickable' : ''}`}
+            onClick={onClick}
+            style={{ cursor: onClick ? 'pointer' : 'default' }}
+        >
             <div className="metric-icon">{icon}</div>
             <div className="metric-content">
                 <div className="metric-label">{label}</div>

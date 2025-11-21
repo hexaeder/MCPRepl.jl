@@ -7,9 +7,11 @@ interface SessionCardProps {
     session: Session;
     isSelected: boolean;
     onClick: () => void;
+    onShutdown?: (sessionId: string) => void;
+    onRestart?: (sessionId: string) => void;
 }
 
-export const SessionCard: React.FC<SessionCardProps> = ({ session, isSelected, onClick }) => {
+export const SessionCard: React.FC<SessionCardProps> = ({ session, isSelected, onClick, onShutdown, onRestart }) => {
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'ready': return '#10b981';       // Green
@@ -30,7 +32,6 @@ export const SessionCard: React.FC<SessionCardProps> = ({ session, isSelected, o
         >
             <div className="session-header">
                 <span className="session-id">{session.id}</span>
-                <span className="logs-indicator">📋</span>
             </div>
 
             <div className="status-line">
@@ -40,6 +41,32 @@ export const SessionCard: React.FC<SessionCardProps> = ({ session, isSelected, o
                 >
                     {session.status}
                 </span>
+                <div className="session-controls">
+                    {onRestart && (
+                        <button
+                            className="restart-btn"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onRestart(session.id);
+                            }}
+                            title="Restart this session"
+                        >
+                            🔄
+                        </button>
+                    )}
+                    {onShutdown && (
+                        <button
+                            className="shutdown-btn"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onShutdown(session.id);
+                            }}
+                            title="Shutdown this session"
+                        >
+                            ⏻
+                        </button>
+                    )}
+                </div>
             </div>
 
             <div className="session-meta">
