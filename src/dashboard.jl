@@ -10,7 +10,9 @@ using JSON
 using Dates
 using Sockets
 using OteraEngine
-using Pkg.Artifacts: artifact_hash, ensure_artifact_installed
+using Downloads
+using Tar
+using Scratch
 
 # Event types for agent activity tracking
 @enum EventType begin
@@ -128,27 +130,58 @@ function dashboard_html()
 end
 
 """
+    download_dashboard_if_needed()
+
+Download and extract the dashboard from GitHub releases if not already cached.
+Returns the path to the extracted dashboard directory.
+"""
+function download_dashboard_if_needed()
+    cache_dir = @get_scratch!("dashboard-cache")
+    dashboard_dir = joinpath(cache_dir, "dist")
+    
+    # Check if already downloaded
+    if isdir(dashboard_dir) && isfile(joinpath(dashboard_dir, "index.html"))
+        return dashboard_dir
+    end
+    
+    # Download from GitHub release
+    url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-latest/dashboard-dist.tar.gz"
+    tarball = joinpath(cache_dir, "dashboard-dist.tar.gz")
+    
+    @info "Downloading dashboard from GitHub..." url
+    Downloads.download(url, tarball)
+    
+    # Extract
+    @info "Extracting dashboard..."
+    Tar.extract(tarball, cache_dir)
+    
+    # Clean up tarball
+    rm(tarball; force=true)
+    
+    return dashboard_dir
+end
+
+"""
     serve_static_file(filepath::String)
 
 Serve a static file from the React build directory with proper MIME type.
 Uses the dashboard artifact in production, falls back to local dist/ in development.
 """
 function serve_static_file(filepath::String)
-    # Try artifact first (production), fallback to local dist/ (development)
-    react_dist = try
-        # Use function form instead of macro to avoid precompilation issues
-        artifacts_toml = joinpath(dirname(@__DIR__), "Artifacts.toml")
-        hash = artifact_hash("dashboard", artifacts_toml)
-        if hash !== nothing
-            # ensure_artifact_installed downloads if needed and returns the path
-            ensure_artifact_installed("dashboard", artifacts_toml)
-        else
-            abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
+    # Try local dist first (development), then download from GitHub (production)
+    local_dist = abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
+    
+    react_dist = if isdir(local_dist) && isfile(joinpath(local_dist, "index.html"))
+        # Development mode - use local build
+        local_dist
+    else
+        # Production mode - download from GitHub release
+        try
+            download_dashboard_if_needed()
+        catch e
+            @warn "Failed to download dashboard, using local dist/" exception = e
+            local_dist
         end
-    catch e
-        # Artifact not available, use local dist/
-        @debug "Artifact not found, using local dist/" exception = e
-        abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
     end
 
     fullpath = joinpath(react_dist, filepath)

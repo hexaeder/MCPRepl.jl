@@ -69,13 +69,4 @@ jobs:
           body: |
             Dashboard build from commit ${{ github.sha }}
             
-            Artifacts.toml configuration:
-            ```toml
-            [dashboard]
-            lazy = true
-            git-tree-sha1 = "${{ steps.tree_sha.outputs.tree_sha }}"
-            
-                [[dashboard.download]]
-                url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-latest/dashboard-dist.tar.gz"
-                sha256 = "${{ steps.sha.outputs.sha256 }}"
-            ```
+            The dashboard is automatically downloaded and cached when first accessed.
