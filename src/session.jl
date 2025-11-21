@@ -12,7 +12,7 @@ module Session
 
 using JSON
 using Dates
-import UUIDs: uuid4
+using UUIDs
 
 export MCPSession, SessionState, initialize_session!, close_session!, get_session_info
 

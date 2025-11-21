@@ -20,13 +20,14 @@ Profile = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 ReTest = "e0db7c4e-2690-44b9-bad6-7687da720f89"
-Scratch = "6c6a2e73-6563-6170-7368-637461726353"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+Scratch = "6c6a2e73-6563-6170-7368-637461726353"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 Suppressor = "fd094767-a336-5f1f-9728-57cf17d0bbfb"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Tar = "a4e569a6-e804-4fa4-b0f3-eef7a1d5b13e"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
 Aqua = "0.8"
@@ -49,6 +50,7 @@ SHA = "0.7"
 Suppressor = "0.2.8"
 TOML = "1.0"
 Test = "1.10"
+UUIDs = "1.11.0"
 julia = "1.10"
 
 [extras]

@@ -24,8 +24,8 @@ function create_handler(
     tools::Dict{Symbol,MCPTool},
     name_to_id::Dict{String,Symbol},
     port::Int,
-    security_config::Union{SecurityConfig,Nothing} = nothing,
-    session::Union{MCPSession,Nothing} = nothing,
+    security_config::Union{SecurityConfig,Nothing}=nothing,
+    session::Union{MCPSession,Nothing}=nothing,
 )
     return function handle_request(req::HTTP.Request)
         # Security check - apply to ALL endpoints including vscode-response
@@ -41,7 +41,7 @@ function create_handler(
                 body = String(req.body)
                 request_id = nothing
                 try
-                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    response_data = JSON.parse(body; dicttype=Dict{String,Any})
                     request_id = get(response_data, "request_id", nothing)
                 catch e
                     # Will fail validation below if can't parse
@@ -143,7 +143,7 @@ function create_handler(
             # Handle VS Code response endpoint (for bidirectional communication)
             if req.target == "/vscode-response" && req.method == "POST"
                 try
-                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    response_data = JSON.parse(body; dicttype=Dict{String,Any})
                     request_id = get(response_data, "request_id", nothing)
 
                     if request_id === nothing
@@ -228,8 +228,8 @@ function create_handler(
             # Only support OAuth if security is configured (not in lax mode)
             if req.target == "/oauth/register" && req.method == "POST"
                 if security_config !== nothing && security_config.mode != :lax
-                    client_id = "claude-code-" * string(rand(UInt64), base = 16)
-                    client_secret = string(rand(UInt128), base = 16)
+                    client_id = "claude-code-" * string(rand(UInt64), base=16)
+                    client_secret = string(rand(UInt128), base=16)
 
                     registration_response = Dict(
                         "client_id" => client_id,
@@ -263,7 +263,7 @@ function create_handler(
                     redirect_uri = get(query_params, "redirect_uri", "")
                     state = get(query_params, "state", "")
 
-                    auth_code = "auth_" * string(rand(UInt64), base = 16)
+                    auth_code = "auth_" * string(rand(UInt64), base=16)
                     redirect_url = "$redirect_uri?code=$auth_code&state=$state"
 
                     return HTTP.Response(302, ["Location" => redirect_url], "")
@@ -275,7 +275,7 @@ function create_handler(
             # Handle token endpoint
             if req.target == "/oauth/token" && req.method == "POST"
                 if security_config !== nothing && security_config.mode != :lax
-                    access_token = "access_" * string(rand(UInt128), base = 16)
+                    access_token = "access_" * string(rand(UInt128), base=16)
 
                     token_response = Dict(
                         "access_token" => access_token,
@@ -311,7 +311,7 @@ function create_handler(
                 )
             end
 
-            request = JSON.parse(body; dicttype = Dict{String,Any})
+            request = JSON.parse(body; dicttype=Dict{String,Any})
 
             # Check if method field exists
             if !haskey(request, "method")
@@ -552,13 +552,13 @@ function create_handler(
 
         catch e
             # Internal error - show in REPL and return to client
-            printstyled("\nMCP Server error: $e\n", color = :red)
+            printstyled("\nMCP Server error: $e\n", color=:red)
 
             # Try to get the original request ID for proper JSON-RPC error response
             request_id = 0  # Default to 0 instead of nothing to satisfy JSON-RPC schema
             try
                 if !isempty(body)
-                    parsed_request = JSON.parse(body; dicttype = Dict{String,Any})
+                    parsed_request = JSON.parse(body; dicttype=Dict{String,Any})
                     # Only use the request ID if it's a valid JSON-RPC ID (string or number)
                     raw_id = get(parsed_request, :id, 0)
                     if raw_id isa Union{String,Number}
@@ -587,9 +587,9 @@ end
 
 function start_mcp_server(
     tools::Vector{MCPTool},
-    port::Int = 3000;
-    verbose::Bool = true,
-    security_config::Union{SecurityConfig,Nothing} = nothing,
+    port::Int=3000;
+    verbose::Bool=true,
+    security_config::Union{SecurityConfig,Nothing}=nothing,
 )
     # Build symbol-keyed registry
     tools_dict = Dict{Symbol,MCPTool}(tool.id => tool for tool in tools)
@@ -619,7 +619,7 @@ function start_mcp_server(
                 # Parse request body to get request_id
                 request_id = nothing
                 try
-                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    response_data = JSON.parse(body; dicttype=Dict{String,Any})
                     request_id = get(response_data, "request_id", nothing)
                 catch e
                     # Will fail validation below if can't parse
@@ -757,7 +757,7 @@ function start_mcp_server(
             # Handle VS Code response endpoint FIRST (before any JSON parsing)
             if req.target == "/vscode-response" && req.method == "POST"
                 try
-                    response_data = JSON.parse(body; dicttype = Dict{String,Any})
+                    response_data = JSON.parse(body; dicttype=Dict{String,Any})
                     request_id = get(response_data, "request_id", nothing)
 
                     if request_id === nothing
@@ -831,7 +831,7 @@ function start_mcp_server(
             HTTP.startwrite(http)
 
             request_id = try
-                parsed = JSON.parse(body; dicttype = Dict{String,Any})
+                parsed = JSON.parse(body; dicttype=Dict{String,Any})
                 get(parsed, :id, 0)
             catch
                 0
@@ -851,7 +851,7 @@ function start_mcp_server(
     # Temporarily suppress HTTP.jl's "Listening on" info message
     old_logger = global_logger()
     global_logger(ConsoleLogger(stderr, Logging.Warn))
-    server = HTTP.serve!(hybrid_handler, port; verbose = false, stream = true)
+    server = HTTP.serve!(hybrid_handler, port; verbose=false, stream=true)
     global_logger(old_logger)
 
     # Server started - verbose status is handled by caller
