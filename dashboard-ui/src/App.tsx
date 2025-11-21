@@ -3,6 +3,7 @@ import { fetchAgents, fetchEvents } from './api';
 import { Agent, AgentEvent } from './types';
 import { AgentCard } from './components/AgentCard';
 import { MetricCard } from './components/MetricCard';
+import { JsonViewer } from '@textea/json-viewer';
 import './App.css';
 
 export const App: React.FC = () => {
@@ -10,7 +11,8 @@ export const App: React.FC = () => {
     const [events, setEvents] = useState<AgentEvent[]>([]);
     const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState<'overview' | 'events' | 'terminal'>('overview');
-    const [eventFilter, setEventFilter] = useState<string>('all');
+    const [eventFilter, setEventFilter] = useState<string>('interesting');
+    const [selectedEvent, setSelectedEvent] = useState<AgentEvent | null>(null);
 
     useEffect(() => {
         const loadData = async () => {
@@ -27,12 +29,12 @@ export const App: React.FC = () => {
         };
 
         loadData();
-        const interval = setInterval(loadData, 1000);
+        const interval = setInterval(loadData, 500);
         return () => clearInterval(interval);
     }, []);
 
     const agentCount = Object.keys(agents).length;
-    const eventCount = events.length;
+    const eventCount = events.filter(e => e.type !== 'HEARTBEAT').length;
 
     return (
         <div className="app">
@@ -43,16 +45,12 @@ export const App: React.FC = () => {
                 </div>
                 <div className="header-stats">
                     <div className="stat">
-                        <span className="stat-label">Agents</span>
+                        <span className="stat-label">AGENTS</span>
                         <span className="stat-value" id="header-agents">{agentCount}</span>
                     </div>
                     <div className="stat">
-                        <span className="stat-label">Events</span>
+                        <span className="stat-label">EVENTS</span>
                         <span className="stat-value" id="header-events">{eventCount}</span>
-                    </div>
-                    <div className="status-indicator">
-                        <div className="pulse"></div>
-                        <div className="ring"></div>
                     </div>
                 </div>
             </header>
@@ -147,67 +145,66 @@ export const App: React.FC = () => {
                                 <div className="events-header">
                                     <h2>Recent Events</h2>
                                     <div className="event-filters">
-                                        {['all', 'TOOL_CALL', 'CODE_EXECUTION', 'OUTPUT', 'ERROR', 'HEARTBEAT'].map(filter => (
+                                        {['interesting', 'TOOL_CALL', 'CODE_EXECUTION', 'OUTPUT', 'ERROR', 'all'].map(filter => (
                                             <button
                                                 key={filter}
                                                 className={`filter-btn ${eventFilter === filter ? 'active' : ''}`}
                                                 onClick={() => setEventFilter(filter)}
                                             >
-                                                {filter === 'all' ? 'All' : filter.replace('_', ' ')}
+                                                {filter === 'interesting' ? 'Interesting' : filter === 'all' ? 'All' : filter.replace('_', ' ')}
                                             </button>
                                         ))}
                                     </div>
                                 </div>
                                 <div id="event-list" className="event-list">
                                     {events
-                                        .filter(e => eventFilter === 'all' || e.event_type === eventFilter)
+                                        .filter(e => {
+                                            if (eventFilter === 'interesting') return e.type !== 'HEARTBEAT';
+                                            if (eventFilter === 'all') return true;
+                                            return e.type === eventFilter;
+                                        })
                                         .slice(0, 100)
                                         .reverse()
                                         .map((event, idx) => (
-                                        <div key={idx} className={`event event-${event.event_type.toLowerCase()}`}>
-                                            <div className="event-type">{event.event_type}</div>
-                                            <div className="event-header">
-                                                <span className="event-agent">{event.id}</span>
-                                                <span className="event-time">{event.timestamp}</span>
-                                                {event.duration_ms && (
-                                                    <span className="event-duration">{event.duration_ms.toFixed(2)}ms</span>
-                                                )}
+                                            <div key={idx} className={`event event-${event.type.toLowerCase()}`} onClick={() => setSelectedEvent(event)}>
+                                                <div className="event-type">{event.type}</div>
+                                                <div className="event-header">
+                                                    <span className="event-agent">{event.id}</span>
+                                                    <span className="event-time">{event.timestamp}</span>
+                                                    {event.duration_ms && (
+                                                        <span className="event-duration">{event.duration_ms.toFixed(2)}ms</span>
+                                                    )}
+                                                </div>
+                                                <div className="event-body">
+                                                    {event.data.description || event.data.tool || event.data.method || JSON.stringify(event.data)}
+                                                </div>
                                             </div>
-                                            <div className="event-body">
-                                                {event.data.description || event.data.tool || event.data.method || JSON.stringify(event.data)}
-                                            </div>
-                                        </div>
-                                    ))}
+                                        ))}
                                 </div>
                             </div>
                         )}
 
                         {activeTab === 'terminal' && (
                             <div className="view active" id="terminal-view">
-                                <h2>Terminal Output</h2>
+                                <h2>Agent Log: {selectedAgent || 'Select an agent'}</h2>
                                 <div className="terminal">
-                                    <div id="terminal-output" className="terminal-output">
-                                        {events.slice(-20).map((event, idx) => {
-                                            const typeColor: Record<string, string> = {
-                                                'ERROR': '#ff4444',
-                                                'TOOL_CALL': '#00d9ff',
-                                                'CODE_EXECUTION': '#7c3aed',
-                                                'OUTPUT': '#4ade80',
-                                                'HEARTBEAT': '#888',
-                                                'AGENT_START': '#4ade80',
-                                                'AGENT_STOP': '#ff4444'
-                                            };
-                                            const color = typeColor[event.event_type] || '#888';
-
-                                            return (
-                                                <div key={idx}>
-                                                    <span style={{ color }}>[{event.timestamp}]</span>{' '}
-                                                    <span style={{ color: '#00d9ff' }}>{event.id}</span>{' '}
-                                                    <span style={{ color }}>{event.event_type}</span>:{' '}
-                                                    {event.data.description || event.data.tool || event.data.method || JSON.stringify(event.data)}
-                                                </div>
-                                            );
-                                        })}
+                                    <div className="terminal-output">
+                                        {selectedAgent ? (
+                                            events
+                                                .filter(e => e.id === selectedAgent)
+                                                .reverse()
+                                                .slice(0, 50)
+                                                .map((event, idx) => (
+                                                    <div key={idx} className="log-entry">
+                                                        <span className="log-time">[{event.timestamp}]</span>
+                                                        <span className={`log-type log-${event.type.toLowerCase()}`}>{event.type}</span>
+                                                        <span className="log-data">{JSON.stringify(event.data)}</span>
+                                                        {event.duration_ms && <span className="log-duration">({event.duration_ms.toFixed(2)}ms)</span>}
+                                                    </div>
+                                                ))
+                                        ) : (
+                                            <div className="log-placeholder">← Select an agent from the sidebar to view its log</div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -215,6 +212,97 @@ export const App: React.FC = () => {
                     </div>
                 </main>
             </div>
+
+            {selectedEvent && (
+                <div className="modal-overlay" onClick={() => setSelectedEvent(null)}>
+                    <div className="modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Event Details</h2>
+                            <button className="modal-close" onClick={() => setSelectedEvent(null)}>×</button>
+                        </div>
+                        <div className="modal-content">
+                            <div className="detail-row">
+                                <span className="detail-label">Type:</span>
+                                <span className={`detail-value event-badge event-${selectedEvent.type.toLowerCase()}`}>{selectedEvent.type}</span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Agent ID:</span>
+                                <span className="detail-value">{selectedEvent.id}</span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Timestamp:</span>
+                                <span className="detail-value">{selectedEvent.timestamp}</span>
+                            </div>
+                            {selectedEvent.duration_ms && (
+                                <div className="detail-row">
+                                    <span className="detail-label">Duration:</span>
+                                    <span className="detail-value">{selectedEvent.duration_ms.toFixed(2)} ms</span>
+                                </div>
+                            )}
+                            {selectedEvent.data.tool && (
+                                <div className="detail-row">
+                                    <span className="detail-label">Tool:</span>
+                                    <span className="detail-value">{selectedEvent.data.tool}</span>
+                                </div>
+                            )}
+                            {selectedEvent.data.arguments && Object.keys(selectedEvent.data.arguments).length > 0 && (
+                                <div className="detail-row detail-data">
+                                    <span className="detail-label">Arguments:</span>
+                                    <div className="detail-value json-tree">
+                                        <JsonViewer
+                                            value={selectedEvent.data.arguments}
+                                            theme="dark"
+                                            defaultInspectDepth={2}
+                                            displayDataTypes={false}
+                                            rootName="arguments"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                            {selectedEvent.data.result && (
+                                <div className="detail-row detail-data">
+                                    <span className="detail-label">Result:</span>
+                                    <div className="detail-value json-tree">
+                                        <JsonViewer
+                                            value={selectedEvent.data.result}
+                                            theme="dark"
+                                            defaultInspectDepth={2}
+                                            displayDataTypes={false}
+                                            rootName="result"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                            {selectedEvent.data.error && (
+                                <div className="detail-row detail-data">
+                                    <span className="detail-label">Error:</span>
+                                    <div className="detail-value json-tree error-tree">
+                                        <JsonViewer
+                                            value={selectedEvent.data.error}
+                                            theme="dark"
+                                            defaultInspectDepth={2}
+                                            displayDataTypes={false}
+                                            rootName="error"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                            <div className="detail-row detail-data">
+                                <span className="detail-label">Raw Data:</span>
+                                <div className="detail-value json-tree">
+                                    <JsonViewer
+                                        value={selectedEvent.data}
+                                        theme="dark"
+                                        defaultInspectDepth={1}
+                                        displayDataTypes={false}
+                                        rootName="data"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -17,10 +17,10 @@ export type EventType =
 
 export interface AgentEvent {
     id: string;
-    event_type: EventType;
+    type: EventType;
     timestamp: string;
     data: Record<string, any>;
-    duration_ms?: number;
+    duration_ms?: number | null;
 }
 
 export interface DashboardData {

@@ -19,6 +19,7 @@ export start!, stop!, test_server
 
 include("utils.jl")
 include("proxy.jl")
+include("dashboard.jl")
 include("tools.jl")
 
 # Version tracking - gets git commit hash at runtime

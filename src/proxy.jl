@@ -10,9 +10,30 @@ using HTTP
 using JSON
 using Sockets
 using Dates
+using Logging
 
 include("dashboard.jl")
 using .Dashboard
+
+function setup_proxy_logging(port::Int)
+    cache_dir = get(ENV, "XDG_CACHE_HOME") do
+        if Sys.iswindows()
+            joinpath(ENV["LOCALAPPDATA"], "MCPRepl")
+        else
+            joinpath(homedir(), ".cache", "mcprepl")
+        end
+    end
+    mkpath(cache_dir)
+
+    log_file = joinpath(cache_dir, "proxy-$port.log")
+
+    # Use FileLogger with automatic flushing
+    logger = Logging.FileLogger(log_file; append=true, always_flush=true)
+    global_logger(logger)
+
+    @info "Proxy logging initialized" log_file = log_file
+    return log_file
+end
 
 # REPL Connection tracking
 mutable struct REPLConnection
@@ -224,14 +245,14 @@ function update_repl_status(id::String, status::Symbol; error::Union{String,Noth
 end
 
 """
-    route_to_repl(request::Dict, original_req::HTTP.Request) -> HTTP.Response
+    route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http::HTTP.Stream) -> Nothing
 
-Route a request to the appropriate backend REPL.
+Route a request to the appropriate backend REPL with streaming support.
 
 Uses the X-MCPRepl-Target header to determine which REPL to route to.
 If no header is present, routes to the first available REPL.
 """
-function route_to_repl(request::Dict, original_req::HTTP.Request)
+function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http::HTTP.Stream)
     # Determine target REPL
     header_value = HTTP.header(original_req, "X-MCPRepl-Target")
     # HTTP.header returns a SubString{String} or String
@@ -241,7 +262,10 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
         # No target specified, try to use first available REPL
         repls = list_repls()
         if isempty(repls)
-            return HTTP.Response(503, JSON.json(Dict(
+            HTTP.setstatus(http, 503)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, "id", nothing),
                 "error" => Dict(
@@ -249,6 +273,7 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
                     "message" => "No REPLs registered with proxy. Please start a REPL with MCPRepl.start!()"
                 )
             )))
+            return nothing
         end
         target_id = first(repls).id
     end
@@ -257,7 +282,10 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
     repl = get_repl(target_id)
 
     if repl === nothing
-        return HTTP.Response(404, JSON.json(Dict(
+        HTTP.setstatus(http, 404)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(http, JSON.json(Dict(
             "jsonrpc" => "2.0",
             "id" => get(request, "id", nothing),
             "error" => Dict(
@@ -265,6 +293,7 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
                 "message" => "REPL not found: $target_id"
             )
         )))
+        return nothing
     end
 
     if repl.status != :ready
@@ -275,7 +304,10 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
             update_repl_status(target_id, :ready)
             repl = get_repl(target_id)
             if repl === nothing || repl.status != :ready
-                return HTTP.Response(503, JSON.json(Dict(
+                HTTP.setstatus(http, 503)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => get(request, "id", nothing),
                     "error" => Dict(
@@ -283,9 +315,13 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
                         "message" => "REPL not ready: $(repl.status)"
                     )
                 )))
+                return nothing
             end
         else
-            return HTTP.Response(503, JSON.json(Dict(
+            HTTP.setstatus(http, 503)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, "id", nothing),
                 "error" => Dict(
@@ -293,25 +329,27 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
                     "message" => "REPL not ready: $(repl.status)"
                 )
             )))
+            return nothing
         end
     end
 
-    # Forward request to backend REPL
+    # Forward request to backend REPL with streaming support
     try
         backend_url = "http://127.0.0.1:$(repl.port)/"
-        request_headers = ["Content-Type" => "application/json"]
         body_str = JSON.json(request)
 
-        @debug "Forwarding to backend" url = backend_url headers = request_headers body_length = length(body_str)
+        @debug "Forwarding to backend" url = backend_url body_length = length(body_str)
 
         # Log tool call event to dashboard
         method = get(request, "method", "")
         if method == "tools/call"
             params = get(request, "params", Dict())
             tool_name = get(params, "name", "unknown")
+            tool_args = get(params, "arguments", Dict())
             Dashboard.log_event(target_id, Dashboard.TOOL_CALL, Dict(
                 "tool" => tool_name,
-                "method" => method
+                "method" => method,
+                "arguments" => tool_args
             ))
         elseif !isempty(method)
             # Log other methods as code execution
@@ -321,26 +359,66 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
         end
 
         start_time = time()
-        response = HTTP.request(
+        @info "Sending request to backend" url = backend_url method = method body_length = length(body_str)
+
+        # Make request to backend - use simple HTTP.request with response streaming disabled
+        backend_response = HTTP.request(
             "POST",
             backend_url,
-            request_headers,
+            ["Content-Type" => "application/json"],
             body_str;
             readtimeout=30,
-            connect_timeout=5
+            connect_timeout=5,
+            status_exception=false
         )
-        duration_ms = (time() - start_time) * 1000
 
-        # Log successful execution
-        Dashboard.log_event(target_id, Dashboard.OUTPUT, Dict(
-                "status" => response.status,
-                "method" => method
-            ); duration_ms=duration_ms)
+        duration_ms = (time() - start_time) * 1000
+        response_body = String(backend_response.body)
+        response_status = backend_response.status
+        response_headers = Dict{String,String}()
+        for (name, value) in backend_response.headers
+            response_headers[name] = value
+        end
+
+        @info "Received response from backend" status = response_status body_length = length(response_body)
+
+        # Parse response to extract result/error for dashboard
+        response_data = Dict("status" => response_status[], "method" => method)
+        try
+            response_json = JSON.parse(response_body)
+            # Include the actual result or error in the event log
+            if haskey(response_json, "result")
+                response_data["result"] = response_json["result"]
+            elseif haskey(response_json, "error")
+                response_data["error"] = response_json["error"]
+            end
+        catch parse_err
+            # If we can't parse the response, just log the status
+            @debug "Could not parse response for logging" exception = parse_err
+        end
+
+        # Log successful execution with result
+        Dashboard.log_event(target_id, Dashboard.OUTPUT, response_data; duration_ms=duration_ms)
 
         # Update last heartbeat
         update_repl_status(target_id, :ready)
 
-        return response
+        # Forward response to client with proper headers
+        @info "Returning response to client" status = response_status body_length = length(response_body)
+        HTTP.setstatus(http, response_status)
+
+        # Forward all headers from backend, ensuring Content-Type is set
+        for (name, value) in response_headers
+            HTTP.setheader(http, name => value)
+        end
+        # Ensure Content-Type is set if not already present
+        if !haskey(response_headers, "Content-Type")
+            HTTP.setheader(http, "Content-Type" => "application/json")
+        end
+
+        HTTP.startwrite(http)
+        write(http, response_body)
+        return nothing
     catch e
         # Capture full error with stack trace
         io = IOBuffer()
@@ -372,7 +450,10 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
             "method" => get(request, "method", "")
         ))
 
-        return HTTP.Response(502, JSON.json(Dict(
+        HTTP.setstatus(http, 502)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(http, JSON.json(Dict(
             "jsonrpc" => "2.0",
             "id" => get(request, "id", nothing),
             "error" => Dict(
@@ -380,16 +461,25 @@ function route_to_repl(request::Dict, original_req::HTTP.Request)
                 "message" => "Failed to connect to REPL: $(sprint(showerror, e))"
             )
         )))
+        return nothing
     end
 end
 
 """
-    handle_request(req::HTTP.Request) -> HTTP.Response
+    handle_request(http::HTTP.Stream) -> Nothing
 
-Handle incoming MCP requests. Routes to appropriate backend REPL or handles proxy commands.
+Handle incoming MCP requests with streaming support. Routes to appropriate backend REPL or handles proxy commands.
 """
-function handle_request(req::HTTP.Request)
+function handle_request(http::HTTP.Stream)
+    req = http.message
+
     try
+        # Read the full request body FIRST (required by HTTP.jl before writing response)
+        body = String(read(http))
+
+        # Log all incoming requests for debugging
+        @info "Incoming request" method = req.method target = req.target content_length = length(body)
+
         # Handle dashboard HTTP routes
         uri = HTTP.URI(req.target)
         path = uri.path
@@ -397,13 +487,24 @@ function handle_request(req::HTTP.Request)
         # Dashboard HTML page
         if path == "/dashboard" || path == "/dashboard/"
             html = Dashboard.dashboard_html()
-            return HTTP.Response(200, ["Content-Type" => "text/html"], html)
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "text/html")
+            HTTP.startwrite(http)
+            write(http, html)
+            return nothing
         end
 
         # Dashboard static assets (React build)
         if startswith(path, "/dashboard/") && !startswith(path, "/dashboard/api/")
             asset_path = replace(path, r"^/dashboard/" => "")
-            return Dashboard.serve_static_file(asset_path)
+            response = Dashboard.serve_static_file(asset_path)
+            HTTP.setstatus(http, response.status)
+            for (name, value) in response.headers
+                HTTP.setheader(http, name => value)
+            end
+            HTTP.startwrite(http)
+            write(http, response.body)
+            return nothing
         end
 
         # Dashboard API: Get all agents
@@ -418,7 +519,11 @@ function handle_request(req::HTTP.Request)
                     "last_heartbeat" => Dates.format(conn.last_heartbeat, "yyyy-mm-dd HH:MM:SS")
                 )
             end
-            return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(agents))
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(agents))
+            return nothing
         end
 
         # Dashboard API: Get events
@@ -436,38 +541,83 @@ function handle_request(req::HTTP.Request)
                 "duration_ms" => e.duration_ms
             ) for e in events]
 
-            return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(events_json))
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(events_json))
+            return nothing
         end
 
         # Dashboard WebSocket (for future implementation)
         if path == "/dashboard/ws"
-            # WebSocket upgrade would be handled here
-            return HTTP.Response(501, "WebSocket not yet implemented")
+            HTTP.setstatus(http, 501)
+            HTTP.setheader(http, "Content-Type" => "text/plain")
+            HTTP.startwrite(http)
+            write(http, "WebSocket not yet implemented")
+            return nothing
         end
 
-        # Parse request body for JSON-RPC
-        body = String(req.body)
-
+        @info "Checking if body is empty" is_empty = isempty(body)
         if isempty(body)
-            # Health check endpoint
-            return HTTP.Response(200, JSON.json(Dict(
-                "status" => "ok",
-                "type" => "mcprepl-proxy",
-                "version" => "0.1.0",
-                "pid" => getpid(),
-                "uptime" => time()
+            @info "Body IS empty - handling empty body case"
+            # Handle OPTIONS requests (CORS preflight for streamable-http)
+            if req.method == "OPTIONS"
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Access-Control-Allow-Origin" => "*")
+                HTTP.setheader(http, "Access-Control-Allow-Methods" => "GET, POST, OPTIONS")
+                HTTP.setheader(http, "Access-Control-Allow-Headers" => "Content-Type, Authorization")
+                HTTP.setheader(http, "Access-Control-Max-Age" => "86400")
+                HTTP.setheader(http, "Content-Length" => "0")
+                HTTP.startwrite(http)
+                return nothing
+            end
+
+            # Handle GET requests (health checks, metadata)
+            if req.method == "GET"
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
+                    "status" => "ok",
+                    "type" => "mcprepl-proxy",
+                    "version" => "0.1.0",
+                    "pid" => getpid(),
+                    "uptime" => time(),
+                    "protocol" => "MCP 2024-11-05"
+                )))
+                return nothing
+            end
+            # Empty POST body - invalid request
+            HTTP.setstatus(http, 400)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
+                "jsonrpc" => "2.0",
+                "error" => Dict(
+                    "code" => -32700,
+                    "message" => "Parse error: empty request body"
+                ),
+                "id" => nothing
             )))
+            return nothing
         end
 
+        @info "Body is NOT empty - proceeding to parse JSON"
         # Parse JSON-RPC request
+        @info "About to parse JSON" body_length = length(body)
         request = JSON.parse(body)
+        @info "Parsed JSON request"
 
         # Handle proxy-specific methods
         method = get(request, "method", "")
+        @info "Handling method" method = method
 
         if method == "proxy/status"
             repls = list_repls()
-            return HTTP.Response(200, JSON.json(Dict(
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, "id", nothing),
                 "result" => Dict(
@@ -485,6 +635,7 @@ function handle_request(req::HTTP.Request)
                     "uptime" => time()
                 )
             )))
+            return nothing
         elseif method == "proxy/register"
             # Register a new REPL
             params = get(request, "params", Dict())
@@ -497,7 +648,10 @@ function handle_request(req::HTTP.Request)
             metadata = metadata_raw isa Dict ? metadata_raw : Dict(String(k) => v for (k, v) in pairs(metadata_raw))
 
             if id === nothing || port === nothing
-                return HTTP.Response(400, JSON.json(Dict(
+                HTTP.setstatus(http, 400)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => get(request, "id", nothing),
                     "error" => Dict(
@@ -505,22 +659,30 @@ function handle_request(req::HTTP.Request)
                         "message" => "Invalid params: 'id' and 'port' are required"
                     )
                 )))
+                return nothing
             end
 
             register_repl(id, port; pid=pid, metadata=metadata)
 
-            return HTTP.Response(200, JSON.json(Dict(
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, "id", nothing),
                 "result" => Dict("status" => "registered", "id" => id)
             )))
+            return nothing
         elseif method == "proxy/unregister"
             # Unregister a REPL
             params = get(request, "params", Dict())
             id = get(params, "id", nothing)
 
             if id === nothing
-                return HTTP.Response(400, JSON.json(Dict(
+                HTTP.setstatus(http, 400)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => get(request, "id", nothing),
                     "error" => Dict(
@@ -528,22 +690,30 @@ function handle_request(req::HTTP.Request)
                         "message" => "Invalid params: 'id' is required"
                     )
                 )))
+                return nothing
             end
 
             unregister_repl(id)
 
-            return HTTP.Response(200, JSON.json(Dict(
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, "id", nothing),
                 "result" => Dict("status" => "unregistered", "id" => id)
             )))
+            return nothing
         elseif method == "proxy/heartbeat"
             # REPL sends heartbeat to indicate it's alive
             params = get(request, "params", Dict())
             id = get(params, "id", nothing)
 
             if id === nothing
-                return HTTP.Response(400, JSON.json(Dict(
+                HTTP.setstatus(http, 400)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => get(request, "id", nothing),
                     "error" => Dict(
@@ -551,6 +721,7 @@ function handle_request(req::HTTP.Request)
                         "message" => "Invalid params: 'id' is required"
                     )
                 )))
+                return nothing
             end
 
             # Update heartbeat and recover from stopped state
@@ -570,23 +741,162 @@ function handle_request(req::HTTP.Request)
                 end
             end
 
-            return HTTP.Response(200, JSON.json(Dict(
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
                 "jsonrpc" => "2.0",
                 "id" => get(request, "id", nothing),
                 "result" => Dict("status" => "ok")
             )))
+            return nothing
+        elseif method == "initialize"
+            # Handle MCP initialize request
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(http, JSON.json(Dict(
+                "jsonrpc" => "2.0",
+                "id" => get(request, "id", nothing),
+                "result" => Dict(
+                    "protocolVersion" => "2024-11-05",
+                    "capabilities" => Dict(
+                        "tools" => Dict()
+                    ),
+                    "serverInfo" => Dict(
+                        "name" => "mcprepl-proxy",
+                        "version" => "0.1.0"
+                    )
+                )
+            )))
+            return nothing
+        elseif method == "tools/list"
+            # Return minimal proxy tools if no backend, or aggregate tools from all backends
+            repls = list_repls()
+            @info "tools/list handling" num_repls = length(repls) repl_ids = [r.id for r in repls]
+            if isempty(repls)
+                # No backends - return minimal proxy management tools
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "result" => Dict("tools" => [
+                        Dict(
+                            "name" => "proxy_status",
+                            "description" => "Get the status of the MCP proxy server and connected REPL backends",
+                            "inputSchema" => Dict(
+                                "type" => "object",
+                                "properties" => Dict(),
+                                "required" => []
+                            )
+                        ),
+                        Dict(
+                            "name" => "list_agents",
+                            "description" => "List all registered REPL agents and their connection status",
+                            "inputSchema" => Dict(
+                                "type" => "object",
+                                "properties" => Dict(),
+                                "required" => []
+                            )
+                        ),
+                        Dict(
+                            "name" => "dashboard_url",
+                            "description" => "Get the URL to access the monitoring dashboard",
+                            "inputSchema" => Dict(
+                                "type" => "object",
+                                "properties" => Dict(),
+                                "required" => []
+                            )
+                        )
+                    ])
+                )))
+                return nothing
+            else
+                # Proxy to first available backend
+                request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
+                route_to_repl_streaming(request_dict, req, http)
+                return nothing
+            end
+        elseif method == "tools/call"
+            # Handle proxy-level tools when no backend is available
+            params = get(request, "params", Dict())
+            tool_name = get(params, "name", "")
+
+            if tool_name == "proxy_status"
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "result" => Dict(
+                        "content" => [Dict(
+                            "type" => "text",
+                            "text" => "MCP Proxy Status:\n- Port: 3000\n- Connected agents: 0\n- Status: Running\n- Dashboard: http://localhost:3001\n\nNo backend REPL agents are currently connected. Start a backend REPL to enable Julia tools."
+                        )]
+                    )
+                )))
+                return nothing
+            elseif tool_name == "list_agents"
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "result" => Dict(
+                        "content" => [Dict(
+                            "type" => "text",
+                            "text" => "No REPL agents currently registered.\n\nTo connect a backend REPL:\n1. Start a Julia REPL with MCPRepl\n2. It will automatically register with this proxy\n3. Julia tools will become available"
+                        )]
+                    )
+                )))
+                return nothing
+            elseif tool_name == "dashboard_url"
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "result" => Dict(
+                        "content" => [Dict(
+                            "type" => "text",
+                            "text" => "Dashboard URL: http://localhost:3001\n\nThe dashboard provides real-time monitoring of:\n- Connected REPL agents\n- Tool calls and code execution\n- Event logs and metrics\n- Agent status and heartbeats"
+                        )]
+                    )
+                )))
+                return nothing
+            else
+                # Unknown tool or requires backend
+                request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
+                route_to_repl_streaming(request_dict, req, http)
+                return nothing
+            end
         else
             # Route to backend REPL
             # Convert JSON.Object to Dict if needed
             request_dict = request isa Dict ? request : Dict(String(k) => v for (k, v) in pairs(request))
-            return route_to_repl(request_dict, req)
+            route_to_repl_streaming(request_dict, req, http)
+            return nothing
         end
 
     catch e
         @error "Error handling request" exception = (e, catch_backtrace())
-        return HTTP.Response(500, JSON.json(Dict(
-            "error" => "Internal server error: $(sprint(showerror, e))"
+        HTTP.setstatus(http, 500)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(http, JSON.json(Dict(
+            "jsonrpc" => "2.0",
+            "error" => Dict(
+                "code" => -32603,
+                "message" => "Internal error: $(sprint(showerror, e))"
+            ),
+            "id" => nothing
         )))
+        return nothing
     end
 end
 
@@ -635,13 +945,17 @@ function start_foreground_server(port::Int=3000)
     SERVER_PORT[] = port
     write_pid_file(port)
 
+    # Set up file logging
+    log_file = setup_proxy_logging(port)
+    println("Proxy log file: $log_file")
+
     @info "Starting MCP Proxy Server" port = port pid = getpid()
 
     # Setup cleanup on exit
     atexit(() -> remove_pid_file(port))
 
-    # Start HTTP server
-    server = HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose=false)
+    # Start HTTP server with streaming support
+    server = HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose=false, stream=true)
     SERVER[] = server
 
     @info "MCP Proxy Server started successfully" port = port pid = getpid()
