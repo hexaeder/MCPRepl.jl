@@ -12,11 +12,13 @@ interface AgentCardProps {
 export const AgentCard: React.FC<AgentCardProps> = ({ agent, isSelected, onClick }) => {
     const getStatusColor = (status: string) => {
         switch (status) {
-            case 'ready': return '#10b981';
-            case 'busy': return '#f59e0b';
-            case 'error': return '#ef4444';
-            case 'stopped': return '#64748b';
-            default: return '#64748b';
+            case 'ready': return '#10b981';       // Green
+            case 'disconnected': return '#ffa726'; // Orange
+            case 'reconnecting': return '#42a5f5'; // Blue
+            case 'stopped': return '#ef5350';      // Red
+            case 'busy': return '#f59e0b';        // Amber
+            case 'error': return '#ef4444';       // Red
+            default: return '#64748b';            // Gray
         }
     };
 

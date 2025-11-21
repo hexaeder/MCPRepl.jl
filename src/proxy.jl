@@ -10,6 +10,7 @@ using HTTP
 using JSON
 using Sockets
 using Dates
+using Dates: Minute, Second
 using Logging
 using LoggingExtras
 
@@ -41,11 +42,13 @@ mutable struct REPLConnection
     id::String                          # Unique identifier (project name, agent name)
     port::Int                           # REPL's MCP server port
     pid::Union{Int,Nothing}            # REPL process ID
-    status::Symbol                      # :ready, :restarting, :stopped
+    status::Symbol                      # :ready, :disconnected, :reconnecting, :stopped
     last_heartbeat::DateTime            # Last time we heard from this REPL
     metadata::Dict{String,Any}         # Additional info (project path, etc.)
     last_error::Union{String,Nothing}  # Last error message if any
     missed_heartbeats::Int             # Counter for consecutive missed heartbeats
+    pending_requests::Vector{Tuple{Dict,HTTP.Stream}}  # Buffered requests during reconnection
+    disconnect_time::Union{DateTime,Nothing}  # When REPL disconnected
 end
 
 # Global state
@@ -274,8 +277,18 @@ function register_repl(
     metadata::Dict = Dict(),
 )
     lock(REPL_REGISTRY_LOCK) do
-        REPL_REGISTRY[id] =
-            REPLConnection(id, port, pid, :ready, now(), metadata, nothing, 0)
+        REPL_REGISTRY[id] = REPLConnection(
+            id,
+            port,
+            pid,
+            :ready,
+            now(),
+            metadata,
+            nothing,
+            0,
+            Tuple{Dict,HTTP.Stream}[],
+            nothing,
+        )
         @info "REPL registered with proxy" id = id port = port pid = pid
 
         # Log registration event to dashboard
@@ -348,9 +361,203 @@ function update_repl_status(
                 # Clear error and reset counter when back to ready
                 REPL_REGISTRY[id].last_error = nothing
                 REPL_REGISTRY[id].missed_heartbeats = 0
+                REPL_REGISTRY[id].disconnect_time = nothing
+
+                # Process any pending requests if we just reconnected
+                if !isempty(REPL_REGISTRY[id].pending_requests)
+                    @info "REPL reconnected, processing buffered requests" id = id buffer_size =
+                        length(REPL_REGISTRY[id].pending_requests)
+                    @async process_pending_requests(id)
+                end
             end
         end
     end
+end
+
+"""
+    try_reconnect(repl_id::String)
+
+Attempt to reconnect to a disconnected REPL by sending test requests.
+"""
+function try_reconnect(repl_id::String)
+    max_attempts = 30  # Try for ~30 seconds
+    attempt = 0
+
+    while attempt < max_attempts
+        attempt += 1
+        sleep(1)  # Wait 1 second between attempts
+
+        repl = get_repl(repl_id)
+        if repl === nothing || repl.status == :stopped
+            break
+        end
+
+        # Try a simple ping request
+        try
+            response = HTTP.request(
+                "POST",
+                "http://127.0.0.1:$(repl.port)/",
+                ["Content-Type" => "application/json"],
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => 999999,
+                        "method" => "ping",
+                        "params" => Dict(),
+                    ),
+                );
+                readtimeout = 2,
+                connect_timeout = 2,
+                status_exception = false,
+            )
+
+            if response.status == 200
+                # Success! Mark as ready
+                @info "REPL reconnection successful" id = repl_id attempt = attempt
+                update_repl_status(repl_id, :ready)
+                return
+            end
+        catch e
+            @debug "Reconnection attempt failed" id = repl_id attempt = attempt exception =
+                e
+        end
+    end
+
+    # Failed to reconnect after all attempts
+    @warn "Failed to reconnect to REPL after $max_attempts attempts" id = repl_id
+    flush_pending_requests_with_error(
+        repl_id,
+        "Reconnection timeout after $max_attempts seconds",
+    )
+end
+
+"""
+    process_pending_requests(repl_id::String)
+
+Process all buffered requests for a reconnected REPL.
+"""
+function process_pending_requests(repl_id::String)
+    pending = Tuple{Dict,HTTP.Stream}[]
+
+    lock(REPL_REGISTRY_LOCK) do
+        if haskey(REPL_REGISTRY, repl_id)
+            pending = copy(REPL_REGISTRY[repl_id].pending_requests)
+            empty!(REPL_REGISTRY[repl_id].pending_requests)
+        end
+    end
+
+    for (request, http) in pending
+        try
+            # Re-route the request
+            route_to_repl_streaming(request, http.message, http)
+        catch e
+            @error "Error processing pending request" repl_id = repl_id exception = e
+        end
+    end
+end
+
+"""
+    flush_pending_requests_with_error(repl_id::String, error_message::String)
+
+Send error responses to all buffered requests when REPL cannot be recovered.
+"""
+function flush_pending_requests_with_error(repl_id::String, error_message::String)
+    pending = Tuple{Dict,HTTP.Stream}[]
+
+    lock(REPL_REGISTRY_LOCK) do
+        if haskey(REPL_REGISTRY, repl_id)
+            pending = copy(REPL_REGISTRY[repl_id].pending_requests)
+            empty!(REPL_REGISTRY[repl_id].pending_requests)
+        end
+    end
+
+    for (request, http) in pending
+        try
+            HTTP.setstatus(http, 503)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32005,
+                            "message" => "REPL unavailable: $error_message",
+                        ),
+                    ),
+                ),
+            )
+        catch e
+            @error "Error flushing pending request" repl_id = repl_id exception = e
+        end
+    end
+
+    @info "Flushed pending requests with error" repl_id = repl_id count = length(pending)
+end
+
+"""
+    monitor_heartbeats()
+
+Background task that monitors REPL heartbeats and marks REPLs as disconnected if they stop responding.
+Runs every 5 seconds and checks for REPLs that haven't sent a heartbeat in 15 seconds.
+"""
+function monitor_heartbeats()
+    while SERVER[] !== nothing
+        try
+            sleep(5)  # Check every 5 seconds
+
+            if SERVER[] === nothing
+                break
+            end
+
+            repl_ids_to_check = String[]
+            lock(REPL_REGISTRY_LOCK) do
+                repl_ids_to_check = collect(keys(REPL_REGISTRY))
+            end
+
+            for repl_id in repl_ids_to_check
+                repl = get_repl(repl_id)
+                if repl === nothing
+                    continue
+                end
+
+                # Skip if already disconnected/reconnecting/stopped
+                if repl.status != :ready
+                    continue
+                end
+
+                # Check if heartbeat is stale (>15 seconds old)
+                time_since_heartbeat = now() - repl.last_heartbeat
+                if time_since_heartbeat > Second(15)
+                    @warn "REPL heartbeat timeout, marking as disconnected" id = repl_id last_heartbeat =
+                        repl.last_heartbeat
+
+                    lock(REPL_REGISTRY_LOCK) do
+                        if haskey(REPL_REGISTRY, repl_id)
+                            REPL_REGISTRY[repl_id].status = :disconnected
+                            REPL_REGISTRY[repl_id].disconnect_time = now()
+                            REPL_REGISTRY[repl_id].missed_heartbeats += 1
+
+                            # Log disconnection event
+                            Dashboard.log_event(
+                                repl_id,
+                                Dashboard.ERROR,
+                                Dict(
+                                    "message" => "Heartbeat timeout after $time_since_heartbeat",
+                                ),
+                            )
+                        end
+                    end
+                end
+            end
+        catch e
+            @error "Error in heartbeat monitor" exception = (e, catch_backtrace())
+        end
+    end
+
+    @info "Heartbeat monitor stopped"
 end
 
 """
@@ -426,51 +633,68 @@ function route_to_repl_streaming(
         return nothing
     end
 
-    if repl.status != :ready
-        # If stopped, try one recovery attempt by marking as ready
-        # (maybe the REPL recovered but we didn't know)
-        if repl.status == :stopped
-            @info "Attempting recovery for stopped REPL" id = target_id
-            update_repl_status(target_id, :ready)
-            repl = get_repl(target_id)
-            if repl === nothing || repl.status != :ready
-                HTTP.setstatus(http, 503)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => get(request, "id", nothing),
-                            "error" => Dict(
-                                "code" => -32003,
-                                "message" => "REPL not ready: $(repl.status)",
-                            ),
-                        ),
-                    ),
-                )
-                return nothing
+    # Handle REPL status
+    if repl.status == :disconnected || repl.status == :reconnecting
+        # Buffer the request and try to reconnect
+        lock(REPL_REGISTRY_LOCK) do
+            if haskey(REPL_REGISTRY, target_id)
+                # Add request to buffer
+                push!(REPL_REGISTRY[target_id].pending_requests, (request, http))
+
+                # Mark as reconnecting if not already
+                if REPL_REGISTRY[target_id].status == :disconnected
+                    REPL_REGISTRY[target_id].status = :reconnecting
+                    @info "REPL disconnected, buffering requests and attempting reconnection" id =
+                        target_id buffer_size =
+                        length(REPL_REGISTRY[target_id].pending_requests)
+
+                    # Start async reconnection task
+                    @async try_reconnect(target_id)
+                end
             end
-        else
-            HTTP.setstatus(http, 503)
-            HTTP.setheader(http, "Content-Type" => "application/json")
-            HTTP.startwrite(http)
-            write(
-                http,
-                JSON.json(
-                    Dict(
-                        "jsonrpc" => "2.0",
-                        "id" => get(request, "id", nothing),
-                        "error" => Dict(
-                            "code" => -32003,
-                            "message" => "REPL not ready: $(repl.status)",
-                        ),
+        end
+
+        # Don't send response yet - will be processed when REPL reconnects or times out
+        return nothing
+
+    elseif repl.status == :stopped
+        # REPL is permanently stopped, return error
+        HTTP.setstatus(http, 503)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(
+            http,
+            JSON.json(
+                Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" => Dict(
+                        "code" => -32003,
+                        "message" => "REPL permanently stopped: $target_id. Restart required.",
                     ),
                 ),
-            )
-            return nothing
-        end
+            ),
+        )
+        return nothing
+
+    elseif repl.status != :ready
+        HTTP.setstatus(http, 503)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(
+            http,
+            JSON.json(
+                Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => get(request, "id", nothing),
+                    "error" => Dict(
+                        "code" => -32003,
+                        "message" => "REPL not ready: $(repl.status)",
+                    ),
+                ),
+            ),
+        )
+        return nothing
     end
 
     # Forward request to backend REPL with streaming support
@@ -576,22 +800,44 @@ function route_to_repl_streaming(
         error_msg = String(take!(io))
         @error "Error forwarding request to REPL" target = target_id exception = e
 
-        # Store the error and increment missed heartbeat counter
+        # Store the error and mark as disconnected
         error_summary = length(error_msg) > 500 ? error_msg[1:500] * "..." : error_msg
 
-        # Only mark as stopped after 3 consecutive failures
+        # Mark as disconnected and buffer this request
         lock(REPL_REGISTRY_LOCK) do
             if haskey(REPL_REGISTRY, target_id)
                 REPL_REGISTRY[target_id].last_error = error_summary
                 REPL_REGISTRY[target_id].missed_heartbeats += 1
 
-                if REPL_REGISTRY[target_id].missed_heartbeats >= 3
+                # Only permanently stop after extended disconnect (5 minutes)
+                if REPL_REGISTRY[target_id].status == :disconnected &&
+                   REPL_REGISTRY[target_id].disconnect_time !== nothing &&
+                   (now() - REPL_REGISTRY[target_id].disconnect_time) > Minute(5)
                     REPL_REGISTRY[target_id].status = :stopped
-                    @warn "REPL marked as stopped after 3 consecutive failures" id =
+                    @warn "REPL permanently stopped after 5 minutes disconnected" id =
                         target_id
+
+                    # Fail all pending requests
+                    flush_pending_requests_with_error(target_id, "REPL permanently stopped")
                 else
-                    @info "REPL error ($(REPL_REGISTRY[target_id].missed_heartbeats)/3 failures)" id =
-                        target_id
+                    # First failure - mark as disconnected
+                    if REPL_REGISTRY[target_id].status == :ready
+                        REPL_REGISTRY[target_id].status = :disconnected
+                        REPL_REGISTRY[target_id].disconnect_time = now()
+                        @info "REPL disconnected, will buffer requests and retry" id =
+                            target_id
+                    end
+
+                    # Buffer this request
+                    push!(REPL_REGISTRY[target_id].pending_requests, (request, http))
+                    @info "Request buffered" id = target_id buffer_size =
+                        length(REPL_REGISTRY[target_id].pending_requests)
+
+                    # Start reconnection attempts
+                    if REPL_REGISTRY[target_id].status == :disconnected
+                        REPL_REGISTRY[target_id].status = :reconnecting
+                        @async try_reconnect(target_id)
+                    end
                 end
             end
         end
@@ -603,22 +849,7 @@ function route_to_repl_streaming(
             Dict("message" => sprint(showerror, e), "method" => get(request, "method", "")),
         )
 
-        HTTP.setstatus(http, 502)
-        HTTP.setheader(http, "Content-Type" => "application/json")
-        HTTP.startwrite(http)
-        write(
-            http,
-            JSON.json(
-                Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => get(request, "id", nothing),
-                    "error" => Dict(
-                        "code" => -32004,
-                        "message" => "Failed to connect to REPL: $(sprint(showerror, e))",
-                    ),
-                ),
-            ),
-        )
+        # Don't send response - will be handled by reconnection logic
         return nothing
     end
 end
@@ -1624,6 +1855,9 @@ function start_foreground_server(port::Int = 3000)
         stop_vite_dev_server()
         remove_pid_file(port)
     end)
+
+    # Start background heartbeat monitor
+    @async monitor_heartbeats()
 
     # Start HTTP server with streaming support
     server =

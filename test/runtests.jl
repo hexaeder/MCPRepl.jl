@@ -10,6 +10,7 @@ include("generate_tests.jl")
 include("ast_stripping_tests.jl")
 include("version_tests.jl")
 include("supervisor_tests.jl")
+include("proxy_state_tests.jl")
 
 # Run all tests with ReTest
 retest()

@@ -88,6 +88,67 @@ h1 {
     animation: pulse 2s ease-in-out infinite;
 }
 
+/* Status-specific colors */
+.status-indicator.ready {
+    background: var(--accent-success);
+}
+
+.status-indicator.ready .pulse {
+    background: var(--accent-success);
+}
+
+.status-indicator.ready .ring {
+    border-color: var(--accent-success);
+}
+
+.status-indicator.disconnected {
+    background: #ffa726;
+    /* Orange */
+    animation: none;
+}
+
+.status-indicator.disconnected .pulse {
+    background: #ffa726;
+    animation: none;
+}
+
+.status-indicator.disconnected .ring {
+    border-color: #ffa726;
+    animation: none;
+}
+
+.status-indicator.reconnecting {
+    background: #42a5f5;
+    /* Blue */
+    animation: blink 1s ease-in-out infinite;
+}
+
+.status-indicator.reconnecting .pulse {
+    background: #42a5f5;
+    animation: blink 1s ease-in-out infinite;
+}
+
+.status-indicator.reconnecting .ring {
+    border-color: #42a5f5;
+    animation: blink 1s ease-in-out infinite;
+}
+
+.status-indicator.stopped {
+    background: #ef5350;
+    /* Red */
+    animation: none;
+}
+
+.status-indicator.stopped .pulse {
+    background: #ef5350;
+    animation: none;
+}
+
+.status-indicator.stopped .ring {
+    border-color: #ef5350;
+    animation: none;
+}
+
 .pulse,
 .ring {
     position: absolute;
@@ -103,6 +164,18 @@ h1 {
 .ring {
     border: 2px solid var(--accent-success);
     animation: ring 2s ease-in-out infinite;
+}
+
+@keyframes blink {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
 }
 
 @keyframes pulse {
