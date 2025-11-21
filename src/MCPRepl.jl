@@ -2617,8 +2617,11 @@ Terminates the active debug session and returns to normal execution.
     if Proxy.is_server_running(proxy_port)
         try
             # Determine REPL ID
-            repl_id = if !isempty(agent_name)
-                "agent-$agent_name"
+            # Priority: MCPREPL_ID env var > agent_name > supervisor > workspace basename
+            repl_id = if haskey(ENV, "MCPREPL_ID") && !isempty(ENV["MCPREPL_ID"])
+                ENV["MCPREPL_ID"]
+            elseif !isempty(agent_name)
+                agent_name  # Use agent_name directly without prefix
             elseif supervisor
                 "supervisor"
             else
@@ -2660,9 +2663,11 @@ Terminates the active debug session and returns to normal execution.
 
                 # Start heartbeat task to keep proxy updated
                 @async begin
+                    @info "Heartbeat task started" repl_id = repl_id proxy_port = proxy_port
                     while SERVER[] !== nothing
                         try
                             sleep(5)  # Send heartbeat every 5 seconds
+                            @debug "Heartbeat check" server_active = (SERVER[] !== nothing) proxy_running = Proxy.is_server_running(proxy_port)
                             if SERVER[] !== nothing && Proxy.is_server_running(proxy_port)
                                 heartbeat = Dict(
                                     "jsonrpc" => "2.0",
@@ -2670,6 +2675,7 @@ Terminates the active debug session and returns to normal execution.
                                     "method" => "proxy/heartbeat",
                                     "params" => Dict("id" => repl_id),
                                 )
+                                @info "Sending heartbeat" repl_id = repl_id
                                 HTTP.post(
                                     "http://127.0.0.1:$proxy_port/",
                                     ["Content-Type" => "application/json"],
@@ -2677,14 +2683,16 @@ Terminates the active debug session and returns to normal execution.
                                     readtimeout=5,
                                     connect_timeout=2,
                                 )
+                                @info "Heartbeat sent successfully" repl_id = repl_id
+                            else
+                                @warn "Heartbeat skipped" server_active = (SERVER[] !== nothing) proxy_running = Proxy.is_server_running(proxy_port)
                             end
                         catch e
                             # Ignore heartbeat errors, they're not critical
-                            if verbose
-                                @debug "Heartbeat failed" exception = e
-                            end
+                            @warn "Heartbeat failed" repl_id = repl_id exception = e
                         end
                     end
+                    @info "Heartbeat task ended" repl_id = repl_id
                 end
             end
         catch e
