@@ -13,7 +13,7 @@ using .Proxy
         empty!(Proxy.REPL_REGISTRY)
 
         # Register a REPL
-        Proxy.register_repl("test-repl", 3001; pid = 12345)
+        Proxy.register_repl("test-repl", 3001; pid=12345)
 
         # Verify structure with new fields
         repl = Proxy.get_repl("test-repl")
@@ -27,7 +27,7 @@ using .Proxy
 
     @testset "Status Transitions" begin
         empty!(Proxy.REPL_REGISTRY)
-        Proxy.register_repl("status-test", 3002; pid = 12346)
+        Proxy.register_repl("status-test", 3002; pid=12346)
 
         # ready -> disconnected
         lock(Proxy.REPL_REGISTRY_LOCK) do
@@ -62,7 +62,7 @@ using .Proxy
 
     @testset "Request Buffering" begin
         empty!(Proxy.REPL_REGISTRY)
-        Proxy.register_repl("buffer-test", 3003; pid = 12347)
+        Proxy.register_repl("buffer-test", 3003; pid=12347)
 
         # Simulate adding pending requests
         mock_request = Dict("method" => "test", "id" => 1)
@@ -80,7 +80,7 @@ using .Proxy
 
     @testset "Heartbeat Timeout Detection" begin
         empty!(Proxy.REPL_REGISTRY)
-        Proxy.register_repl("heartbeat-test", 3004; pid = 12348)
+        Proxy.register_repl("heartbeat-test", 3004; pid=12348)
 
         # Simulate old heartbeat
         lock(Proxy.REPL_REGISTRY_LOCK) do
@@ -107,7 +107,7 @@ using .Proxy
 
     @testset "Reconnection Recovery" begin
         empty!(Proxy.REPL_REGISTRY)
-        Proxy.register_repl("recovery-test", 3005; pid = 12349)
+        Proxy.register_repl("recovery-test", 3005; pid=12349)
 
         # Simulate disconnection
         lock(Proxy.REPL_REGISTRY_LOCK) do
@@ -127,7 +127,7 @@ using .Proxy
 
     @testset "Permanent Stop After Timeout" begin
         empty!(Proxy.REPL_REGISTRY)
-        Proxy.register_repl("timeout-test", 3006; pid = 12350)
+        Proxy.register_repl("timeout-test", 3006; pid=12350)
 
         # Simulate long disconnection (>5 minutes)
         lock(Proxy.REPL_REGISTRY_LOCK) do
@@ -145,13 +145,13 @@ using .Proxy
 
     @testset "Missed Heartbeats Counter" begin
         empty!(Proxy.REPL_REGISTRY)
-        Proxy.register_repl("counter-test", 3007; pid = 12351)
+        Proxy.register_repl("counter-test", 3007; pid=12351)
 
         repl = Proxy.get_repl("counter-test")
         @test repl.missed_heartbeats == 0
 
         # Increment counter via update_repl_status with error
-        Proxy.update_repl_status("counter-test", :ready; error = "Test error")
+        Proxy.update_repl_status("counter-test", :ready; error="Test error")
         repl = Proxy.get_repl("counter-test")
         @test repl.missed_heartbeats == 1
 
