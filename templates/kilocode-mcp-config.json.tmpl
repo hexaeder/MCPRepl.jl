@@ -2,11 +2,14 @@
   "mcpServers": {
     "julia-repl": {
       "type": "streamable-http",
-      "url": "http://localhost:{{port}}",
-      "headers": {{% if has_api_key %}
-        "Authorization": "{{api_key}}",{% end %}
+      "url": "http://localhost:{{port}}",{% if has_api_key %}
+      "headers": {
+        "Authorization": "{{api_key}}",
         "X-MCPRepl-Session": "{{session_name}}"
-      },
+      },{% else %}
+      "headers": {
+        "X-MCPRepl-Session": "{{session_name}}"
+      },{% end %}
       "alwaysAllow": [
                   {{tool_list}}
       ],
