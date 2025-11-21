@@ -1,7 +1,7 @@
 [dashboard]
 lazy = true
-git-tree-sha1 = "79446129d0de83dacac24ce7a38addfa56b52897"
+git-tree-sha1 = "02747617a9d53d29c2669b43ffebd188f75f6f3a"
 
     [[dashboard.download]]
     url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-latest/dashboard-dist.tar.gz"
-    sha256 = "59b3c693435f0210026db5303a7f02108a3f320d38e281daba92c2e33218559d"
+    sha256 = "5fa4fa2bb3f72359471445c95496f18ce78cf1b3175ef3d8c43354ebaa6438f0"

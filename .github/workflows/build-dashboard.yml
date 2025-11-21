@@ -59,23 +59,23 @@ jobs:
           path: dashboard-dist.tar.gz
           retention-days: 90
       
-      - name: Create Release
+      - name: Create or Update Release
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: dashboard-${{ github.sha }}
-          name: Dashboard Build ${{ github.sha }}
+          tag_name: dashboard-latest
+          name: Dashboard Build (Latest)
           files: dashboard-dist.tar.gz
           body: |
             Dashboard build from commit ${{ github.sha }}
             
-            To update Artifacts.toml:
+            Artifacts.toml configuration:
             ```toml
             [dashboard]
             lazy = true
             git-tree-sha1 = "${{ steps.tree_sha.outputs.tree_sha }}"
             
                 [[dashboard.download]]
-                url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-${{ github.sha }}/dashboard-dist.tar.gz"
+                url = "https://github.com/kahliburke/MCPRepl.jl/releases/download/dashboard-latest/dashboard-dist.tar.gz"
                 sha256 = "${{ steps.sha.outputs.sha256 }}"
             ```
