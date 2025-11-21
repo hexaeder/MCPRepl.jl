@@ -2387,11 +2387,11 @@ Terminates the active debug session and returns to normal execution.
                 return "No agents registered."
             end
 
-            output = "Agent Status Report\n"
+            output = "Session Status Report\n"
             output *= "="^60 * "\n\n"
 
             for (name, agent) in agents
-                output *= "Agent: $name\n"
+                output *= "Session: $name\n"
                 output *= "  Status: $(agent.status)\n"
                 output *= "  Port: $(agent.port)\n"
                 output *= "  PID: $(agent.pid === nothing ? "unknown" : agent.pid)\n"
@@ -2409,15 +2409,15 @@ Terminates the active debug session and returns to normal execution.
         end
     )
 
-    supervisor_start_agent_tool = @mcp_tool(
-        :supervisor_start_agent,
-        "Start a managed agent process.",
+    supervisor_start_session_tool = @mcp_tool(
+        :supervisor_start_session,
+        "Start a managed session process.",
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "agent_name" => Dict(
+                "session_name" => Dict(
                     "type" => "string",
-                    "description" => "Name of the agent to start",
+                    "description" => "Name of the session to start",
                 ),
             ),
             "required" => ["agent_name"],
@@ -2427,120 +2427,120 @@ Terminates the active debug session and returns to normal execution.
                 return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
             end
 
-            agent_name = get(args, "agent_name", "")
-            if isempty(agent_name)
-                return "Error: agent_name is required"
+            session_name = get(args, "session_name", "")
+            if isempty(session_name)
+                return "Error: session_name is required"
             end
 
             registry = SUPERVISOR_REGISTRY[]
-            agent = Supervisor.get_agent(registry, agent_name)
+            agent = Supervisor.get_agent(registry, session_name)
 
             if agent === nothing
-                return "Error: Agent '$agent_name' not found in registry"
+                return "Error: Session '$session_name' not found in registry"
             end
 
             if agent.status != :stopped
-                return "Agent '$agent_name' is already running (status: $(agent.status))"
+                return "Session '$session_name' is already running (status: $(agent.status))"
             end
 
             success = Supervisor.start_agent(agent)
 
             if success
-                return "Agent '$agent_name' started successfully on port $(agent.port)"
+                return "Session '$session_name' started successfully on port $(agent.port)"
             else
-                return "Failed to start agent '$agent_name'"
+                return "Failed to start session '$session_name'"
             end
         end
     )
 
-    supervisor_stop_agent_tool = @mcp_tool(
-        :supervisor_stop_agent,
-        "Stop a managed agent process.",
+    supervisor_stop_session_tool = @mcp_tool(
+        :supervisor_stop_session,
+        "Stop a managed session process.",
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "agent_name" => Dict(
+                "session_name" => Dict(
                     "type" => "string",
-                    "description" => "Name of the agent to stop",
+                    "description" => "Name of the session to stop",
                 ),
                 "force" => Dict(
                     "type" => "boolean",
-                    "description" => "Force kill the agent (default: false)",
+                    "description" => "Force kill the session (default: false)",
                     "default" => false,
                 ),
             ),
-            "required" => ["agent_name"],
+            "required" => ["session_name"],
         ),
         function (args)
             if SUPERVISOR_REGISTRY[] === nothing
                 return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
             end
 
-            agent_name = get(args, "agent_name", "")
+            session_name = get(args, "session_name", "")
             force = get(args, "force", false)
 
-            if isempty(agent_name)
-                return "Error: agent_name is required"
+            if isempty(session_name)
+                return "Error: session_name is required"
             end
 
             registry = SUPERVISOR_REGISTRY[]
-            agent = Supervisor.get_agent(registry, agent_name)
+            agent = Supervisor.get_agent(registry, session_name)
 
             if agent === nothing
-                return "Error: Agent '$agent_name' not found in registry"
+                return "Error: Session '$session_name' not found in registry"
             end
 
             if agent.status == :stopped
-                return "Agent '$agent_name' is already stopped"
+                return "Session '$session_name' is already stopped"
             end
 
             success = Supervisor.stop_agent(agent; force=force)
 
             if success
-                return "Agent '$agent_name' stopped successfully"
+                return "Session '$session_name' stopped successfully"
             else
-                return "Failed to stop agent '$agent_name'"
+                return "Failed to stop session '$session_name'"
             end
         end
     )
 
-    supervisor_restart_agent_tool = @mcp_tool(
-        :supervisor_restart_agent,
-        "Restart a managed agent process.",
+    supervisor_restart_session_tool = @mcp_tool(
+        :supervisor_restart_session,
+        "Restart a managed session process.",
         Dict(
             "type" => "object",
             "properties" => Dict(
-                "agent_name" => Dict(
+                "session_name" => Dict(
                     "type" => "string",
-                    "description" => "Name of the agent to restart",
+                    "description" => "Name of the session to restart",
                 ),
             ),
-            "required" => ["agent_name"],
+            "required" => ["session_name"],
         ),
         function (args)
             if SUPERVISOR_REGISTRY[] === nothing
                 return "Supervisor mode is not enabled. Start MCPRepl with supervisor=true."
             end
 
-            agent_name = get(args, "agent_name", "")
+            session_name = get(args, "session_name", "")
 
-            if isempty(agent_name)
-                return "Error: agent_name is required"
+            if isempty(session_name)
+                return "Error: session_name is required"
             end
 
             registry = SUPERVISOR_REGISTRY[]
-            agent = Supervisor.get_agent(registry, agent_name)
+            agent = Supervisor.get_agent(registry, session_name)
 
             if agent === nothing
-                return "Error: Agent '$agent_name' not found in registry"
+                return "Error: Session '$session_name' not found in registry"
             end
 
             success = Supervisor.restart_agent(agent)
 
             if success
-                return "Agent '$agent_name' restarted successfully. It should be online in a few seconds."
+                return "Session '$session_name' restarted successfully. It should be online in a few seconds."
             else
-                return "Failed to restart agent '$agent_name'"
+                return "Failed to restart session '$session_name'"
             end
         end
     )
@@ -2584,9 +2584,9 @@ Terminates the active debug session and returns to normal execution.
         pkg_rm_tool,
         run_tests_tool,
         supervisor_status_tool,
-        supervisor_start_agent_tool,
-        supervisor_stop_agent_tool,
-        supervisor_restart_agent_tool,
+        supervisor_start_session_tool,
+        supervisor_stop_session_tool,
+        supervisor_restart_session_tool,
         lsp_tools...,  # Add all LSP tools
     ]
 
