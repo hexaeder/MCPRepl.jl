@@ -501,12 +501,12 @@ end
     monitor_heartbeats()
 
 Background task that monitors REPL heartbeats and marks REPLs as disconnected if they stop responding.
-Runs every 5 seconds and checks for REPLs that haven't sent a heartbeat in 15 seconds.
+Runs every 1 second and checks for REPLs that haven't sent a heartbeat in 15 seconds.
 """
 function monitor_heartbeats()
     while SERVER[] !== nothing
         try
-            sleep(5)  # Check every 5 seconds
+            sleep(1)  # Check every 1 second
 
             if SERVER[] === nothing
                 break
