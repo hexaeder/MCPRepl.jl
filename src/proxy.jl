@@ -944,6 +944,30 @@ function handle_request(http::HTTP.Stream)
             return nothing
         end
 
+        # Dashboard API: Shutdown proxy server
+        if path == "/dashboard/api/shutdown" && method == "POST"
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(
+                    Dict("status" => "ok", "message" => "Shutting down proxy server"),
+                ),
+            )
+
+            # Schedule shutdown after response is sent
+            @async begin
+                sleep(0.5)  # Give time for response to be sent
+                @info "Proxy server shutdown requested via dashboard"
+                if SERVER[] !== nothing
+                    HTTP.close(SERVER[])
+                    SERVER[] = nothing
+                end
+            end
+            return nothing
+        end
+
         # Dashboard API: Get events
         if path == "/dashboard/api/events"
             query_params = HTTP.queryparams(uri)

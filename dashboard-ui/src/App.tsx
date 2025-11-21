@@ -89,6 +89,18 @@ export const App: React.FC = () => {
     const agentCount = Object.keys(agents).length;
     const eventCount = events.filter(e => e.type !== 'HEARTBEAT').length;
 
+    const handleShutdown = async () => {
+        if (!confirm('Are you sure you want to shut down the proxy server?')) {
+            return;
+        }
+        try {
+            await fetch('/dashboard/api/shutdown', { method: 'POST' });
+            alert('Proxy server is shutting down...');
+        } catch (error) {
+            console.error('Failed to shutdown proxy:', error);
+        }
+    };
+
     return (
         <div className="app">
             <header className="header">
@@ -105,6 +117,9 @@ export const App: React.FC = () => {
                         <span className="stat-label">EVENTS</span>
                         <span className="stat-value" id="header-events">{eventCount}</span>
                     </div>
+                    <button className="shutdown-button" onClick={handleShutdown} title="Shutdown proxy server">
+                        🛑 Stop Proxy
+                    </button>
                 </div>
             </header>
 
