@@ -2935,11 +2935,30 @@ function shutdown()
     call_tool(:manage_repl, Dict("command" => "shutdown"))
 end
 
+"""
+    start_proxy(port::Int=3000; background::Bool=false)
+
+Start the MCP proxy server. Wrapper for Proxy.start_server().
+"""
+function start_proxy(port::Int=3000; background::Bool=false)
+    return Proxy.start_server(port; background=background)
+end
+
+"""
+    stop_proxy(port::Int=3000)
+
+Stop the proxy server on the specified port. Wrapper for Proxy.stop_server().
+"""
+function stop_proxy(port::Int=3000)
+    return Proxy.stop_server(port)
+end
+
 # Export public API functions
 export start!, stop!, setup, test_server, reset
 export setup_security, security_status, generate_key, revoke_key
 export allow_ip, deny_ip, set_security_mode, quick_setup, gentle_setup
 export call_tool, list_tools, tool_help
+export start_proxy, stop_proxy  # Proxy server functions
 export Generate  # Project template generator module
 
 end #module

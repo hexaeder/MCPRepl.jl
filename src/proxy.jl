@@ -11,6 +11,7 @@ using JSON
 using Sockets
 using Dates
 using Logging
+using LoggingExtras
 
 include("dashboard.jl")
 using .Dashboard
@@ -28,7 +29,7 @@ function setup_proxy_logging(port::Int)
     log_file = joinpath(cache_dir, "proxy-$port.log")
 
     # Use FileLogger with automatic flushing
-    logger = Logging.FileLogger(log_file; append=true, always_flush=true)
+    logger = LoggingExtras.FileLogger(log_file; append=true, always_flush=true)
     global_logger(logger)
 
     @info "Proxy logging initialized" log_file = log_file
