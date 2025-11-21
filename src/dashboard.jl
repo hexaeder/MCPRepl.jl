@@ -10,7 +10,7 @@ using JSON
 using Dates
 using Sockets
 using OteraEngine
-using Pkg.Artifacts
+using Pkg.Artifacts: artifact_hash, ensure_artifact_installed
 
 # Event types for agent activity tracking
 @enum EventType begin
@@ -138,14 +138,10 @@ function serve_static_file(filepath::String)
     react_dist = try
         # Use function form instead of macro to avoid precompilation issues
         artifacts_toml = joinpath(dirname(@__DIR__), "Artifacts.toml")
-        artifact_hash = artifact_hash("dashboard", artifacts_toml)
-        if artifact_hash !== nothing
-            artifact_path = artifact_path(artifact_hash)
-            if isdir(artifact_path)
-                artifact_path
-            else
-                abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
-            end
+        hash = artifact_hash("dashboard", artifacts_toml)
+        if hash !== nothing
+            # ensure_artifact_installed downloads if needed and returns the path
+            ensure_artifact_installed("dashboard", artifacts_toml)
         else
             abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
         end
