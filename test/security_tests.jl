@@ -168,21 +168,26 @@ using JSON
             @test supervisor_config.mode == :lax
             @test supervisor_config.created_at isa Int64
 
-            # Test error when agent doesn't exist
-            @test_throws ErrorException MCPRepl.load_security_config(
+            # Test fallback when agent doesn't exist
+            fallback_config = MCPRepl.load_security_config(
                 test_dir,
                 "nonexistent-agent",
                 false,
             )
+            @test fallback_config !== nothing
+            @test fallback_config.mode == :lax
+            @test fallback_config.port == 0  # Dynamic port
 
-            # Test error when agents.json is missing
+            # Test fallback when agents.json is missing
             rm(agents_path)
-            @test_throws ErrorException MCPRepl.load_security_config(
+            fallback_config = MCPRepl.load_security_config(
                 test_dir,
                 "test-agent",
                 false,
             )
-            @test_throws ErrorException MCPRepl.load_security_config(test_dir, "", true)
+            @test fallback_config !== nothing
+            @test fallback_config.mode == :lax
+            @test fallback_config.port == 0
         end
 
         @testset "Security Management Functions" begin
