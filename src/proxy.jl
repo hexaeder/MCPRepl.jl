@@ -383,7 +383,7 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
             )))
             return nothing
         end
-        
+
         # Smart routing: Prefer MCPRepl agent if available
         # This prioritizes the main development REPL over test/temporary instances
         mcprepl_idx = findfirst(r -> r.id == "MCPRepl", repls)
@@ -690,27 +690,27 @@ function handle_request(http::HTTP.Stream)
         if path == "/dashboard/api/events/stream"
             query_params = HTTP.queryparams(uri)
             id = get(query_params, "id", nothing)
-            
+
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "text/event-stream")
             HTTP.setheader(http, "Cache-Control" => "no-cache")
             HTTP.setheader(http, "Connection" => "keep-alive")
             HTTP.startwrite(http)
-            
+
             # Send initial connection event
             write(http, "event: connected\n")
             write(http, "data: {\"status\":\"connected\"}\n\n")
             flush(http)
-            
+
             # Track last seen event ID to only send new events
             last_event_time = now()
-            
+
             try
                 while isopen(http)
                     # Get events since last check
                     events = Dashboard.get_events(id=id, limit=50)
                     new_events = filter(e -> e.timestamp > last_event_time, events)
-                    
+
                     for event in new_events
                         event_data = Dict(
                             "id" => event.id,
@@ -719,23 +719,23 @@ function handle_request(http::HTTP.Stream)
                             "data" => event.data,
                             "duration_ms" => event.duration_ms
                         )
-                        
+
                         write(http, "event: update\n")
                         write(http, "data: $(JSON.json(event_data))\n\n")
                         flush(http)
-                        
+
                         last_event_time = max(last_event_time, event.timestamp)
                     end
-                    
+
                     # Wait before next poll
                     sleep(0.5)
                 end
             catch e
                 if !(e isa Base.IOError)
-                    @debug "SSE stream error" exception=e
+                    @debug "SSE stream error" exception = e
                 end
             end
-            
+
             return nothing
         end
 
@@ -1157,7 +1157,7 @@ function handle_request(http::HTTP.Stream)
                 # Parse arguments
                 project_path = get(args, "project_path", "")
                 agent_name = get(args, "agent_name", basename(project_path))
-                
+
                 if isempty(project_path)
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")
@@ -1172,7 +1172,7 @@ function handle_request(http::HTTP.Stream)
                     )))
                     return nothing
                 end
-                
+
                 # Check if agent already exists
                 existing = findfirst(r -> r.id == agent_name, repls)
                 if existing !== nothing
@@ -1191,14 +1191,14 @@ function handle_request(http::HTTP.Stream)
                     )))
                     return nothing
                 end
-                
+
                 # Spawn new Julia REPL process
                 try
                     julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=\"$agent_name\")"`
-                    
+
                     # Run in background
                     proc = run(pipeline(julia_cmd, stdout=devnull, stderr=devnull), wait=false)
-                    
+
                     # Wait for agent to register (max 10 seconds)
                     registered = false
                     for i in 1:100
@@ -1223,7 +1223,7 @@ function handle_request(http::HTTP.Stream)
                             return nothing
                         end
                     end
-                    
+
                     # Timeout
                     HTTP.setstatus(http, 200)
                     HTTP.setheader(http, "Content-Type" => "application/json")

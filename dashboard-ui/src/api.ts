@@ -24,9 +24,9 @@ export function subscribeToEvents(
 ): () => void {
     const params = new URLSearchParams();
     if (agentId) params.set('id', agentId);
-    
+
     const eventSource = new EventSource(`${API_BASE}/events/stream?${params}`);
-    
+
     eventSource.addEventListener('update', (e) => {
         try {
             const event = JSON.parse(e.data) as AgentEvent;
@@ -35,11 +35,11 @@ export function subscribeToEvents(
             console.error('Failed to parse event:', error);
         }
     });
-    
+
     eventSource.onerror = (error) => {
         console.error('SSE error:', error);
     };
-    
+
     // Return cleanup function
     return () => {
         eventSource.close();

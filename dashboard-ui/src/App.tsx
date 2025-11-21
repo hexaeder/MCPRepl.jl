@@ -33,7 +33,7 @@ export const App: React.FC = () => {
         };
 
         loadInitialData();
-        
+
         // Poll for agents updates (less frequently)
         const agentsInterval = setInterval(async () => {
             try {
@@ -48,13 +48,13 @@ export const App: React.FC = () => {
         const unsubscribe = subscribeToEvents((newEvent) => {
             setEvents(prev => {
                 // Check if event already exists
-                const exists = prev.some(e => 
-                    e.timestamp === newEvent.timestamp && 
-                    e.id === newEvent.id && 
+                const exists = prev.some(e =>
+                    e.timestamp === newEvent.timestamp &&
+                    e.id === newEvent.id &&
                     e.type === newEvent.type
                 );
                 if (exists) return prev;
-                
+
                 // Add new event and keep last 1000
                 return [...prev, newEvent].slice(-1000);
             });
@@ -240,9 +240,9 @@ export const App: React.FC = () => {
                         {activeTab === 'terminal' && (
                             <div className="view active terminal-view" id="terminal-view">
                                 <div className="terminal-controls">
-                                    <input 
-                                        type="text" 
-                                        placeholder="Search terminal..." 
+                                    <input
+                                        type="text"
+                                        placeholder="Search terminal..."
                                         className="terminal-search"
                                         onChange={(e) => setTerminalSearch(e.target.value)}
                                     />
@@ -300,11 +300,11 @@ export const App: React.FC = () => {
                                                                         output = contents.map((c: any) => c.text || '').join('\n');
                                                                     }
                                                                 } else if (event.data.result) {
-                                                                    output = typeof event.data.result === 'string' 
-                                                                        ? event.data.result 
+                                                                    output = typeof event.data.result === 'string'
+                                                                        ? event.data.result
                                                                         : JSON.stringify(event.data.result, null, 2);
                                                                 }
-                                                                
+
                                                                 return (
                                                                     <>
                                                                         <span className="terminal-output-text">{output || '(no output)'}</span>
@@ -325,7 +325,7 @@ export const App: React.FC = () => {
                                                                 return <span className="terminal-default">{JSON.stringify(event.data)}</span>;
                                                         }
                                                     };
-                                                    
+
                                                     return (
                                                         <div key={idx} className={`terminal-line terminal-${event.type.toLowerCase()}`}>
                                                             <span className="terminal-time">{event.timestamp.split(' ')[1]}</span>

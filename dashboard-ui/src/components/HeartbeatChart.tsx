@@ -43,7 +43,7 @@ export const HeartbeatChart: React.FC<HeartbeatChartProps> = ({ agentId }) => {
             if (event.type === 'HEARTBEAT' && event.id === agentId) {
                 const eventTime = new Date(event.timestamp).getTime();
                 const now = Date.now();
-                
+
                 // Avoid duplicate spikes
                 if (eventTime > lastBeatRef.current) {
                     lastBeatRef.current = eventTime;

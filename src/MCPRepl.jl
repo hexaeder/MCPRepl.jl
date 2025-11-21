@@ -746,7 +746,7 @@ function start!(;
     spinner_idx = Ref(1)
     spinner_active = Ref(true)
     status_msg = Ref("Starting MCPRepl...")
-    
+
     # Background task to animate spinner
     spinner_task = @async begin
         while spinner_active[]
