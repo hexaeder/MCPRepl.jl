@@ -54,6 +54,8 @@ end
 
 Load security configuration from workspace .mcprepl/security.json file.
 Returns nothing if no configuration exists.
+
+If port is not specified in configuration, defaults to 0 (dynamic port assignment in 40000-49999 range).
 """
 function load_security_config(
     workspace_dir::String = pwd(),
@@ -77,13 +79,8 @@ function load_security_config(
                     mode = Symbol(get(agent_config, "mode", "lax"))
                     api_keys = get(agent_config, "api_keys", String[])
                     allowed_ips = get(agent_config, "allowed_ips", String[])
-                    # Port is required in agent config
-                    if !haskey(agent_config, "port")
-                        error(
-                            "Agent '$agent_name' missing required 'port' field in agents.json",
-                        )
-                    end
-                    port = agent_config["port"]
+                    # Port defaults to 0 (dynamic assignment) if not specified
+                    port = get(agent_config, "port", 0)
                     created_at = Int64(round(time()))
 
                     @info "Loaded security config for agent from agents.json" agent =
@@ -118,11 +115,8 @@ function load_security_config(
                     mode = Symbol(get(supervisor_config, "mode", "lax"))
                     api_keys = get(supervisor_config, "api_keys", String[])
                     allowed_ips = get(supervisor_config, "allowed_ips", String[])
-                    # Port is required in supervisor config
-                    if !haskey(supervisor_config, "port")
-                        error("Supervisor missing required 'port' field in agents.json")
-                    end
-                    port = supervisor_config["port"]
+                    # Port defaults to 0 (dynamic assignment) if not specified
+                    port = get(supervisor_config, "port", 0)
                     created_at = Int64(round(time()))
 
                     @info "Loaded security config for supervisor from agents.json" mode =
@@ -155,7 +149,7 @@ function load_security_config(
         mode = Symbol(get(data, "mode", "strict"))
         api_keys = get(data, "api_keys", String[])
         allowed_ips = get(data, "allowed_ips", ["127.0.0.1", "::1"])
-        port = get(data, "port", 3000)
+        port = get(data, "port", 0)  # Default to 0 (dynamic port assignment)
         created_at = get(data, "created_at", time())
 
         return SecurityConfig(mode, api_keys, allowed_ips, port, created_at)

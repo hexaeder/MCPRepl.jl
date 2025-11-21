@@ -51,7 +51,7 @@ port = find_free_port()
 port = find_free_port(4000, 4999)
 ```
 """
-function find_free_port(start_port::Int = 40000, end_port::Int = 49999)
+function find_free_port(start_port::Int=40000, end_port::Int=49999)
     for port = start_port:end_port
         try
             # Try to bind to the port - if successful, it's available
@@ -204,8 +204,8 @@ Automatically cleans up the stored response after retrieval.
 """
 function retrieve_vscode_response(
     request_id::String;
-    timeout::Float64 = 5.0,
-    poll_interval::Float64 = 0.1,
+    timeout::Float64=5.0,
+    poll_interval::Float64=0.1,
 )
     start_time = time()
 
@@ -234,7 +234,7 @@ end
 Remove responses older than `max_age` seconds to prevent memory leaks.
 Should be called periodically.
 """
-function cleanup_old_vscode_responses(max_age::Float64 = 60.0)
+function cleanup_old_vscode_responses(max_age::Float64=60.0)
     current_time = time()
     lock(VSCODE_RESPONSE_LOCK) do
         for (request_id, (_, _, timestamp)) in collect(VSCODE_RESPONSES)
@@ -297,7 +297,7 @@ end
 Remove nonces older than `max_age` seconds to prevent memory leaks.
 Should be called periodically.
 """
-function cleanup_old_nonces(max_age::Float64 = 60.0)
+function cleanup_old_nonces(max_age::Float64=60.0)
     current_time = time()
     lock(VSCODE_NONCE_LOCK) do
         for (request_id, (_, timestamp)) in collect(VSCODE_NONCES)
@@ -328,12 +328,12 @@ end
 # Helper function to build VS Code command URI
 function build_vscode_uri(
     command::String;
-    args::Union{Nothing,String} = nothing,
-    request_id::Union{Nothing,String} = nothing,
-    mcp_port::Int = 3000,
-    nonce::Union{Nothing,String} = nothing,
-    publisher::String = "MCPRepl",
-    name::String = "vscode-remote-control",
+    args::Union{Nothing,String}=nothing,
+    request_id::Union{Nothing,String}=nothing,
+    mcp_port::Int=3000,
+    nonce::Union{Nothing,String}=nothing,
+    publisher::String="MCPRepl",
+    name::String="vscode-remote-control",
 )
     uri = "vscode://$(publisher).$(name)?cmd=$(command)"
     if args !== nothing
@@ -374,7 +374,7 @@ the user already sees code execution in their REPL.
 Logging macros (@error, @debug, @info, @warn) are only removed at the top level,
 not inside function definitions or other nested code.
 """
-function remove_println_calls(expr, toplevel::Bool = true)
+function remove_println_calls(expr, toplevel::Bool=true)
     if expr isa Expr
         # Check if this is a print-related call
         if expr.head == :call
@@ -444,9 +444,9 @@ end
 
 function execute_repllike(
     str;
-    silent::Bool = false,
-    quiet::Bool = true,
-    description::Union{String,Nothing} = nothing,
+    silent::Bool=false,
+    quiet::Bool=true,
+    description::Union{String,Nothing}=nothing,
 )
     # Check for Pkg.activate usage
     if contains(str, "activate(") && !contains(str, r"#.*overwrite no-activate-rule")
@@ -482,7 +482,7 @@ function execute_repllike(
 
     # Only print the agent prompt if not silent
     if !silent
-        printstyled("\nagent> ", color = :red, bold = :true)
+        printstyled("\nagent> ", color=:red, bold=:true)
         if description !== nothing
             println(description)
         else
@@ -518,7 +518,7 @@ function execute_repllike(
     stdout_task = @async begin
         try
             while !eof(stdout_read)
-                line = readline(stdout_read; keep = true)
+                line = readline(stdout_read; keep=true)
                 push!(stdout_content, line)
                 # Show real-time output unless silent mode
                 if !silent
@@ -536,7 +536,7 @@ function execute_repllike(
     stderr_task = @async begin
         try
             while !eof(stderr_read)
-                line = readline(stderr_read; keep = true)
+                line = readline(stderr_read; keep=true)
                 push!(stderr_content, line)
                 # Show real-time output unless silent mode
                 if !silent
@@ -633,8 +633,8 @@ The configuration supports:
 If the config file doesn't exist, returns `nothing` to indicate all tools should be enabled.
 """
 function load_tools_config(
-    config_path::String = ".mcprepl/tools.json",
-    workspace_dir::String = pwd(),
+    config_path::String=".mcprepl/tools.json",
+    workspace_dir::String=pwd(),
 )
     full_path = joinpath(workspace_dir, config_path)
 
@@ -644,7 +644,7 @@ function load_tools_config(
     end
 
     try
-        config = JSON.parsefile(full_path; dicttype = Dict{String,Any})
+        config = JSON.parsefile(full_path; dicttype=Dict{String,Any})
         enabled_tools = Set{Symbol}()
 
         # First, process tool sets
@@ -709,8 +709,8 @@ The heartbeat task runs indefinitely until the Julia process exits.
 """
 function start_agent_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
     if verbose
-        printstyled("💓 Agent Heartbeat: ", color = :cyan, bold = true)
-        printstyled("Enabled for '$agent_name'\n", color = :green, bold = true)
+        printstyled("💓 Agent Heartbeat: ", color=:cyan, bold=true)
+        printstyled("Enabled for '$agent_name'\n", color=:green, bold=true)
     end
 
     # Spawn heartbeat task on a separate thread
@@ -739,7 +739,7 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
         supervisor_url = "http://localhost:$supervisor_port/"
 
         if verbose
-            printstyled("   • Sending to: $supervisor_url\n", color = :green)
+            printstyled("   • Sending to: $supervisor_url\n", color=:green)
             println()
         end
 
@@ -762,8 +762,8 @@ function start_agent_heartbeat(agent_name::String, agents_config::String, verbos
                     supervisor_url,
                     ["Content-Type" => "application/json"],
                     JSON.json(heartbeat);
-                    readtimeout = 2,
-                    connect_timeout = 1,
+                    readtimeout=2,
+                    connect_timeout=1,
                 )
             catch e
                 # Silently ignore heartbeat failures (supervisor may not be running yet)
@@ -809,13 +809,13 @@ MCPRepl.start!(agent_name="data-processor")
 ```
 """
 function start!(;
-    port::Union{Int,Nothing} = nothing,
-    verbose::Bool = true,
-    security_mode::Union{Symbol,Nothing} = nothing,
-    supervisor::Bool = false,
-    agents_config::String = ".mcprepl/agents.json",
-    agent_name::String = "",
-    workspace_dir::String = pwd(),
+    port::Union{Int,Nothing}=nothing,
+    verbose::Bool=true,
+    security_mode::Union{Symbol,Nothing}=nothing,
+    supervisor::Bool=false,
+    agents_config::String=".mcprepl/agents.json",
+    agent_name::String="",
+    workspace_dir::String=pwd(),
 )
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
@@ -846,8 +846,8 @@ function start!(;
         status_msg[] = "Starting MCPRepl (starting proxy)..."
         Proxy.start_server(
             proxy_port;
-            background = true,
-            status_callback = (msg) -> (status_msg[] = msg),
+            background=true,
+            status_callback=(msg) -> (status_msg[] = msg),
         )
     end
 
@@ -859,7 +859,7 @@ function start!(;
     security_config = load_security_config(workspace_dir, agent_name, supervisor)
 
     if security_config === nothing
-        printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color = :red, bold = true)
+        printstyled("\n⚠️  NO SECURITY CONFIGURATION FOUND\n", color=:red, bold=true)
         println()
         println("MCPRepl requires security configuration before starting.")
         println("Run MCPRepl.setup() to configure API keys and security settings.")
@@ -915,16 +915,16 @@ function start!(;
 
     # Show security status if verbose
     if verbose
-        printstyled("\n📡 Server Port: ", color = :cyan, bold = true)
-        printstyled("$actual_port\n", color = :green, bold = true)
+        printstyled("\n📡 Server Port: ", color=:cyan, bold=true)
+        printstyled("$actual_port\n", color=:green, bold=true)
         println()
     end
 
     # Initialize supervisor if requested
     if supervisor
         if verbose
-            printstyled("👁️  Supervisor Mode: ", color = :cyan, bold = true)
-            printstyled("Enabled\n", color = :green, bold = true)
+            printstyled("👁️  Supervisor Mode: ", color=:cyan, bold=true)
+            printstyled("Enabled\n", color=:green, bold=true)
         end
 
         # Load agents configuration (use absolute path)
@@ -942,7 +942,7 @@ function start!(;
 
             agent_count = length(registry.agents)
             if verbose
-                printstyled("   • Managing $agent_count agent(s)\n", color = :green)
+                printstyled("   • Managing $agent_count agent(s)\n", color=:green)
             end
 
             # Start auto-start agents with staggered delays to avoid package lock conflicts
@@ -970,7 +970,7 @@ function start!(;
                 if auto_start_count > 0
                     printstyled(
                         "   • Auto-started $auto_start_count agent(s)\n",
-                        color = :green,
+                        color=:green,
                     )
                 else
                     @warn "No agents were auto-started"
@@ -1160,7 +1160,7 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
                     end
                 end
 
-                execute_repllike(expr_str; silent = silent, quiet = quiet)
+                execute_repllike(expr_str; silent=silent, quiet=quiet)
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
@@ -1172,7 +1172,7 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
         :restart_repl,
         "Restart the Julia REPL. Returns immediately, then server restarts (wait 5s, retry every 2s).",
         Dict("type" => "object", "properties" => Dict(), "required" => []),
-        (args, stream_channel = nothing) -> begin
+        (args, stream_channel=nothing) -> begin
             try
                 # Get the current server port (before restart)
                 server_port = SERVER[] !== nothing ? SERVER[].port : nothing
@@ -1189,7 +1189,7 @@ Never use `julia` in bash. Call usage_instructions first for workflow guidance."
                     # Execute the restart command using the vscode URI trigger
                     restart_uri = build_vscode_uri(
                         "language-julia.restartREPL";
-                        mcp_port = server_port !== nothing ? server_port : 0,
+                        mcp_port=server_port !== nothing ? server_port : 0,
                     )
                     trigger_vscode_uri(restart_uri)
 
@@ -1308,7 +1308,7 @@ For the complete list of available commands and their descriptions, call the usa
 
                 # Generate unique request ID if waiting for response
                 request_id =
-                    wait_for_response ? string(rand(UInt128), base = 16) : nothing
+                    wait_for_response ? string(rand(UInt128), base=16) : nothing
 
                 # Build URI with command and optional args
                 args_param = nothing
@@ -1317,14 +1317,14 @@ For the complete list of available commands and their descriptions, call the usa
                     args_param = HTTP.URIs.escapeuri(args_json)
                 end
 
-                uri = build_vscode_uri(cmd; args = args_param, request_id = request_id)
+                uri = build_vscode_uri(cmd; args=args_param, request_id=request_id)
                 trigger_vscode_uri(uri)
 
                 # If waiting for response, poll for it
                 if wait_for_response
                     try
                         result, error =
-                            retrieve_vscode_response(request_id; timeout = timeout)
+                            retrieve_vscode_response(request_id; timeout=timeout)
 
                         if error !== nothing
                             return "VS Code command '$(cmd)' failed: $error"
@@ -1453,7 +1453,7 @@ Use this to discover which commands are available for the `execute_vscode_comman
         Dict("type" => "object", "properties" => Dict(), "required" => []),
         args -> begin
             try
-                execute_repllike("MCPRepl.repl_status_report()"; quiet = false)
+                execute_repllike("MCPRepl.repl_status_report()"; quiet=false)
             catch e
                 "Error investigating environment: $e"
             end
@@ -1490,8 +1490,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 """
                 execute_repllike(
                     code;
-                    description = "[Searching methods for: $query]",
-                    quiet = false,
+                    description="[Searching methods for: $query]",
+                    quiet=false,
                 )
             catch e
                 "Error searching methods: \$e"
@@ -1519,8 +1519,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 """
                 execute_repllike(
                     code;
-                    description = "[Expanding macro: $expr]",
-                    quiet = false,
+                    description="[Expanding macro: $expr]",
+                    quiet=false,
                 )
             catch e
                 "Error expanding macro: \$e"
@@ -1583,8 +1583,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 """
                 execute_repllike(
                     code;
-                    description = "[Getting type info for: $type_expr]",
-                    quiet = false,
+                    description="[Getting type info for: $type_expr]",
+                    quiet=false,
                 )
             catch e
                 "Error getting type info: $e"
@@ -1611,7 +1611,7 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 end
                 Profile.print(format=:flat, sortedby=:count)
                 """
-                execute_repllike(wrapper; description = "[Profiling code]", quiet = false)
+                execute_repllike(wrapper; description="[Profiling code]", quiet=false)
             catch e
                 "Error profiling code: \$e"
             end
@@ -1657,8 +1657,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 """
                 execute_repllike(
                     code;
-                    description = "[Listing names in: $module_name]",
-                    quiet = false,
+                    description="[Listing names in: $module_name]",
+                    quiet=false,
                 )
             catch e
                 "Error listing names: \$e"
@@ -1698,8 +1698,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 """
                 execute_repllike(
                     code;
-                    description = "[Getting lowered code for: $func_expr with types $types_expr]",
-                    quiet = false,
+                    description="[Getting lowered code for: $func_expr with types $types_expr]",
+                    quiet=false,
                 )
             catch e
                 "Error getting lowered code: \$e"
@@ -1739,8 +1739,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
                 """
                 execute_repllike(
                     code;
-                    description = "[Getting typed code for: $func_expr with types $types_expr]",
-                    quiet = false,
+                    description="[Getting typed code for: $func_expr with types $types_expr]",
+                    quiet=false,
                 )
             catch e
                 "Error getting typed code: \$e"
@@ -1831,8 +1831,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
 
                 execute_repllike(
                     code;
-                    description = "[Formatting code at: $abs_path]",
-                    quiet = false,
+                    description="[Formatting code at: $abs_path]",
+                    quiet=false,
                 )
             catch e
                 "Error formatting code: $e"
@@ -1913,8 +1913,8 @@ Use this to discover which commands are available for the `execute_vscode_comman
 
                 execute_repllike(
                     code;
-                    description = "[Running Aqua quality tests]",
-                    quiet = false,
+                    description="[Running Aqua quality tests]",
+                    quiet=false,
                 )
             catch e
                 "Error running Aqua tests: $e"
@@ -1973,7 +1973,7 @@ into a single operation, making it easier to set up debugging.
                 uri = "file://$abs_path"
                 args_json = JSON.json([uri])
                 args_encoded = HTTP.URIs.escapeuri(args_json)
-                open_uri = build_vscode_uri("vscode.open"; args = args_encoded)
+                open_uri = build_vscode_uri("vscode.open"; args=args_encoded)
                 trigger_vscode_uri(open_uri)
 
                 sleep(0.5)  # Give VS Code time to open the file
@@ -2192,8 +2192,8 @@ Must be in an active debug session (paused at a breakpoint).
                     result = execute_repllike(
                         """execute_vscode_command("workbench.action.debug.stepOver",
                                                   wait_for_response=true, timeout=10.0)""";
-                        silent = false,
-                        quiet = false,
+                        silent=false,
+                        quiet=false,
                     )
                     return result
                 else
@@ -2315,7 +2315,7 @@ Terminates the active debug session and returns to normal execution.
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
                 code = "using Pkg; Pkg.add([$pkg_names]; io=devnull)"
 
-                result = execute_repllike(code; silent = false, quiet = false)
+                result = execute_repllike(code; silent=false, quiet=false)
                 return "Added packages: $(join(packages, ", "))\n\n$result"
             catch e
                 return "Error adding packages: $e"
@@ -2348,7 +2348,7 @@ Terminates the active debug session and returns to normal execution.
                 pkg_names = join(["\"$p\"" for p in packages], ", ")
                 code = "using Pkg; Pkg.rm([$pkg_names]; io=devnull)"
 
-                result = execute_repllike(code; silent = false, quiet = false)
+                result = execute_repllike(code; silent=false, quiet=false)
                 return "Removed packages: $(join(packages, ", "))\n\n$result"
             catch e
                 return "Error removing packages: $e"
@@ -2480,7 +2480,7 @@ Terminates the active debug session and returns to normal execution.
                 return "Agent '$agent_name' is already stopped"
             end
 
-            success = Supervisor.stop_agent(agent; force = force)
+            success = Supervisor.stop_agent(agent; force=force)
 
             if success
                 return "Agent '$agent_name' stopped successfully"
@@ -2585,7 +2585,7 @@ Terminates the active debug session and returns to normal execution.
     if verbose && enabled_tools !== nothing
         disabled_count = length(all_tools) - length(active_tools)
         if disabled_count > 0
-            printstyled("🔧 Tools: ", color = :cyan, bold = true)
+            printstyled("🔧 Tools: ", color=:cyan, bold=true)
             println("$(length(active_tools)) enabled, $disabled_count disabled by config")
         end
     end
@@ -2595,8 +2595,8 @@ Terminates the active debug session and returns to normal execution.
     SERVER[] = start_mcp_server(
         active_tools,
         actual_port;
-        verbose = verbose,
-        security_config = security_config,
+        verbose=verbose,
+        security_config=security_config,
     )
 
     # Register this REPL with the proxy if proxy is running
@@ -2632,15 +2632,15 @@ Terminates the active debug session and returns to normal execution.
                 "http://127.0.0.1:$proxy_port/",
                 ["Content-Type" => "application/json"],
                 JSON.json(registration);
-                readtimeout = 5,
+                readtimeout=5,
             )
 
             if response.status == 200
                 if verbose
                     printstyled(
                         "📝 Registered with proxy as '$repl_id'\n",
-                        color = :green,
-                        bold = true,
+                        color=:green,
+                        bold=true,
                     )
                 end
 
@@ -2660,8 +2660,8 @@ Terminates the active debug session and returns to normal execution.
                                     "http://127.0.0.1:$proxy_port/",
                                     ["Content-Type" => "application/json"],
                                     JSON.json(heartbeat);
-                                    readtimeout = 5,
-                                    connect_timeout = 2,
+                                    readtimeout=5,
+                                    connect_timeout=2,
                                 )
                             end
                         catch e
@@ -2730,7 +2730,7 @@ function stop!()
     # Stop supervisor if running
     if SUPERVISOR_REGISTRY[] !== nothing
         println("Stopping supervisor...")
-        Supervisor.stop_supervisor(SUPERVISOR_REGISTRY[]; stop_agents = true)
+        Supervisor.stop_supervisor(SUPERVISOR_REGISTRY[]; stop_agents=true)
         SUPERVISOR_REGISTRY[] = nothing
     end
 end
@@ -2758,10 +2758,10 @@ end
 ```
 """
 function test_server(
-    port::Int = 3000;
-    host = "127.0.0.1",
-    max_attempts::Int = 3,
-    delay::Float64 = 0.5,
+    port::Int=3000;
+    host="127.0.0.1",
+    max_attempts::Int=3,
+    delay::Float64=0.5,
 )
     for attempt = 1:max_attempts
         try
@@ -2800,8 +2800,8 @@ function test_server(
                 "http://$host:$port/",
                 collect(headers),
                 body;
-                readtimeout = 5,
-                connect_timeout = 2,
+                readtimeout=5,
+                connect_timeout=2,
             )
 
             # Check if we got a successful response
@@ -2832,7 +2832,7 @@ Display current security configuration.
 function security_status()
     config = load_security_config()
     if config === nothing
-        printstyled("\n⚠️  No security configuration found\n", color = :yellow, bold = true)
+        printstyled("\n⚠️  No security configuration found\n", color=:yellow, bold=true)
         println("Run MCPRepl.setup_security() to configure")
         println()
         return
@@ -2845,8 +2845,8 @@ end
 
 Launch the security setup wizard.
 """
-function setup_security(; force::Bool = false, gentle::Bool = false)
-    return security_setup_wizard(pwd(); force = force, gentle = gentle)
+function setup_security(; force::Bool=false, gentle::Bool=false)
+    return security_setup_wizard(pwd(); force=force, gentle=gentle)
 end
 
 """
@@ -2989,7 +2989,7 @@ function list_tools()
     println()
 
     for (name, desc) in sort(collect(tools_info))
-        printstyled("  • ", name, "\n", color = :cyan, bold = true)
+        printstyled("  • ", name, "\n", color=:cyan, bold=true)
         # Print first line of description
         first_line = split(desc, "\n")[1]
         println("    ", first_line)
@@ -3003,7 +3003,7 @@ end
     tool_help(tool_id::Symbol)
 Get detailed help/documentation for a specific MCP tool.
 """
-function tool_help(tool_id::Symbol; extended::Bool = false)
+function tool_help(tool_id::Symbol; extended::Bool=false)
     if SERVER[] === nothing
         error("MCP server is not running. Start it with MCPRepl.start!()")
     end
@@ -3052,8 +3052,8 @@ end
 
 Start the MCP proxy server. Wrapper for Proxy.start_server().
 """
-function start_proxy(port::Int = 3000; background::Bool = false)
-    return Proxy.start_server(port; background = background)
+function start_proxy(port::Int=3000; background::Bool=false)
+    return Proxy.start_server(port; background=background)
 end
 
 """
@@ -3061,7 +3061,7 @@ end
 
 Stop the proxy server on the specified port. Wrapper for Proxy.stop_server().
 """
-function stop_proxy(port::Int = 3000)
+function stop_proxy(port::Int=3000)
     return Proxy.stop_server(port)
 end
 
