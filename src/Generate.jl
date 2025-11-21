@@ -607,7 +607,8 @@ function create_claude_env_settings(
         "claude-settings.local.json";
         has_api_key=api_key !== nothing,
         api_key=api_key,
-        port=string(port)
+        port=string(port),
+        session_name="default"
     )
 
     settings_path = joinpath(claude_dir, "settings.local.json")
@@ -633,7 +634,8 @@ function create_vscode_config(
         "vscode-mcp.json";
         port=port,
         has_api_key=api_key !== nothing,
-        api_key=api_key
+        api_key=api_key,
+        session_name="default"
     )
 
     mcp_path = joinpath(vscode_dir, "mcp.json")
@@ -669,7 +671,8 @@ function create_claude_config_template(
 
     config_content = render_template(
         "claude-mcp-config.json";
-        has_api_key=api_key !== nothing
+        has_api_key=api_key !== nothing,
+        session_name="default"
     )
 
     template_path = joinpath(project_path, ".mcp.json")
@@ -737,7 +740,8 @@ function create_kilocode_config(project_path::String, port::Int, tools::Vector{S
         has_api_key=api_key !== nothing,
         api_key=api_key,
         port=port,
-        tool_list=tools_json
+        tool_list=tools_json,
+        session_name="default"
     )
 
     config_path = joinpath(kilocode_dir, "mcp.json")
