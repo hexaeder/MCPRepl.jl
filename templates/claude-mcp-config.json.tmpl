@@ -5,10 +5,10 @@
       "url": "http://localhost:\${JULIA_MCP_PORT}",{% if has_api_key %}
       "headers": {
         "Authorization": "Bearer \${JULIA_MCP_API_KEY}",
-        "X-MCPRepl-Session": "\${JULIA_MCP_SESSION}"
+        "X-MCPRepl-Target": "\${JULIA_MCP_REPL_ID}"
       }{% else %}
       "headers": {
-        "X-MCPRepl-Session": "\${JULIA_MCP_SESSION}"
+        "X-MCPRepl-Target": "\${JULIA_MCP_REPL_ID}"
       }{% end %}
     }
   }

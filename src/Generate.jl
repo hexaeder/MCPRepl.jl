@@ -577,11 +577,13 @@ function create_env_file(
 )
     println("🔐 Creating .env file...")
 
+    repl_id = basename(project_path)
     env_content = render_template(
         "env";
         has_api_key = api_key !== nothing,
         api_key = api_key,
         port = port,
+        repl_id = repl_id,
     )
 
     env_path = joinpath(project_path, ".env")
@@ -600,12 +602,13 @@ function create_claude_env_settings(
     claude_dir = joinpath(project_path, ".claude")
     mkpath(claude_dir)
 
+    repl_id = basename(project_path)
     settings_content = render_template(
         "claude-settings.local.json";
         has_api_key = api_key !== nothing,
         api_key = api_key,
         port = string(port),
-        session_name = "default",
+        repl_id = repl_id,
     )
 
     settings_path = joinpath(claude_dir, "settings.local.json")
@@ -627,12 +630,14 @@ function create_vscode_config(
     # Build server config with hardcoded values
     # NOTE: Claude Code does not support environment variable expansion in mcp.json
     # So we hardcode the values here and add the file to .gitignore
+    # REPL ID is the project directory name
+    repl_id = basename(project_path)
     mcp_content = render_template(
         "vscode-mcp.json";
         port = port,
         has_api_key = api_key !== nothing,
         api_key = api_key,
-        session_name = "default",
+        repl_id = repl_id,
     )
 
     mcp_path = joinpath(vscode_dir, "mcp.json")
@@ -666,10 +671,11 @@ function create_claude_config_template(
 )
     println("🤖 Creating Claude Desktop config template...")
 
+    repl_id = basename(project_path)
     config_content = render_template(
         "claude-mcp-config.json";
         has_api_key = api_key !== nothing,
-        session_name = "default",
+        repl_id = repl_id,
     )
 
     template_path = joinpath(project_path, ".mcp.json")
@@ -738,13 +744,14 @@ function create_kilocode_config(
         String["ex", "ping", "investigate_environment", "tool_help", "usage_instructions"]
     tools_json = JSON.json(tool_names, 4)
 
+    repl_id = basename(project_path)
     config_content = render_template(
         "kilocode-mcp-config.json";
         has_api_key = api_key !== nothing,
         api_key = api_key,
         port = port,
         tool_list = tools_json,
-        session_name = "default",
+        repl_id = repl_id,
     )
 
     config_path = joinpath(kilocode_dir, "mcp.json")

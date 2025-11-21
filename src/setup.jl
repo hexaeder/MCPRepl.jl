@@ -181,14 +181,17 @@ function add_claude_mcp_server(; api_key::Union{String,Nothing} = nothing)
     # Use claude mcp add command instead of manipulating JSON directly
     # Use --scope=project because the REPL and port config are local to the project
     try
+        # Determine REPL target ID (same logic as in start!)
+        repl_id = basename(pwd())
+        
         if api_key !== nothing
-            # Add with Authorization header using -H flag
+            # Add with Authorization and target headers using -H flag
             run(
-                `claude mcp add julia-repl $url --scope project --transport http -H "Authorization: Bearer $api_key"`,
+                `claude mcp add julia-repl $url --scope project --transport http -H "Authorization: Bearer $api_key" -H "X-MCPRepl-Target: $repl_id"`,
             )
         else
-            # Add without Authorization header (for lax mode)
-            run(`claude mcp add julia-repl $url --scope project --transport http`)
+            # Add with target header (for lax mode)
+            run(`claude mcp add julia-repl $url --scope project --transport http -H "X-MCPRepl-Target: $repl_id"`)
         end
         return true
     catch e
@@ -1074,14 +1077,15 @@ function setup(; gentle::Bool = false)
             println("\n   Adding Claude HTTP transport...")
             try
                 # Add Authorization header if not in lax mode
+                repl_id = basename(pwd())
                 if security_config.mode != :lax && !isempty(security_config.api_keys)
                     api_key = first(security_config.api_keys)
                     run(
-                        `claude mcp add julia-repl http://localhost:$port --scope project --transport http -H "Authorization: Bearer $api_key"`,
+                        `claude mcp add julia-repl http://localhost:$port --scope project --transport http -H "Authorization: Bearer $api_key" -H "X-MCPRepl-Target: $repl_id"`,
                     )
                 else
                     run(
-                        `claude mcp add julia-repl http://localhost:$port --scope project --transport http`,
+                        `claude mcp add julia-repl http://localhost:$port --scope project --transport http -H "X-MCPRepl-Target: $repl_id"`,
                     )
                 end
                 println("   ✅ Successfully configured Claude HTTP transport")

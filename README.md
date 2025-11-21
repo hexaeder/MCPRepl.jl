@@ -53,10 +53,13 @@ For Claude Desktop, you can run the following command to make it aware of the MC
 # With API key (strict/relaxed mode)
 claude mcp add julia-repl http://localhost:3000 \
   --transport http \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "X-MCPRepl-Target: YOUR_PROJECT_NAME"
 
 # Without API key (lax mode, localhost only)
-claude mcp add julia-repl http://localhost:3000 --transport http
+claude mcp add julia-repl http://localhost:3000 \
+  --transport http \
+  -H "X-MCPRepl-Target: YOUR_PROJECT_NAME"
 ```
 
 ## Security
@@ -109,7 +112,8 @@ For AI clients like Claude, configure with your API key:
 # Add server with authentication
 claude mcp add julia-repl http://localhost:3000 \
   --transport http \
-  -H "Authorization: Bearer mcprepl_YOUR_API_KEY_HERE"
+  -H "Authorization: Bearer mcprepl_YOUR_API_KEY_HERE" \
+  -H "X-MCPRepl-Target: YOUR_PROJECT_NAME"
 ```
 
 ### Security Management

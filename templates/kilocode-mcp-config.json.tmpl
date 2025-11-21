@@ -5,10 +5,10 @@
       "url": "http://localhost:{{port}}",{% if has_api_key %}
       "headers": {
         "Authorization": "{{api_key}}",
-        "X-MCPRepl-Session": "{{session_name}}"
+        "X-MCPRepl-Target": "{{repl_id}}"
       },{% else %}
       "headers": {
-        "X-MCPRepl-Session": "{{session_name}}"
+        "X-MCPRepl-Target": "{{repl_id}}"
       },{% end %}
       "alwaysAllow": [
                   {{tool_list}}
