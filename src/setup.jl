@@ -184,11 +184,11 @@ function add_claude_mcp_server(; api_key::Union{String,Nothing} = nothing)
         if api_key !== nothing
             # Add with Authorization header using --header flag
             run(
-                `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl $url`,
+                `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" --name julia-repl $url`,
             )
         else
             # Add without Authorization header (for lax mode)
-            run(`claude mcp add --scope project --transport http julia-repl $url`)
+            run(`claude mcp add --scope project --transport http --name julia-repl $url`)
         end
         return true
     catch e
@@ -1077,11 +1077,11 @@ function setup(; gentle::Bool = false)
                 if security_config.mode != :lax && !isempty(security_config.api_keys)
                     api_key = first(security_config.api_keys)
                     run(
-                        `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`,
+                        `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" --name julia-repl http://localhost:$port`,
                     )
                 else
                     run(
-                        `claude mcp add --scope project --transport http julia-repl http://localhost:$port`,
+                        `claude mcp add --scope project --transport http --name julia-repl http://localhost:$port`,
                     )
                 end
                 println("   ✅ Successfully configured Claude HTTP transport")
@@ -1097,11 +1097,11 @@ function setup(; gentle::Bool = false)
                 if security_config.mode != :lax && !isempty(security_config.api_keys)
                     api_key = first(security_config.api_keys)
                     run(
-                        `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" julia-repl http://localhost:$port`,
+                        `claude mcp add --scope project --transport http --header "Authorization: Bearer $api_key" --name julia-repl http://localhost:$port`,
                     )
                 else
                     run(
-                        `claude mcp add --scope project --transport http julia-repl http://localhost:$port`,
+                        `claude mcp add --scope project --transport http --name julia-repl http://localhost:$port`,
                     )
                 end
                 println("   ✅ Successfully configured Claude HTTP transport")
@@ -1112,7 +1112,7 @@ function setup(; gentle::Bool = false)
             adapter_path = joinpath(pkgdir(MCPRepl), "mcp-julia-adapter")
             println("\n   Adding Claude script transport...")
             try
-                run(`claude mcp add --scope project julia-repl $adapter_path`)
+                run(`claude mcp add --scope project --name julia-repl $adapter_path`)
                 println("   ✅ Successfully configured Claude script transport")
             catch e
                 println("   ❌ Failed to configure Claude script transport: $e")
@@ -1123,7 +1123,7 @@ function setup(; gentle::Bool = false)
             adapter_path = joinpath(pkgdir(MCPRepl), "mcp-julia-adapter")
             println("\n   Adding/Replacing Claude with script transport...")
             try
-                run(`claude mcp add --scope project julia-repl $adapter_path`)
+                run(`claude mcp add --scope project --name julia-repl $adapter_path`)
                 println("   ✅ Successfully configured Claude script transport")
             catch e
                 println("   ❌ Failed to configure Claude script transport: $e")

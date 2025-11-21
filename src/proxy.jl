@@ -739,6 +739,41 @@ function handle_request(http::HTTP.Stream)
             return nothing
         end
 
+        # Dashboard API: Generate test events
+        if path == "/dashboard/api/test-events"
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            
+            test_agent = "test-agent"
+            
+            # Generate sample events of all types
+            Dashboard.log_event(test_agent, Dashboard.HEARTBEAT, Dict("status" => "ok"))
+            
+            Dashboard.log_event(test_agent, Dashboard.TOOL_CALL, 
+                Dict("tool" => "ex", "arguments" => Dict("e" => "println(\"Hello, World!\")")),
+                duration_ms=12.5)
+            
+            Dashboard.log_event(test_agent, Dashboard.CODE_EXECUTION,
+                Dict("expression" => "2 + 2", "result" => "4"),
+                duration_ms=0.8)
+            
+            Dashboard.log_event(test_agent, Dashboard.OUTPUT,
+                Dict("text" => "Hello, World!"))
+            
+            Dashboard.log_event(test_agent, Dashboard.ERROR,
+                Dict("message" => "UndefVarError: x not defined", "stacktrace" => "..."))
+            
+            Dashboard.log_event(test_agent, Dashboard.AGENT_START,
+                Dict("port" => 3000, "pid" => getpid()))
+            
+            Dashboard.log_event(test_agent, Dashboard.AGENT_STOP,
+                Dict("reason" => "shutdown"))
+            
+            write(http, JSON.json(Dict("status" => "ok", "message" => "Test events generated")))
+            return nothing
+        end
+
         # Dashboard WebSocket (for future implementation)
         if path == "/dashboard/ws"
             HTTP.setstatus(http, 501)

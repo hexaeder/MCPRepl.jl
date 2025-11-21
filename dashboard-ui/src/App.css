@@ -303,6 +303,9 @@ h1 {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    overflow-y: auto;
+    flex: 1;
+    padding-right: 0.5rem;
 }
 
 .event {
@@ -344,6 +347,41 @@ h1 {
     margin-bottom: 0.5rem;
     background: var(--accent-primary);
     color: var(--bg-primary);
+}
+
+.event-heartbeat .event-type {
+    background: rgba(100, 100, 100, 0.3);
+    color: #888;
+}
+
+.event-tool_call .event-type {
+    background: rgba(0, 150, 136, 0.25);
+    color: #80cbc4;
+}
+
+.event-code_execution .event-type {
+    background: rgba(103, 58, 183, 0.25);
+    color: #b39ddb;
+}
+
+.event-output .event-type {
+    background: rgba(103, 58, 183, 0.25);
+    color: #b39ddb;
+}
+
+.event-error .event-type {
+    background: rgba(183, 28, 28, 0.25);
+    color: #ef5350;
+}
+
+.event-agent_start .event-type {
+    background: rgba(56, 142, 60, 0.25);
+    color: #81c784;
+}
+
+.event-agent_stop .event-type {
+    background: rgba(245, 124, 0, 0.25);
+    color: #ffb74d;
 }
 
 .event-header {
