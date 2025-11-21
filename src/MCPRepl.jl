@@ -710,7 +710,7 @@ function filter_tools_by_config(enabled_tools::Union{Set{Symbol},Nothing})
 end
 
 """
-    start_agent_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
+    start_session_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
 
 Start a background task that sends periodic heartbeats to the supervisor.
 
@@ -721,9 +721,9 @@ This function spawns a separate thread that:
 
 The heartbeat task runs indefinitely until the Julia process exits.
 """
-function start_agent_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
+function start_session_heartbeat(agent_name::String, agents_config::String, verbose::Bool)
     if verbose
-        printstyled("💓 Agent Heartbeat: ", color=:cyan, bold=true)
+        printstyled("💓 Session Heartbeat: ", color=:cyan, bold=true)
         printstyled("Enabled for '$agent_name'\n", color=:green, bold=true)
     end
 
@@ -998,7 +998,7 @@ function start!(;
     if !isempty(agent_name)
         # Use absolute path to agents_config so agent can find it from its own directory
         agents_config_path = joinpath(workspace_dir, agents_config)
-        start_agent_heartbeat(agent_name, agents_config_path, verbose)
+        start_session_heartbeat(agent_name, agents_config_path, verbose)
     end
 
     ping_tool = @mcp_tool(
