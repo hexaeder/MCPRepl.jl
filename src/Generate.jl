@@ -65,7 +65,7 @@ const VSCODE_ALLOWED_COMMANDS = load_vscode_allowed_commands()
 """
     generate(project_name::String; 
              security_mode::Symbol=:lax, 
-             port::Int=3000,
+             proxy_port::Int=3000,
              path::String=pwd(),
              emoticon::String="🐉")
 
@@ -85,7 +85,7 @@ Creates a new Julia package with:
 # Arguments
 - `project_name::String`: Name of the project to create
 - `security_mode::Symbol=:lax`: Security mode (:strict, :relaxed, or :lax)
-- `port::Int=3000`: Port for the MCP server
+- `proxy_port::Int=3000`: Proxy server port for AI client connections (individual REPL ports are auto-assigned or configured per-agent)
 - `path::String=pwd()`: Parent directory where project will be created
 - `emoticon::String="🐉"`: Emoticon to use in startup messages
 
@@ -97,8 +97,8 @@ Creates a new Julia package with:
 # Create a local development project
 MCPRepl.Generate.generate("MyProject")
 
-# Create a production-ready project with strict security
-MCPRepl.Generate.generate("MySecureProject", security_mode=:strict, port=3001)
+# Create a production-ready project with strict security on custom proxy port
+MCPRepl.Generate.generate("MySecureProject", security_mode=:strict, proxy_port=3001)
 
 # Create project in a specific directory
 MCPRepl.Generate.generate("MyProject", path="/Users/name/projects")
@@ -112,7 +112,7 @@ MCPRepl.Generate.generate("MyProject", path="/Users/name/projects")
 function generate(
     project_name::String;
     security_mode::Symbol = :lax,
-    port::Int = 3000,
+    proxy_port::Int = 3000,  # Proxy server port that AI clients connect to
     path::String = pwd(),
     emoticon::String = "🐉",
 )
@@ -121,8 +121,8 @@ function generate(
         error("Invalid security_mode. Must be :strict, :relaxed, or :lax")
     end
 
-    if port < 1024 || port > 65535
-        @warn "Port $port may require special permissions or is out of range. Recommended: 3000-9999"
+    if proxy_port < 1024 || proxy_port > 65535
+        @warn "Proxy port $proxy_port may require special permissions or is out of range. Recommended: 3000-9999"
     end
 
 
@@ -143,7 +143,7 @@ function generate(
     println("🚀 Generating Julia project: $project_name")
     println("   Location: $project_path")
     println("   Security: $security_mode")
-    println("   Port: $port")
+    println("   Proxy Port: $proxy_port")
     println()
 
     # Use Pkg.generate to create basic structure
@@ -157,7 +157,7 @@ function generate(
     end
 
     # Generate all configuration files
-    create_security_config(project_path, security_mode, port)
+    create_security_config(project_path, security_mode, proxy_port)
     create_tools_config(project_path)
 
     # Get API key for VS Code config (if not lax mode)
@@ -171,16 +171,16 @@ function generate(
         end
     end
 
-    create_startup_script(project_path, port, emoticon)
+    create_startup_script(project_path, proxy_port, emoticon)
     create_repl_script(project_path)
-    create_env_file(project_path, port, api_key)
-    create_claude_env_settings(project_path, port, api_key)
-    create_vscode_config(project_path, port, api_key)
+    create_env_file(project_path, proxy_port, api_key)
+    create_claude_env_settings(project_path, proxy_port, api_key)
+    create_vscode_config(project_path, proxy_port, api_key)
     create_vscode_settings(project_path)
-    create_claude_config_template(project_path, port, api_key)
-    create_gemini_config_template(project_path, port, api_key)
-    create_kilocode_config(project_path, port, String[], api_key)
-    create_readme(project_path, project_name, security_mode, port)
+    create_claude_config_template(project_path, proxy_port, api_key)
+    create_gemini_config_template(project_path, proxy_port, api_key)
+    create_kilocode_config(project_path, proxy_port, String[], api_key)
+    create_readme(project_path, project_name, security_mode, proxy_port)
     create_agents_guide(project_path, project_name)
     create_gitignore(project_path)
     enhance_test_file(project_path, project_name)  # Do this before Pkg operations
