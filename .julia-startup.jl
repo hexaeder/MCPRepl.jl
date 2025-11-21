@@ -17,7 +17,7 @@ if !isempty(agent_name)
         false
     end
 
-    @info "Agent '$agent_name' checking dependencies" mcprepl_installed=mcprepl_installed
+    @info "Agent '$agent_name' checking dependencies" mcprepl_installed = mcprepl_installed
 
     # Always sync/update MCPRepl from supervisor to ensure we have the latest version
     @info "Agent '$agent_name': Syncing dependencies from supervisor environment..."
@@ -53,7 +53,7 @@ if !isempty(agent_name)
             # Dev version - use the same path
             dev_path = joinpath(dirname(pwd()), mcprepl_info["path"])
             @info "  Using MCPRepl dev version from: $dev_path"
-            Pkg.develop(path = dev_path)
+            Pkg.develop(path=dev_path)
         elseif mcprepl_info !== nothing && haskey(mcprepl_info, "repo-url")
             # Git repository version
             repo_url = mcprepl_info["repo-url"]
@@ -61,10 +61,10 @@ if !isempty(agent_name)
                 # Specific branch/rev
                 repo_rev = mcprepl_info["repo-rev"]
                 @info "  Adding/updating MCPRepl from: $repo_url#$repo_rev"
-                Pkg.add(url = repo_url, rev = repo_rev)
+                Pkg.add(url=repo_url, rev=repo_rev)
             else
                 @info "  Adding/updating MCPRepl from: $repo_url"
-                Pkg.add(url = repo_url)
+                Pkg.add(url=repo_url)
             end
         else
             # Registered version or no manifest info - just add it
@@ -120,34 +120,24 @@ try
 
                 if has_agent_name
                     MCPRepl.start!(
-                        verbose = false,
-                        supervisor = supervisor_enabled,
-                        agent_name = agent_name_arg,
+                        verbose=false,
+                        supervisor=supervisor_enabled,
+                        agent_name=agent_name_arg,
                     )
                 else
-                    MCPRepl.start!(verbose = false, supervisor = supervisor_enabled)
+                    MCPRepl.start!(verbose=false, supervisor=supervisor_enabled)
                 end
 
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
 
-                @info "✓ MCP REPL server started 🐉"
-
-                # Refresh the prompt to ensure clean display after test completes
-                if isdefined(Base, :active_repl)
-                    try
-                        println();
-                        println()  # Add clean newline
-                        REPL.LineEdit.refresh_line(Base.active_repl.mistate)
-                    catch
-                        # Ignore if REPL isn't ready yet
-                    end
-                end
+                # Startup complete - prompt is already clean from start!()
+                # No need for extra logging or prompt refresh
             catch e
-                @warn "Could not start MCP REPL server" exception=e
+                @warn "Could not start MCP REPL server" exception = e
             end
         end
     end
 catch e
-    @warn "Could not start MCP REPL server" exception=e
+    @warn "Could not start MCP REPL server" exception = e
 end

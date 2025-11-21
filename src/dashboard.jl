@@ -10,6 +10,7 @@ using JSON
 using Dates
 using Sockets
 using OteraEngine
+using Pkg.Artifacts
 
 # Event types for agent activity tracking
 @enum EventType begin
@@ -130,9 +131,30 @@ end
     serve_static_file(filepath::String)
 
 Serve a static file from the React build directory with proper MIME type.
+Uses the dashboard artifact in production, falls back to local dist/ in development.
 """
 function serve_static_file(filepath::String)
-    react_dist = abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
+    # Try artifact first (production), fallback to local dist/ (development)
+    react_dist = try
+        # Use function form instead of macro to avoid precompilation issues
+        artifacts_toml = joinpath(dirname(@__DIR__), "Artifacts.toml")
+        artifact_hash = artifact_hash("dashboard", artifacts_toml)
+        if artifact_hash !== nothing
+            artifact_path = artifact_path(artifact_hash)
+            if isdir(artifact_path)
+                artifact_path
+            else
+                abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
+            end
+        else
+            abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
+        end
+    catch e
+        # Artifact not available, use local dist/
+        @debug "Artifact not found, using local dist/" exception = e
+        abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
+    end
+
     fullpath = joinpath(react_dist, filepath)
 
     if !isfile(fullpath) || !startswith(abspath(fullpath), react_dist)

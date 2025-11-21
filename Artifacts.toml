@@ -1,0 +1,6 @@
+[dashboard]
+lazy = true
+
+    [[dashboard.download]]
+    url = "file:///Users/kburke/.julia/dev/MCPRepl/dashboard-dist.tar.gz"
+    sha256 = "59b3c693435f0210026db5303a7f02108a3f320d38e281daba92c2e33218559d"

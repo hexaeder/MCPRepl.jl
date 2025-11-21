@@ -1138,19 +1138,20 @@ function handle_request(http::HTTP.Stream)
 end
 
 """
-    start_server(port::Int=3000; background::Bool=false) -> Union{HTTP.Server, Nothing}
+    start_server(port::Int=3000; background::Bool=false, status_callback=nothing) -> Union{HTTP.Server, Nothing}
 
 Start the persistent MCP proxy server.
 
 # Arguments
 - `port::Int=3000`: Port to listen on
 - `background::Bool=false`: If true, run in background process
+- `status_callback`: Optional function to call with status updates (for background mode)
 
 # Returns
 - HTTP.Server if running in foreground
 - nothing if started in background
 """
-function start_server(port::Int=3000; background::Bool=false)
+function start_server(port::Int=3000; background::Bool=false, status_callback=nothing)
     if is_server_running(port)
         existing_pid = get_server_pid(port)
         if existing_pid !== nothing
@@ -1161,7 +1162,7 @@ function start_server(port::Int=3000; background::Bool=false)
 
     if background
         # Start server in background process
-        return start_background_server(port)
+        return start_background_server(port; status_callback=status_callback)
     else
         # Start server in current process
         return start_foreground_server(port)
@@ -1207,11 +1208,14 @@ function start_foreground_server(port::Int=3000)
 end
 
 """
-    start_background_server(port::Int=3000) -> Nothing
+    start_background_server(port::Int=3000; status_callback=nothing) -> Nothing
 
 Start the proxy server in a detached background process.
+
+If `status_callback` is provided, it will be called with status updates instead of
+printing directly (useful when parent has its own spinner).
 """
-function start_background_server(port::Int=3000)
+function start_background_server(port::Int=3000; status_callback=nothing)
     # Create a Julia script that starts the server
     script = """
     using Pkg
@@ -1235,7 +1239,7 @@ function start_background_server(port::Int=3000)
     write(script_file, script)
 
     # Start detached Julia process
-    @info "Launching background proxy server" port = port
+    @debug "Launching background proxy server" port = port
 
     if Sys.iswindows()
         # Windows: use START command
@@ -1246,14 +1250,43 @@ function start_background_server(port::Int=3000)
         run(pipeline(`nohup julia $script_file`, stdout=log_file, stderr=log_file), wait=false)
     end
 
-    # Wait a moment for server to start
-    sleep(3)
+    # Wait for server to start
+    max_wait = 30  # seconds
+    elapsed = 0.0
+    check_interval = 0.1  # Check every 100ms
 
-    if is_server_running(port)
-        pid = get_server_pid(port)
-        @info "Background proxy server started" port = port pid = pid
-    else
-        @error "Failed to start background proxy server"
+    while elapsed < max_wait
+        # Update status via callback if provided, otherwise print directly
+        if status_callback !== nothing
+            elapsed_sec = round(Int, elapsed)
+            # Color the number with coral/salmon (203 = coral pink)
+            status_callback("Starting MCPRepl (waiting for proxy server... \033[38;5;203m$(elapsed_sec)s\033[0m)")
+        end
+
+        if is_server_running(port)
+            # Success
+            if status_callback !== nothing
+                status_callback("Starting MCPRepl (proxy server ready)")
+            end
+            pid = get_server_pid(port)
+            @debug "Background proxy server started" port = port pid = pid elapsed_time = elapsed
+            return nothing
+        end
+
+        sleep(check_interval)
+        elapsed += check_interval
+    end
+
+    # Server didn't start in time
+    @error "Failed to start background proxy server" timeout = max_wait
+
+    # Show log contents to help debug
+    background_log = joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
+    if isfile(background_log)
+        log_contents = read(background_log, String)
+        if !isempty(log_contents)
+            @error "Background server log:" log = log_contents
+        end
     end
 
     return nothing

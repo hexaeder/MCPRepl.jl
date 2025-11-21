@@ -19,8 +19,9 @@ export start!, stop!, test_server
 
 include("utils.jl")
 include("proxy.jl")
-include("dashboard.jl")
 include("tools.jl")
+
+export Proxy
 
 # Version tracking - gets git commit hash at runtime
 function version_info()
@@ -740,34 +741,34 @@ function start!(;
     proxy_port = 3000  # Default proxy port
     proxy_running = Proxy.is_server_running(proxy_port)
 
-    if proxy_running
-        proxy_pid = Proxy.get_server_pid(proxy_port)
-        if verbose
-            printstyled("🔌 Persistent Proxy: ", color=:cyan, bold=true)
-            printstyled("Connected (PID: $proxy_pid, Port: $proxy_port)\n", color=:green, bold=true)
+    # Start animated spinner for startup
+    spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    spinner_idx = Ref(1)
+    spinner_active = Ref(true)
+    status_msg = Ref("Starting MCPRepl...")
+    
+    # Background task to animate spinner
+    spinner_task = @async begin
+        while spinner_active[]
+            msg = status_msg[]
+            # Magenta spinner, bold gray text
+            print("\r\033[K\033[35m$(spinner[spinner_idx[]])\033[0m \033[1;90m$msg\033[0m")
+            flush(stdout)
+            spinner_idx[] = spinner_idx[] % length(spinner) + 1
+            sleep(0.08)
         end
-    else
-        # Start proxy server in background
-        if verbose
-            printstyled("🚀 Starting Persistent Proxy Server...\n", color=:cyan, bold=true)
-        end
-        Proxy.start_server(proxy_port; background=true)
+    end
 
-        # Verify it started
-        if Proxy.is_server_running(proxy_port)
-            proxy_pid = Proxy.get_server_pid(proxy_port)
-            if verbose
-                printstyled("✅ Proxy Server Started (PID: $proxy_pid, Port: $proxy_port)\n", color=:green, bold=true)
-            end
-        else
-            @warn "Failed to start proxy server, continuing with direct connection"
-        end
+    if !proxy_running
+        # Start proxy server in background (using our shared status)
+        status_msg[] = "Starting MCPRepl (starting proxy)..."
+        Proxy.start_server(proxy_port; background=true, status_callback=(msg) -> (status_msg[] = msg))
     end
 
     # Load or prompt for security configuration
     # Pass agent_name and supervisor flag so it can load from agents.json if needed
     # Use workspace_dir (project root) not pwd() (which may be agent dir)
-    @info "Loading security config" workspace_dir = workspace_dir agent_name = agent_name supervisor = supervisor
+    @debug "Loading security config" workspace_dir = workspace_dir agent_name = agent_name supervisor = supervisor
     security_config = load_security_config(workspace_dir, agent_name, supervisor)
 
     if security_config === nothing
@@ -778,7 +779,7 @@ function start!(;
         println()
         error("Security configuration required. Run MCPRepl.setup() first.")
     else
-        @info "Security config loaded successfully" port = security_config.port mode = security_config.mode
+        @debug "Security config loaded successfully" port = security_config.port mode = security_config.mode
     end
 
     # Determine port: function arg overrides config, otherwise use what load_security_config() found
@@ -787,7 +788,7 @@ function start!(;
         port
     else
         # load_security_config already loaded the right port based on mode (agent/supervisor/normal)
-        @info "Using port from loaded config" port = security_config.port mode = (supervisor ? "supervisor" : (agent_name != "" ? "agent:$agent_name" : "normal"))
+        @debug "Using port from loaded config" port = security_config.port mode = (supervisor ? "supervisor" : (agent_name != "" ? "agent:$agent_name" : "normal"))
         security_config.port
     end
 
@@ -805,18 +806,12 @@ function start!(;
         )
     end
 
+    # Update status message
+    status_msg[] = "Starting MCPRepl (security: $(security_config.mode))..."
+
     # Show security status if verbose
     if verbose
-        printstyled("\n🔒 Security Mode: ", color=:cyan, bold=true)
-        printstyled("$(security_config.mode)\n", color=:green, bold=true)
-        if security_config.mode == :strict
-            println("   • API key required + IP allowlist enforced")
-        elseif security_config.mode == :relaxed
-            println("   • API key required + any IP allowed")
-        elseif security_config.mode == :lax
-            println("   • Localhost only + no API key required")
-        end
-        printstyled("📡 Server Port: ", color=:cyan, bold=true)
+        printstyled("\n📡 Server Port: ", color=:cyan, bold=true)
         printstyled("$actual_port\n", color=:green, bold=true)
         println()
     end
@@ -2490,8 +2485,8 @@ Terminates the active debug session and returns to normal execution.
         end
     end
 
-    # Create and start server
-    println("Starting MCP server on port $actual_port...")
+    # Update status for server launch
+    status_msg[] = "Starting MCPRepl (launching server on port $actual_port)..."
     SERVER[] = start_mcp_server(
         active_tools,
         actual_port;
@@ -2574,10 +2569,16 @@ Terminates the active debug session and returns to normal execution.
         end
     end
 
+    # Stop the spinner and show completion
+    spinner_active[] = false
+    wait(spinner_task)  # Wait for spinner task to finish
+    # Green checkmark, dark blue text, yellow dragon, muted cyan port number
+    print("\r\033[K\033[1;32m✓\033[0m \033[38;5;24mMCP REPL server started\033[0m \033[33m🐉\033[0m \033[90m(port $actual_port)\033[0m\n")
+    flush(stdout)
+
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
-        # Refresh the prompt to show the new prefix and clear any leftover output
-        println()  # Add newline for clean separation
+        # Refresh the prompt to show the new prefix
         REPL.LineEdit.refresh_line(Base.active_repl.mistate)
     else
         atreplinit(set_prefix!)
