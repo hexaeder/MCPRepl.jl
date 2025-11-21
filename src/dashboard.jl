@@ -168,6 +168,11 @@ Serve a static file from the React build directory with proper MIME type.
 Uses the dashboard artifact in production, falls back to local dist/ in development.
 """
 function serve_static_file(filepath::String)
+    # Default to index.html if path is empty
+    if isempty(filepath)
+        filepath = "index.html"
+    end
+    
     # Try local dist first (development), then download from GitHub (production)
     local_dist = abspath(joinpath(@__DIR__, "..", "dashboard-ui", "dist"))
     
