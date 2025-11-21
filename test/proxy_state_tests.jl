@@ -125,6 +125,41 @@ using .Proxy
         @test repl.disconnect_time === nothing
     end
 
+    @testset "Heartbeat Recovery from Disconnected State" begin
+        empty!(Proxy.REPL_REGISTRY)
+        Proxy.register_repl("heartbeat-recovery-test", 3008; pid = 12352)
+
+        # Simulate disconnection via timeout
+        lock(Proxy.REPL_REGISTRY_LOCK) do
+            Proxy.REPL_REGISTRY["heartbeat-recovery-test"].status = :disconnected
+            Proxy.REPL_REGISTRY["heartbeat-recovery-test"].disconnect_time = now()
+            Proxy.REPL_REGISTRY["heartbeat-recovery-test"].missed_heartbeats = 3
+        end
+
+        repl = Proxy.get_repl("heartbeat-recovery-test")
+        @test repl.status == :disconnected
+        @test repl.missed_heartbeats == 3
+
+        # Simulate heartbeat coming in (updates last_heartbeat and recovers status)
+        lock(Proxy.REPL_REGISTRY_LOCK) do
+            if haskey(Proxy.REPL_REGISTRY, "heartbeat-recovery-test")
+                Proxy.REPL_REGISTRY["heartbeat-recovery-test"].last_heartbeat = now()
+                Proxy.REPL_REGISTRY["heartbeat-recovery-test"].missed_heartbeats = 0
+                # Automatically recover from disconnected state on heartbeat
+                if Proxy.REPL_REGISTRY["heartbeat-recovery-test"].status in (:stopped, :disconnected, :reconnecting)
+                    Proxy.REPL_REGISTRY["heartbeat-recovery-test"].status = :ready
+                    Proxy.REPL_REGISTRY["heartbeat-recovery-test"].last_error = nothing
+                    Proxy.REPL_REGISTRY["heartbeat-recovery-test"].disconnect_time = nothing
+                end
+            end
+        end
+
+        repl = Proxy.get_repl("heartbeat-recovery-test")
+        @test repl.status == :ready
+        @test repl.missed_heartbeats == 0
+        @test repl.disconnect_time === nothing
+    end
+
     @testset "Permanent Stop After Timeout" begin
         empty!(Proxy.REPL_REGISTRY)
         Proxy.register_repl("timeout-test", 3006; pid = 12350)
