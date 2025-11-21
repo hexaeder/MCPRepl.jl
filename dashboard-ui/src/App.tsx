@@ -134,7 +134,7 @@ export const App: React.FC = () => {
                                         icon="🔧"
                                         label="Tool Calls"
                                         value={events.filter(e => e.type === 'TOOL_CALL').length}
-                                        valueColor="#00d9ff"
+                                        valueColor="#7dd3fc"
                                     />
                                 </div>
                             </div>

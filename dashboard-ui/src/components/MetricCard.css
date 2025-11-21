@@ -44,7 +44,7 @@
     background: var(--bg-tertiary);
     border: 1px solid var(--accent-primary);
     border-radius: 4px;
-    box-shadow: 0 0 15px rgba(0, 255, 65, 0.15);
+    box-shadow: 0 0 15px rgba(125, 211, 252, 0.1);
 }
 
 .metric-content {
@@ -68,7 +68,7 @@
     line-height: 1;
     color: var(--accent-primary);
     font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
-    text-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+    text-shadow: 0 0 10px rgba(125, 211, 252, 0.15);
 }
 
 .metric-trend {

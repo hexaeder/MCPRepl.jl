@@ -13,7 +13,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
     icon,
     label,
     value,
-    valueColor = '#00d9ff',
+    valueColor = '#7dd3fc',
     trend
 }) => {
     return (

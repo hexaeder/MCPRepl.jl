@@ -135,13 +135,10 @@ try
                 # Wait a moment for server to fully initialize
                 sleep(0.5)
 
-                mcprepl_version = MCPRepl.version_info()
-                @info "✓ MCP REPL server started {{ emoticon }} (version: $(mcprepl_version))"
-
-                # Refresh the prompt to ensure clean display
+                # Startup complete - prompt is already clean from start!()
+                # No need for extra logging or prompt refresh
                 if isdefined(Base, :active_repl)
                     try
-                        println()  # Add clean newline
                         REPL.LineEdit.refresh_line(Base.active_repl.mistate)
                     catch
                         # Ignore if REPL isn't ready yet

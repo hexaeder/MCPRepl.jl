@@ -677,6 +677,59 @@ function handle_request(http::HTTP.Stream)
             return nothing
         end
 
+        # Dashboard API: Server-Sent Events stream
+        if path == "/dashboard/api/events/stream"
+            query_params = HTTP.queryparams(uri)
+            id = get(query_params, "id", nothing)
+            
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "text/event-stream")
+            HTTP.setheader(http, "Cache-Control" => "no-cache")
+            HTTP.setheader(http, "Connection" => "keep-alive")
+            HTTP.startwrite(http)
+            
+            # Send initial connection event
+            write(http, "event: connected\n")
+            write(http, "data: {\"status\":\"connected\"}\n\n")
+            flush(http)
+            
+            # Track last seen event ID to only send new events
+            last_event_time = now()
+            
+            try
+                while isopen(http)
+                    # Get events since last check
+                    events = Dashboard.get_events(id=id, limit=50)
+                    new_events = filter(e -> e.timestamp > last_event_time, events)
+                    
+                    for event in new_events
+                        event_data = Dict(
+                            "id" => event.id,
+                            "type" => string(event.event_type),
+                            "timestamp" => Dates.format(event.timestamp, "yyyy-mm-dd HH:MM:SS.sss"),
+                            "data" => event.data,
+                            "duration_ms" => event.duration_ms
+                        )
+                        
+                        write(http, "event: update\n")
+                        write(http, "data: $(JSON.json(event_data))\n\n")
+                        flush(http)
+                        
+                        last_event_time = max(last_event_time, event.timestamp)
+                    end
+                    
+                    # Wait before next poll
+                    sleep(0.5)
+                end
+            catch e
+                if !(e isa Base.IOError)
+                    @debug "SSE stream error" exception=e
+                end
+            end
+            
+            return nothing
+        end
+
         # Dashboard WebSocket (for future implementation)
         if path == "/dashboard/ws"
             HTTP.setstatus(http, 501)

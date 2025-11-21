@@ -1,5 +1,6 @@
 [dashboard]
 lazy = true
+git-tree-sha1 = "79446129d0de83dacac24ce7a38addfa56b52897"
 
     [[dashboard.download]]
     url = "file:///Users/kburke/.julia/dev/MCPRepl/dashboard-dist.tar.gz"
