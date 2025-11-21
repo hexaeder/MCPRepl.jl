@@ -2,24 +2,30 @@ using HTTP
 using JSON
 using Logging
 
+# Import Session module
+include("session.jl")
+using .Session
+
 # Import types and functions from parent module
 import ..MCPRepl:
     SecurityConfig, extract_api_key, validate_api_key, get_client_ip, validate_ip
 
-# Server with tool registry
-struct MCPServer
+# Server with tool registry and session management
+mutable struct MCPServer
     port::Int
     server::HTTP.Server
     tools::Dict{Symbol,MCPTool}           # Symbol-keyed registry
     name_to_id::Dict{String,Symbol}       # String→Symbol lookup for JSON-RPC
+    session::Union{MCPSession,Nothing}    # MCP session (one per server)
 end
 
-# Create request handler with access to tools
+# Create request handler with access to tools and session
 function create_handler(
     tools::Dict{Symbol,MCPTool},
     name_to_id::Dict{String,Symbol},
     port::Int,
     security_config::Union{SecurityConfig,Nothing} = nothing,
+    session::Union{MCPSession,Nothing} = nothing,
 )
     return function handle_request(req::HTTP.Request)
         # Security check - apply to ALL endpoints including vscode-response
@@ -326,31 +332,98 @@ function create_handler(
 
             # Handle initialization
             if request["method"] == "initialize"
-                response = Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => request["id"],
-                    "result" => Dict(
-                        "protocolVersion" => "2024-11-05",
-                        "capabilities" => Dict("tools" => Dict()),
-                        "serverInfo" => Dict(
-                            "name" => "julia-mcp-server",
-                            "version" => "1.0.0",
+                params = get(request, "params", Dict{String,Any}())
+
+                try
+                    # Use session management if available
+                    if session !== nothing
+                        init_result = initialize_session!(session, params)
+                    else
+                        # Fallback without session management
+                        init_result = Dict(
+                            "protocolVersion" => "2024-11-05",
+                            "capabilities" => Dict(
+                                "tools" => Dict(),
+                                "prompts" => Dict(),
+                                "resources" => Dict(),
+                                "logging" => Dict(),
+                                "experimental" => Dict(
+                                    "vscode_integration" => true,
+                                    "supervisor_mode" => true,
+                                    "proxy_routing" => true,
+                                ),
+                            ),
+                            "serverInfo" =>
+                                Dict("name" => "MCPRepl", "version" => "0.3.0"),
+                        )
+                    end
+
+                    response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "result" => init_result,
+                    )
+
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(response),
+                    )
+                catch e
+                    error_response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "error" => Dict(
+                            "code" => -32603,
+                            "message" => "Initialize error: $(sprint(showerror, e))",
                         ),
-                    ),
-                )
-                return HTTP.Response(
-                    200,
-                    ["Content-Type" => "application/json"],
-                    JSON.json(response),
-                )
+                    )
+                    return HTTP.Response(
+                        500,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(error_response),
+                    )
+                end
             end
 
             # Handle initialized notification
             if request["method"] == "notifications/initialized"
                 # This is a notification, no response needed
+                # Mark session as fully initialized if it's in INITIALIZED state
+                if session !== nothing && session.state == INITIALIZED
+                    @info "Session initialized" session_id = session.id
+                end
                 return HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
             end
 
+            # Handle session info request (custom extension)
+            if request["method"] == "session/info"
+                if session !== nothing
+                    session_info = get_session_info(session)
+                    response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "result" => session_info,
+                    )
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(response),
+                    )
+                else
+                    error_response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "error" =>
+                            Dict("code" => -32603, "message" => "No session available"),
+                    )
+                    return HTTP.Response(
+                        500,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(error_response),
+                    )
+                end
+            end
 
             # Handle supervisor heartbeat (if supervisor mode is enabled)
             if request["method"] == "supervisor/heartbeat"
@@ -522,6 +595,9 @@ function start_mcp_server(
     tools_dict = Dict{Symbol,MCPTool}(tool.id => tool for tool in tools)
     # Build string→symbol mapping for JSON-RPC
     name_to_id = Dict{String,Symbol}(tool.name => tool.id for tool in tools)
+
+    # Create session for this server
+    session = MCPSession()
 
     # Create a hybrid handler that supports both regular and streaming responses
     function hybrid_handler(http::HTTP.Stream)
@@ -738,7 +814,7 @@ function start_mcp_server(
             # - VS Code response endpoint
             # - initialize, tools/list, and tools/call
             req_with_body = HTTP.Request(req.method, req.target, req.headers, body)
-            handler = create_handler(tools_dict, name_to_id, port, security_config)
+            handler = create_handler(tools_dict, name_to_id, port, security_config, session)
             response = handler(req_with_body)
 
             HTTP.setstatus(http, response.status)
@@ -789,10 +865,15 @@ function start_mcp_server(
         end
     end
 
-    return MCPServer(port, server, tools_dict, name_to_id)
+    return MCPServer(port, server, tools_dict, name_to_id, session)
 end
 
 function stop_mcp_server(server::MCPServer)
+    # Close session if it exists
+    if server.session !== nothing
+        close_session!(server.session)
+    end
+
     HTTP.close(server.server)
     println("MCP Server stopped")
 end
