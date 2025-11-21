@@ -518,37 +518,37 @@ function monitor_heartbeats()
             end
 
             for repl_id in repl_ids_to_check
-                repl = get_repl(repl_id)
-                if repl === nothing
-                    continue
-                end
+                # Do all checks inside lock to avoid race conditions
+                lock(REPL_REGISTRY_LOCK) do
+                    if !haskey(REPL_REGISTRY, repl_id)
+                        return
+                    end
 
-                # Skip if already disconnected/reconnecting/stopped
-                if repl.status != :ready
-                    continue
-                end
+                    repl = REPL_REGISTRY[repl_id]
 
-                # Check if heartbeat is stale (>15 seconds old)
-                time_since_heartbeat = now() - repl.last_heartbeat
-                if time_since_heartbeat > Second(15)
-                    @warn "REPL heartbeat timeout, marking as disconnected" id = repl_id last_heartbeat =
-                        repl.last_heartbeat
+                    # Skip if already disconnected/reconnecting/stopped
+                    if repl.status != :ready
+                        return
+                    end
 
-                    lock(REPL_REGISTRY_LOCK) do
-                        if haskey(REPL_REGISTRY, repl_id)
-                            REPL_REGISTRY[repl_id].status = :disconnected
-                            REPL_REGISTRY[repl_id].disconnect_time = now()
-                            REPL_REGISTRY[repl_id].missed_heartbeats += 1
+                    # Check if heartbeat is stale (>15 seconds old)
+                    time_since_heartbeat = now() - repl.last_heartbeat
+                    if time_since_heartbeat > Second(15)
+                        @warn "REPL heartbeat timeout, marking as disconnected" id = repl_id last_heartbeat =
+                            repl.last_heartbeat time_since = time_since_heartbeat
 
-                            # Log disconnection event
-                            Dashboard.log_event(
-                                repl_id,
-                                Dashboard.ERROR,
-                                Dict(
-                                    "message" => "Heartbeat timeout after $time_since_heartbeat",
-                                ),
-                            )
-                        end
+                        REPL_REGISTRY[repl_id].status = :disconnected
+                        REPL_REGISTRY[repl_id].disconnect_time = now()
+                        REPL_REGISTRY[repl_id].missed_heartbeats += 1
+
+                        # Log disconnection event
+                        Dashboard.log_event(
+                            repl_id,
+                            Dashboard.ERROR,
+                            Dict(
+                                "message" => "Heartbeat timeout after $time_since_heartbeat",
+                            ),
+                        )
                     end
                 end
             end
