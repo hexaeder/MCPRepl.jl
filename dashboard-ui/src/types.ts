@@ -1,4 +1,4 @@
-export interface Agent {
+export interface Session {
     id: string;
     port: number;
     pid: number;
@@ -7,15 +7,15 @@ export interface Agent {
 }
 
 export type EventType =
-    | 'AGENT_START'
-    | 'AGENT_STOP'
+    | 'SESSION_START'
+    | 'SESSION_STOP'
     | 'TOOL_CALL'
     | 'CODE_EXECUTION'
     | 'OUTPUT'
     | 'ERROR'
     | 'HEARTBEAT';
 
-export interface AgentEvent {
+export interface SessionEvent {
     id: string;
     type: EventType;
     timestamp: string;
@@ -24,6 +24,6 @@ export interface AgentEvent {
 }
 
 export interface DashboardData {
-    agents: Record<string, Agent>;
-    events: AgentEvent[];
+    sessions: Record<string, Session>;
+    events: SessionEvent[];
 }
