@@ -937,7 +937,7 @@ function handle_request(http::HTTP.Stream)
                     end
                     port
                 end,
-                "version" => "v0.3.0",
+                "version" => "v0.4.0",
             )
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")

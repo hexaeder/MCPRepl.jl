@@ -205,7 +205,7 @@ function get_version()
     if isdefined(Main, :MCPRepl) && isdefined(Main.MCPRepl, :version_info)
         return Main.MCPRepl.version_info()
     end
-    return "0.3.0"
+    return "0.4.0"
 end
 
 end # module Session

@@ -354,7 +354,7 @@ function create_handler(
                                 ),
                             ),
                             "serverInfo" =>
-                                Dict("name" => "MCPRepl", "version" => "0.3.0"),
+                                Dict("name" => "MCPRepl", "version" => "0.4.0"),
                         )
                     end
 

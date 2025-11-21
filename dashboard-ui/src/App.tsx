@@ -21,6 +21,7 @@ export const App: React.FC = () => {
     const [showShutdownConfirm, setShowShutdownConfirm] = useState(false);
     const [proxyPid, setProxyPid] = useState<number | null>(null);
     const [proxyPort, setProxyPort] = useState<number | null>(null);
+    const [proxyVersion, setProxyVersion] = useState<string>('loading...');
 
     useEffect(() => {
         const loadInitialData = async () => {
@@ -38,6 +39,7 @@ export const App: React.FC = () => {
                     const proxyInfo = await proxyInfoRes.json();
                     setProxyPid(proxyInfo.pid);
                     setProxyPort(proxyInfo.port);
+                    setProxyVersion(proxyInfo.version || 'unknown');
                 }
             } catch (error) {
                 console.error('Failed to load initial data:', error);
@@ -188,7 +190,7 @@ export const App: React.FC = () => {
                                 </div>
                                 <div className="info-row">
                                     <span className="info-label">Version</span>
-                                    <span className="info-value">MCPRepl v0.3.0</span>
+                                    <span className="info-value">MCPRepl {proxyVersion}</span>
                                 </div>
                             </div>
                         </div>
