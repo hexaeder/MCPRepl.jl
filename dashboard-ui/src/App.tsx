@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { fetchSessions, fetchEvents, subscribeToEvents, fetchTools, callTool, fetchLogs, fetchDirectories, ToolSchema, ToolsResponse } from './api';
+import { fetchSessions, fetchEvents, subscribeToEvents, fetchTools, callTool, fetchLogs, fetchDirectories, shutdownSession, restartSession, listStaleSessions, killStaleSessions, ToolSchema, ToolsResponse } from './api';
 import { Session, SessionEvent } from './types';
 import { SessionCard } from './components/SessionCard';
 import { MetricCard } from './components/MetricCard';
 import { JsonViewer } from '@textea/json-viewer';
 import './App.css';
+import './quick-start.css';
 
 // Convert ANSI escape codes to HTML with colors
 const convertAnsiToHtml = (text: string): string => {
@@ -81,6 +82,17 @@ export const App: React.FC = () => {
     const [autoRefreshLogs, setAutoRefreshLogs] = useState(false);
     const [pathSuggestions, setPathSuggestions] = useState<string[]>([]);
     const [isJuliaProject, setIsJuliaProject] = useState<boolean>(false);
+    const [staleSessions, setStaleSessions] = useState<any[]>([]);
+    const [staleSessionCount, setStaleSessionCount] = useState(0);
+    const [showStaleSessionsModal, setShowStaleSessionsModal] = useState(false);
+    const [showErrorsModal, setShowErrorsModal] = useState(false);
+    const [showQuickStartModal, setShowQuickStartModal] = useState(false);
+    const [quickStartLoading, setQuickStartLoading] = useState(false);
+    const [quickStartPath, setQuickStartPath] = useState('');
+    const [quickStartName, setQuickStartName] = useState('');
+    const [recentSessions, setRecentSessions] = useState<Array<{ path: string, name: string, timestamp: number }>>([]);
+    const [recentSessionLoading, setRecentSessionLoading] = useState<string | null>(null);
+    const [confirmSessionAction, setConfirmSessionAction] = useState<{ action: 'shutdown' | 'restart', sessionId: string } | null>(null);
 
     useEffect(() => {
         if (autoRefreshLogs && activeTab === 'logs' && logSessionId) {
@@ -92,6 +104,38 @@ export const App: React.FC = () => {
             return () => clearInterval(interval);
         }
     }, [autoRefreshLogs, activeTab, logSessionId]);
+
+    useEffect(() => {
+        // DISABLED: Periodically check for stale sessions (was causing hang)
+        // TODO: Re-enable with proper implementation that doesn't hang
+        /*
+        const checkStale = async () => {
+            try {
+                const result = await listStaleSessions();
+                setStaleSessionCount(result.sessions.filter(s => s.is_stale).length);
+                setStaleSessions(result.sessions);
+            } catch (e) {
+                console.error('Failed to check stale sessions:', e);
+            }
+        };
+
+        checkStale();
+        const interval = setInterval(checkStale, 10000); // Every 10 seconds
+        return () => clearInterval(interval);
+        */
+    }, []);
+
+    useEffect(() => {
+        // Load recent sessions from localStorage
+        const stored = localStorage.getItem('mcprepl_recent_sessions');
+        if (stored) {
+            try {
+                setRecentSessions(JSON.parse(stored));
+            } catch (e) {
+                console.error('Failed to load recent sessions:', e);
+            }
+        }
+    }, []);
 
     useEffect(() => {
         const loadInitialData = async () => {
@@ -122,15 +166,20 @@ export const App: React.FC = () => {
 
         loadInitialData();
 
-        // Poll for agents updates more frequently to catch status changes
+        // Poll for agents updates to catch status changes
         const agentsInterval = setInterval(async () => {
             try {
                 const sessionsData = await fetchSessions();
                 setSessions(sessionsData);
             } catch (error) {
-                console.error('Failed to refresh agents:', error);
+                // Silently fail during startup/restart
+                if (error instanceof TypeError && error.message.includes('Load failed')) {
+                    // Server not ready yet, will retry
+                } else {
+                    console.error('Failed to refresh agents:', error);
+                }
             }
-        }, 500); // Poll every 500ms to catch rapid status changes
+        }, 5000); // Poll every 5 seconds
 
         // Subscribe to event stream
         const unsubscribe = subscribeToEvents((newEvent) => {
@@ -207,6 +256,122 @@ export const App: React.FC = () => {
             await fetch('/dashboard/api/shutdown', { method: 'POST' });
         } catch (error) {
             console.error('Failed to shutdown proxy:', error);
+        }
+    };
+
+    const handleSessionShutdown = (sessionId: string) => {
+        setConfirmSessionAction({ action: 'shutdown', sessionId });
+    };
+
+    const executeSessionShutdown = async (sessionId: string) => {
+        try {
+            const result = await shutdownSession(sessionId);
+            if (result.success) {
+                // Remove from local state
+                setSessions(prev => {
+                    const newSessions = { ...prev };
+                    delete newSessions[sessionId];
+                    return newSessions;
+                });
+                // Clear selection if this was selected
+                if (selectedSession === sessionId) {
+                    setSelectedSession(null);
+                    setLogContent('');
+                    setLogSessionId(null);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to shutdown session:', error);
+            alert(`Failed to shutdown session: ${error}`);
+        } finally {
+            setConfirmSessionAction(null);
+        }
+    };
+
+    const handleSessionRestart = (sessionId: string) => {
+        setConfirmSessionAction({ action: 'restart', sessionId });
+    };
+
+    const executeSessionRestart = async (sessionId: string) => {
+        try {
+            const result = await restartSession(sessionId);
+            if (result.success) {
+                // Session will reconnect automatically
+                // Optionally refresh the session list
+                setTimeout(() => {
+                    fetchSessions().then(setSessions);
+                }, 1000);
+            } else {
+                alert(`Failed to restart session: Session not found or disconnected`);
+            }
+        } catch (error) {
+            console.error('Failed to restart session:', error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            alert(`Failed to restart session: ${errorMsg}`);
+        } finally {
+            setConfirmSessionAction(null);
+        }
+    };
+
+    const handleQuickStart = async () => {
+        if (!quickStartPath) {
+            alert('Please enter a project path');
+            return;
+        }
+
+        setQuickStartLoading(true);
+
+        try {
+            // Use callTool like the Tools page does
+            const result = await callTool({
+                tool: 'start_julia_session',
+                arguments: {
+                    project_path: quickStartPath,
+                    session_name: quickStartName || undefined
+                }
+            });
+
+            if (result.error) {
+                throw new Error(result.error);
+            }
+
+            // Save to recent sessions
+            const newRecent = [
+                { path: quickStartPath, name: quickStartName || quickStartPath, timestamp: Date.now() },
+                ...recentSessions.filter(r => r.path !== quickStartPath).slice(0, 9) // Keep last 10
+            ];
+            setRecentSessions(newRecent);
+            localStorage.setItem('mcprepl_recent_sessions', JSON.stringify(newRecent));
+
+            // Success - close modal and clear form
+            setQuickStartPath('');
+            setQuickStartName('');
+            setShowQuickStartModal(false);
+
+            // Refresh sessions list
+            setTimeout(() => {
+                fetchSessions().then(setSessions);
+            }, 1000);
+
+        } catch (error) {
+            console.error('Failed to start session:', error);
+            alert(`Failed to start session: ${String(error)}`);
+        } finally {
+            setQuickStartLoading(false);
+        }
+    };
+
+    const handleKillStaleSessions = async (force: boolean = false) => {
+        try {
+            const result = await killStaleSessions(force);
+            alert(result);
+            // Refresh stale sessions list
+            const updated = await listStaleSessions();
+            setStaleSessions(updated.sessions);
+            setStaleSessionCount(updated.sessions.filter((s: any) => s.is_stale).length);
+        } catch (error) {
+            console.error('Failed to kill stale sessions:', error);
+            alert(`Failed to kill stale sessions: ${error}`);
         }
     };
 
@@ -296,12 +461,286 @@ export const App: React.FC = () => {
                 </div>
             )}
 
+            {confirmSessionAction && (
+                <div className="modal-overlay" onClick={() => setConfirmSessionAction(null)}>
+                    <div className="modal-content confirm-dialog" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>⚠️ Confirm {confirmSessionAction.action === 'shutdown' ? 'Shutdown' : 'Restart'}</h2>
+                        </div>
+                        <div className="modal-body">
+                            <p className="confirm-message">
+                                Are you sure you want to {confirmSessionAction.action} session <strong>{confirmSessionAction.sessionId}</strong>?
+                            </p>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="modal-button secondary" onClick={() => setConfirmSessionAction(null)}>Cancel</button>
+                            <button
+                                className="modal-button danger"
+                                onClick={() => {
+                                    if (confirmSessionAction.action === 'shutdown') {
+                                        executeSessionShutdown(confirmSessionAction.sessionId);
+                                    } else {
+                                        executeSessionRestart(confirmSessionAction.sessionId);
+                                    }
+                                }}
+                            >
+                                {confirmSessionAction.action === 'shutdown' ? 'Shutdown' : 'Restart'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showErrorsModal && (
+                <div className="modal-overlay" onClick={() => setShowErrorsModal(false)}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>⚠️ Errors ({events.filter(e => e.type === 'ERROR').length})</h2>
+                            <button className="modal-close" onClick={() => setShowErrorsModal(false)}>✕</button>
+                        </div>
+                        <div className="modal-body" style={{ maxHeight: '500px', overflow: 'auto' }}>
+                            {events.filter(e => e.type === 'ERROR').length === 0 ? (
+                                <p>No errors found! 🎉</p>
+                            ) : (
+                                <div className="error-list">
+                                    {events.filter(e => e.type === 'ERROR').map((event, idx) => (
+                                        <div key={idx} className="error-item">
+                                            <div className="error-time">{new Date(event.timestamp).toLocaleTimeString()}</div>
+                                            <div className="error-message">{event.data.message || JSON.stringify(event.data)}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div className="modal-footer">
+                            <button className="modal-button secondary" onClick={() => setShowErrorsModal(false)}>Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showStaleSessionsModal && (
+                <div className="modal-overlay" onClick={() => setShowStaleSessionsModal(false)}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>🧹 Stale Sessions ({staleSessionCount})</h2>
+                            <button className="modal-close" onClick={() => setShowStaleSessionsModal(false)}>✕</button>
+                        </div>
+                        <div className="modal-body">
+                            {staleSessions.length === 0 ? (
+                                <p>No stale sessions found! ✅</p>
+                            ) : (
+                                <div className="stale-sessions-list">
+                                    {staleSessions.map((session: any, idx: number) => (
+                                        <div key={idx} className={`stale-session-item ${session.is_stale ? 'stale' : 'active'}`}>
+                                            <div className="stale-session-icon">{session.is_stale ? '❌' : '✅'}</div>
+                                            <div className="stale-session-info">
+                                                <div className="stale-session-name">{session.session_name}</div>
+                                                <div className="stale-session-pid">PID: {session.pid}</div>
+                                            </div>
+                                            <div className="stale-session-status">
+                                                {session.is_stale ? 'Stale' : 'Active'}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div className="modal-footer">
+                            <button className="modal-button secondary" onClick={() => setShowStaleSessionsModal(false)}>Close</button>
+                            {staleSessionCount > 0 && (
+                                <button className="modal-button warning" onClick={() => handleKillStaleSessions(false)}>
+                                    Kill Stale Sessions
+                                </button>
+                            )}
+                            {staleSessions.length > 0 && (
+                                <button className="modal-button danger" onClick={() => handleKillStaleSessions(true)}>
+                                    Kill All Sessions
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showQuickStartModal && (
+                <div className="modal-overlay" onClick={() => setShowQuickStartModal(false)}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>🚀 Quick Start Session</h2>
+                            <button className="modal-close" onClick={() => setShowQuickStartModal(false)}>✕</button>
+                        </div>
+                        <div className="modal-body">
+                            <div className="form-group">
+                                <label>Project Path *</label>
+                                <input
+                                    type="text"
+                                    value={quickStartPath}
+                                    onChange={async (e) => {
+                                        const value = e.target.value;
+                                        setQuickStartPath(value);
+
+                                        // Fetch directory suggestions
+                                        if (value.length > 0) {
+                                            try {
+                                                const result = await fetchDirectories(value);
+                                                setPathSuggestions(result.directories || []);
+                                                setIsJuliaProject(result.is_julia_project || false);
+                                            } catch (err) {
+                                                console.error('Failed to fetch directories:', err);
+                                            }
+                                        } else {
+                                            setPathSuggestions([]);
+                                            setIsJuliaProject(false);
+                                        }
+                                    }}
+                                    onBlur={async (e) => {
+                                        // Auto-populate session name if this is a Julia project
+                                        const value = e.target.value;
+                                        if (value && !quickStartName) {
+                                            try {
+                                                const result = await fetchDirectories(value);
+                                                if (result.is_julia_project) {
+                                                    let projectName = value.split('/').filter(p => p.length > 0).pop() || '';
+                                                    if (projectName.endsWith('.jl')) {
+                                                        projectName = projectName.slice(0, -3);
+                                                    }
+                                                    if (projectName) {
+                                                        setQuickStartName(projectName);
+                                                    }
+                                                }
+                                            } catch (err) {
+                                                console.error('Failed to verify Julia project:', err);
+                                            }
+                                        }
+                                    }}
+                                    onKeyDown={async (e) => {
+                                        if (e.key === 'Tab') {
+                                            e.preventDefault();
+
+                                            // Complete to first suggestion
+                                            if (pathSuggestions.length > 0) {
+                                                const firstSuggestion = pathSuggestions[0];
+                                                setQuickStartPath(firstSuggestion + '/');
+
+                                                // Fetch next level
+                                                try {
+                                                    const result = await fetchDirectories(firstSuggestion + '/');
+                                                    setPathSuggestions(result.directories || []);
+                                                    setIsJuliaProject(result.is_julia_project || false);
+
+                                                    // Auto-populate session name if completed path is Julia project
+                                                    if (result.is_julia_project && !quickStartName) {
+                                                        let projectName = firstSuggestion.split('/').filter(p => p.length > 0).pop() || '';
+                                                        if (projectName.endsWith('.jl')) {
+                                                            projectName = projectName.slice(0, -3);
+                                                        }
+                                                        if (projectName) {
+                                                            setQuickStartName(projectName);
+                                                        }
+                                                    }
+                                                } catch (err) {
+                                                    console.error('Failed to fetch directories:', err);
+                                                }
+                                            }
+                                        }
+                                    }}
+                                    placeholder="/path/to/project"
+                                    className={`modal-input ${isJuliaProject ? 'julia-project-valid' : ''}`}
+                                    list="quickstart-path-suggestions"
+                                />
+                                <datalist id="quickstart-path-suggestions">
+                                    {pathSuggestions.map((dir, idx) => (
+                                        <option key={idx} value={dir} />
+                                    ))}
+                                </datalist>
+                                {pathSuggestions.length > 0 && (
+                                    <div className="path-suggestions-hint">
+                                        Press Tab to complete • {pathSuggestions.length} matches
+                                    </div>
+                                )}
+                            </div>
+                            <div className="form-group">
+                                <label>Session Name (optional)</label>
+                                <input
+                                    type="text"
+                                    value={quickStartName}
+                                    onChange={(e) => setQuickStartName(e.target.value)}
+                                    placeholder="my-session"
+                                    className="modal-input"
+                                />
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button
+                                className="modal-button secondary"
+                                onClick={() => setShowQuickStartModal(false)}
+                                disabled={quickStartLoading}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                className="modal-button primary"
+                                onClick={handleQuickStart}
+                                disabled={quickStartLoading}
+                            >
+                                {quickStartLoading ? '🚀 Starting...' : 'Start Session'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="main-container">
                 <aside className="sidebar">
                     <div className="sidebar-header">
                         <h2>Sessions</h2>
                         <span className="session-count">{sessionCount}</span>
                     </div>
+                    <button
+                        className="quick-start-btn"
+                        onClick={() => setShowQuickStartModal(true)}
+                        title="Start a new session"
+                    >
+                        + Quick Start
+                    </button>
+                    {recentSessions.length > 0 && (
+                        <div className="recent-sessions">
+                            <div className="recent-header">Recent Sessions</div>
+                            {recentSessions.slice(0, 3).map((recent, idx) => (
+                                <div
+                                    key={idx}
+                                    className={`recent-item ${recentSessionLoading === recent.path ? 'loading' : ''}`}
+                                    onClick={async () => {
+                                        if (recentSessionLoading) return; // Prevent double-click
+                                        setRecentSessionLoading(recent.path);
+                                        try {
+                                            await callTool({
+                                                tool: 'start_julia_session',
+                                                arguments: {
+                                                    project_path: recent.path,
+                                                    session_name: recent.name
+                                                }
+                                            });
+                                            setTimeout(() => fetchSessions().then(setSessions), 1000);
+                                        } catch (e) {
+                                            alert(`Failed to start: ${e}`);
+                                        } finally {
+                                            setRecentSessionLoading(null);
+                                        }
+                                    }}
+                                    title={recent.path}
+                                >
+                                    <span className="recent-name">
+                                        {recentSessionLoading === recent.path ? '🚀 ' : ''}{recent.name}
+                                    </span>
+                                    <span className="recent-time">
+                                        {recentSessionLoading === recent.path ? 'Starting...' : new Date(recent.timestamp).toLocaleDateString()}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <div className="session-list">
                         {Object.entries(sessions).map(([id, session]) => (
                             <SessionCard
@@ -317,6 +756,8 @@ export const App: React.FC = () => {
                                         else if (data.error) setLogContent(`Error: ${data.error}`);
                                     });
                                 }}
+                                onRestart={handleSessionRestart}
+                                onShutdown={handleSessionShutdown}
                             />
                         ))}
                     </div>
@@ -388,6 +829,10 @@ export const App: React.FC = () => {
                                         icon="📊"
                                         label="Total Events"
                                         value={eventCount}
+                                        onClick={() => {
+                                            setActiveTab('events');
+                                            setEventFilter('interesting');
+                                        }}
                                     />
                                     <MetricCard
                                         icon="🔥"
@@ -403,12 +848,24 @@ export const App: React.FC = () => {
                                         label="Errors"
                                         value={events.filter(e => e.type === 'ERROR').length}
                                         valueColor="#ef4444"
+                                        onClick={() => setShowErrorsModal(true)}
                                     />
                                     <MetricCard
                                         icon="🔧"
                                         label="Tool Calls"
                                         value={events.filter(e => e.type === 'TOOL_CALL').length}
                                         valueColor="#7dd3fc"
+                                        onClick={() => {
+                                            setActiveTab('events');
+                                            setEventFilter('TOOL_CALL');
+                                        }}
+                                    />
+                                    <MetricCard
+                                        icon="🧹"
+                                        label="Stale Sessions"
+                                        value={staleSessionCount}
+                                        valueColor={staleSessionCount > 0 ? "#f59e0b" : "#10b981"}
+                                        onClick={() => setShowStaleSessionsModal(true)}
                                     />
                                 </div>
                             </div>

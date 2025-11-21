@@ -1224,16 +1224,18 @@ function handle_request(http::HTTP.Stream)
                 return nothing
             catch e
                 # Vite not running - fall back to serving built static files
-                asset_path = replace(path, r"^/dashboard/" => "")
-                response = Dashboard.serve_static_file(asset_path)
-                HTTP.setstatus(http, response.status)
-                for (name, value) in response.headers
-                    HTTP.setheader(http, name => value)
-                end
-                HTTP.startwrite(http)
-                write(http, response.body)
-                return nothing
             end
+
+            # Vite not running or failed - serve built static files
+            asset_path = replace(path, r"^/dashboard/" => "")
+            response = Dashboard.serve_static_file(asset_path)
+            HTTP.setstatus(http, response.status)
+            for (name, value) in response.headers
+                HTTP.setheader(http, name => value)
+            end
+            HTTP.startwrite(http)
+            write(http, response.body)
+            return nothing
         end        # Dashboard API: Get proxy server info
         if path == "/dashboard/api/proxy-info"
             proxy_info = Dict(
@@ -1261,9 +1263,10 @@ function handle_request(http::HTTP.Stream)
             return nothing
         end
 
-        # Dashboard API: Get all agents
-        if path == "/dashboard/api/agents"
-            agents = lock(REPL_REGISTRY_LOCK) do
+        # Dashboard API: Get all sessions
+        if path == "/dashboard/api/sessions"
+            start_time = time()
+            sessions = lock(REPL_REGISTRY_LOCK) do
                 result = Dict{String,Any}()
                 for (id, conn) in REPL_REGISTRY
                     result[id] = Dict(
@@ -1279,10 +1282,111 @@ function handle_request(http::HTTP.Stream)
                 end
                 result
             end
+            elapsed = (time() - start_time) * 1000
+            if elapsed > 100
+                @warn "Slow sessions API call" elapsed_ms = elapsed
+            end
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
             HTTP.startwrite(http)
-            write(http, JSON.json(agents))
+            write(http, JSON.json(sessions))
+            return nothing
+        end
+
+        # Dashboard API: Restart a specific session
+        if startswith(path, "/dashboard/api/session/") &&
+           endswith(path, "/restart") &&
+           req.method == "POST"
+            session_id = replace(path, r"^/dashboard/api/session/" => "", r"/restart$" => "")
+
+            success = lock(REPL_REGISTRY_LOCK) do
+                if haskey(REPL_REGISTRY, session_id)
+                    conn = REPL_REGISTRY[session_id]
+
+                    # Send restart request via exit tool
+                    try
+                        restart_req = Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => rand(1:999999),
+                            "method" => "tools/call",
+                            "params" => Dict(
+                                "name" => "exit",
+                                "arguments" => Dict("restart" => true)
+                            )
+                        )
+                        write(conn.socket, JSON.json(restart_req) * "\n")
+                        @info "Session restart requested" session_id
+                        return true
+                    catch e
+                        @error "Failed to restart session" session_id error = e
+                        return false
+                    end
+                else
+                    @warn "Session not found for restart" session_id
+                    return false
+                end
+            end
+
+            HTTP.setstatus(http, success ? 200 : 404)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(Dict("success" => success, "session_id" => session_id))
+            )
+            return nothing
+        end
+
+        # Dashboard API: Shutdown a specific session
+        if startswith(path, "/dashboard/api/session/") &&
+           endswith(path, "/shutdown") &&
+           req.method == "POST"
+            session_id = replace(path, r"^/dashboard/api/session/" => "", r"/shutdown$" => "")
+
+            success = lock(REPL_REGISTRY_LOCK) do
+                if haskey(REPL_REGISTRY, session_id)
+                    conn = REPL_REGISTRY[session_id]
+
+                    # If disconnected, just unregister it
+                    if conn.status == :disconnected
+                        delete!(REPL_REGISTRY, session_id)
+                        @info "Unregistered disconnected session" session_id
+                        return true
+                    end
+
+                    # Otherwise, try to send shutdown request
+                    try
+                        shutdown_req = Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => rand(1:999999),
+                            "method" => "shutdown",
+                            "params" => Dict()
+                        )
+                        write(conn.socket, JSON.json(shutdown_req) * "\n")
+
+                        # Remove from registry
+                        delete!(REPL_REGISTRY, session_id)
+                        @info "Session shutdown requested" session_id
+                        return true
+                    catch e
+                        # If write fails, just unregister anyway
+                        delete!(REPL_REGISTRY, session_id)
+                        @warn "Failed to send shutdown request, unregistered anyway" session_id error = e
+                        return true
+                    end
+                else
+                    @warn "Session not found for shutdown" session_id
+                    return false
+                end
+            end
+
+            HTTP.setstatus(http, success ? 200 : 404)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(Dict("success" => success, "session_id" => session_id))
+            )
             return nothing
         end
 
@@ -2183,6 +2287,96 @@ function handle_request(http::HTTP.Stream)
                 end
             end
 
+            # Handle kill_stale_sessions with special logic
+            if tool_name == "kill_stale_sessions"
+                args = get(params, "arguments", Dict())
+                dry_run = get(args, "dry_run", true)
+                force = get(args, "force", false)
+                proxy_port_filter = get(args, "proxy_port", nothing)
+
+                result_text = ""
+                try
+                    if Sys.iswindows()
+                        result_text = "❌ kill_stale_sessions is not yet supported on Windows"
+                    else
+                        # Fast approach: only check disconnected sessions from registry
+                        # Avoid any process scanning which is slow
+                        stale_processes = []
+
+                        lock(REPL_REGISTRY_LOCK) do
+                            for (session_name, conn) in REPL_REGISTRY
+                                pid = conn.pid
+
+                                # Check proxy port filter if specified
+                                if proxy_port_filter !== nothing && string(conn.port) != string(proxy_port_filter)
+                                    continue
+                                end
+
+                                # Only flag disconnected sessions as stale
+                                if conn.status == :disconnected
+                                    is_stale = true
+                                    if force || is_stale
+                                        push!(stale_processes, (pid, session_name, is_stale))
+                                    end
+                                elseif force
+                                    # Force mode - include all active sessions too
+                                    is_stale = false
+                                    push!(stale_processes, (pid, session_name, is_stale))
+                                end
+                            end
+                        end
+
+                        if isempty(stale_processes)
+                            result_text = "✅ No stale MCPRepl sessions found"
+                        else
+                            result_text = "Found $(length(stale_processes)) MCPRepl session(s):\n\n"
+                            for (pid, session_name, is_stale) in stale_processes
+                                status = is_stale ? "❌ STALE (not registered)" : "✅ Active (registered)"
+                                result_text *= "  PID $pid: $session_name - $status\n"
+                            end
+
+                            if dry_run
+                                result_text *= "\n🔍 DRY RUN MODE - No processes killed\n"
+                                result_text *= "Set dry_run=false to actually kill these processes"
+                            else
+                                result_text *= "\n💀 Killing processes...\n\n"
+                                for (pid, session_name, is_stale) in stale_processes
+                                    try
+                                        run(`kill -9 $pid`)
+                                        result_text *= "  ✅ Killed PID $pid ($session_name)\n"
+                                        # Remove from registry if it was there
+                                        lock(REPL_REGISTRY_LOCK) do
+                                            delete!(REPL_REGISTRY, session_name)
+                                        end
+                                    catch e
+                                        result_text *= "  ❌ Failed to kill PID $pid: $e\n"
+                                    end
+                                end
+                            end
+                        end
+                    end
+                catch e
+                    result_text = "❌ Error scanning for stale sessions: $e"
+                end
+
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "result" => Dict(
+                                "content" => [Dict("type" => "text", "text" => result_text)],
+                            ),
+                        ),
+                    ),
+                )
+                return nothing
+            end
+
             # Handle start_julia_session with special logic
             if tool_name == "start_julia_session"
                 # Parse arguments
@@ -2252,8 +2446,13 @@ function handle_request(http::HTTP.Stream)
 
                     julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=$(repr(session_name)), workspace_dir=$(repr(project_path)))"`
 
+                    # Add environment variable tag for easy identification
+                    env = copy(ENV)
+                    env["MCPREPL_SESSION"] = session_name
+                    env["MCPREPL_PROXY_PORT"] = string(get(ENV, "MCPREPL_PROXY_PORT", "3000"))
+
                     # Run in background, capture output to log file
-                    proc = run(pipeline(julia_cmd, stdout=log_file, stderr=log_file), wait=false)
+                    proc = run(pipeline(setenv(julia_cmd, env), stdout=log_file, stderr=log_file), wait=false)
 
                     # Wait for Julia session to register (max 30 seconds to allow for precompilation)
                     # When agent_name is provided, MCPRepl registers using that name directly
