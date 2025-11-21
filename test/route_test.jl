@@ -18,8 +18,8 @@ try
         backend_url,
         ["Content-Type" => "application/json"],
         JSON.json(request_dict);
-        readtimeout=30,
-        connect_timeout=5
+        readtimeout = 30,
+        connect_timeout = 5,
     )
     println("Success! Status: ", response.status)
     println("Body preview: ", String(response.body)[1:min(100, length(response.body))])

@@ -5,13 +5,10 @@ using .Proxy
 
 # Clear and register a test REPL
 empty!(Proxy.REPL_REGISTRY)
-Proxy.register_repl("test-repl", 3006; pid=89715)
+Proxy.register_repl("test-repl", 3006; pid = 89715)
 
 # Create a mock HTTP request with the header and body
-headers = [
-    "Content-Type" => "application/json",
-    "X-MCPRepl-Target" => "test-repl"
-]
+headers = ["Content-Type" => "application/json", "X-MCPRepl-Target" => "test-repl"]
 
 body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""
 

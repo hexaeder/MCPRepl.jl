@@ -14,7 +14,7 @@ include("../src/proxy.jl")
     # Start proxy in background
     proxy_port = 3000
     if !Proxy.is_server_running(proxy_port)
-        Proxy.start_server(proxy_port; background=true)
+        Proxy.start_server(proxy_port; background = true)
         sleep(1)  # Give proxy time to start
     end
     @test Proxy.is_server_running(proxy_port)
@@ -41,10 +41,10 @@ include("../src/proxy.jl")
                                 "inputSchema" => Dict(
                                     "type" => "object",
                                     "properties" => Dict(
-                                        "text" => Dict("type" => "string")
+                                        "text" => Dict("type" => "string"),
                                     ),
-                                    "required" => ["text"]
-                                )
+                                    "required" => ["text"],
+                                ),
                             ),
                             Dict(
                                 "name" => "calculate",
@@ -52,13 +52,13 @@ include("../src/proxy.jl")
                                 "inputSchema" => Dict(
                                     "type" => "object",
                                     "properties" => Dict(
-                                        "expression" => Dict("type" => "string")
+                                        "expression" => Dict("type" => "string"),
                                     ),
-                                    "required" => ["expression"]
-                                )
-                            )
-                        ]
-                    )
+                                    "required" => ["expression"],
+                                ),
+                            ),
+                        ],
+                    ),
                 )
                 return HTTP.Response(200, JSON.json(response))
             end
@@ -79,14 +79,8 @@ include("../src/proxy.jl")
                 response = Dict(
                     "jsonrpc" => "2.0",
                     "id" => request_data["id"],
-                    "result" => Dict(
-                        "content" => [
-                            Dict(
-                                "type" => "text",
-                                "text" => result
-                            )
-                        ]
-                    )
+                    "result" =>
+                        Dict("content" => [Dict("type" => "text", "text" => result)]),
                 )
                 return HTTP.Response(200, JSON.json(response))
             end
@@ -97,8 +91,8 @@ include("../src/proxy.jl")
                 "id" => get(request_data, "id", nothing),
                 "error" => Dict(
                     "code" => -32601,
-                    "message" => "Method not found: $(request_data["method"])"
-                )
+                    "message" => "Method not found: $(request_data["method"])",
+                ),
             )
             return HTTP.Response(404, JSON.json(error_response))
         catch e
@@ -108,7 +102,8 @@ include("../src/proxy.jl")
     end
 
     # Start server using HTTP.serve!
-    backend_server = HTTP.serve!(backend_handler, "127.0.0.1", backend_port; verbose=false)
+    backend_server =
+        HTTP.serve!(backend_handler, "127.0.0.1", backend_port; verbose = false)
     sleep(0.5)  # Give backend time to start
 
     # Register the backend with proxy
@@ -121,32 +116,25 @@ include("../src/proxy.jl")
             "id" => backend_id,
             "port" => backend_port,
             "pid" => getpid(),
-            "metadata" => Dict("type" => "test-backend")
-        )
+            "metadata" => Dict("type" => "test-backend"),
+        ),
     )
 
     reg_response = HTTP.post(
         "http://127.0.0.1:$proxy_port/",
         ["Content-Type" => "application/json"],
-        JSON.json(registration)
+        JSON.json(registration),
     )
     @test reg_response.status == 200
 
     # Test tools/list through proxy
     @testset "Real Backend - tools/list" begin
-        list_request = Dict(
-            "jsonrpc" => "2.0",
-            "id" => 1,
-            "method" => "tools/list"
-        )
+        list_request = Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list")
 
         response = HTTP.post(
             "http://127.0.0.1:$proxy_port/",
-            [
-                "Content-Type" => "application/json",
-                "X-MCPRepl-Target" => backend_id
-            ],
-            JSON.json(list_request)
+            ["Content-Type" => "application/json", "X-MCPRepl-Target" => backend_id],
+            JSON.json(list_request),
         )
 
         @test response.status == 200
@@ -166,17 +154,14 @@ include("../src/proxy.jl")
             "method" => "tools/call",
             "params" => Dict(
                 "name" => "reverse_text",
-                "arguments" => Dict("text" => "Hello World")
-            )
+                "arguments" => Dict("text" => "Hello World"),
+            ),
         )
 
         response = HTTP.post(
             "http://127.0.0.1:$proxy_port/",
-            [
-                "Content-Type" => "application/json",
-                "X-MCPRepl-Target" => backend_id
-            ],
-            JSON.json(call_request)
+            ["Content-Type" => "application/json", "X-MCPRepl-Target" => backend_id],
+            JSON.json(call_request),
         )
 
         @test response.status == 200
@@ -194,17 +179,14 @@ include("../src/proxy.jl")
             "method" => "tools/call",
             "params" => Dict(
                 "name" => "calculate",
-                "arguments" => Dict("expression" => "2 + 2 * 3")
-            )
+                "arguments" => Dict("expression" => "2 + 2 * 3"),
+            ),
         )
 
         response = HTTP.post(
             "http://127.0.0.1:$proxy_port/",
-            [
-                "Content-Type" => "application/json",
-                "X-MCPRepl-Target" => backend_id
-            ],
-            JSON.json(call_request)
+            ["Content-Type" => "application/json", "X-MCPRepl-Target" => backend_id],
+            JSON.json(call_request),
         )
 
         @test response.status == 200
@@ -227,12 +209,12 @@ include("../src/proxy.jl")
             "jsonrpc" => "2.0",
             "id" => 99,
             "method" => "proxy/unregister",
-            "params" => Dict("id" => backend_id)
+            "params" => Dict("id" => backend_id),
         )
         HTTP.post(
             "http://127.0.0.1:$proxy_port/",
             ["Content-Type" => "application/json"],
-            JSON.json(unreg_request)
+            JSON.json(unreg_request),
         )
     catch
         # Proxy might be shutting down

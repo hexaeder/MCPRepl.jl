@@ -74,7 +74,7 @@ using MCPRepl
             project_path = joinpath(tmpdir, project_name * ".jl")
 
             # Run the generate function
-            MCPRepl.Generate.generate(project_name, path=tmpdir, security_mode=:lax)
+            MCPRepl.Generate.generate(project_name, path = tmpdir, security_mode = :lax)
 
             # Check if the main project directory was created
             @test isdir(project_path)

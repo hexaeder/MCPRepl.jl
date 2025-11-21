@@ -122,9 +122,20 @@ using JSON
             agents_config = Dict(
                 "supervisor" => Dict("mode" => "lax", "port" => 4000),
                 "agents" => Dict(
-                    "test-agent" => Dict("mode" => "lax", "port" => 4001, "directory" => "TestAgent", "description" => "Test agent"),
-                    "math-agent" => Dict("mode" => "strict", "port" => 4002, "directory" => "MathAgent", "description" => "Math agent", "api_keys" => ["test_key_123"])
-                )
+                    "test-agent" => Dict(
+                        "mode" => "lax",
+                        "port" => 4001,
+                        "directory" => "TestAgent",
+                        "description" => "Test agent",
+                    ),
+                    "math-agent" => Dict(
+                        "mode" => "strict",
+                        "port" => 4002,
+                        "directory" => "MathAgent",
+                        "description" => "Math agent",
+                        "api_keys" => ["test_key_123"],
+                    ),
+                ),
             )
             agents_path = joinpath(config_dir, "agents.json")
             open(agents_path, "w") do io
@@ -158,11 +169,19 @@ using JSON
             @test supervisor_config.created_at isa Int64
 
             # Test error when agent doesn't exist
-            @test_throws ErrorException MCPRepl.load_security_config(test_dir, "nonexistent-agent", false)
+            @test_throws ErrorException MCPRepl.load_security_config(
+                test_dir,
+                "nonexistent-agent",
+                false,
+            )
 
             # Test error when agents.json is missing
             rm(agents_path)
-            @test_throws ErrorException MCPRepl.load_security_config(test_dir, "test-agent", false)
+            @test_throws ErrorException MCPRepl.load_security_config(
+                test_dir,
+                "test-agent",
+                false,
+            )
             @test_throws ErrorException MCPRepl.load_security_config(test_dir, "", true)
         end
 

@@ -10,8 +10,8 @@ using Dates
             4000,
             "test_dir",
             "test agent";
-            auto_start=false,
-            restart_policy="never"
+            auto_start = false,
+            restart_policy = "never",
         )
         @test MCPRepl.Supervisor.uptime_string(agent) == "not started"
 
@@ -42,8 +42,8 @@ using Dates
             4000,
             "test_dir",
             "test agent";
-            auto_start=false,
-            restart_policy="never"
+            auto_start = false,
+            restart_policy = "never",
         )
 
         # Test recent heartbeat (seconds)
@@ -68,8 +68,8 @@ using Dates
             4001,
             "/path/to/agent",
             "Test agent description";
-            auto_start=true,
-            restart_policy="always"
+            auto_start = true,
+            restart_policy = "always",
         )
 
         @test agent.name == "test-agent"
@@ -86,9 +86,9 @@ using Dates
 
     @testset "Agent status transitions" begin
         registry = MCPRepl.Supervisor.AgentRegistry(
-            heartbeat_interval=1,
-            heartbeat_timeout_count=5,
-            max_restarts_per_hour=10
+            heartbeat_interval = 1,
+            heartbeat_timeout_count = 5,
+            max_restarts_per_hour = 10,
         )
 
         agent = MCPRepl.Supervisor.AgentState(
@@ -96,8 +96,8 @@ using Dates
             4001,
             "/path/to/agent",
             "Test agent";
-            auto_start=false,
-            restart_policy="never"
+            auto_start = false,
+            restart_policy = "never",
         )
 
         MCPRepl.Supervisor.register_agent!(registry, agent)
@@ -122,9 +122,9 @@ using Dates
     @testset "Supervisor monitor detects dead agents" begin
         # Create registry with short timeouts for testing
         registry = MCPRepl.Supervisor.AgentRegistry(
-            heartbeat_interval=1,  # Check every 1 second
-            heartbeat_timeout_count=3,  # Dead after 3 missed heartbeats
-            max_restarts_per_hour=10
+            heartbeat_interval = 1,  # Check every 1 second
+            heartbeat_timeout_count = 3,  # Dead after 3 missed heartbeats
+            max_restarts_per_hour = 10,
         )
 
         # Create an agent that won't auto-restart
@@ -133,8 +133,8 @@ using Dates
             4002,
             "/path/to/agent",
             "Agent that will die";
-            auto_start=false,
-            restart_policy="never"
+            auto_start = false,
+            restart_policy = "never",
         )
         MCPRepl.Supervisor.register_agent!(registry, agent)
 
@@ -182,9 +182,9 @@ using Dates
 
     @testset "Agent stuck in starting state timeout" begin
         registry = MCPRepl.Supervisor.AgentRegistry(
-            heartbeat_interval=1,
-            heartbeat_timeout_count=5,
-            max_restarts_per_hour=10
+            heartbeat_interval = 1,
+            heartbeat_timeout_count = 5,
+            max_restarts_per_hour = 10,
         )
 
         # Create agent in starting state
@@ -193,8 +193,8 @@ using Dates
             4003,
             "/path/to/agent",
             "Agent stuck starting";
-            auto_start=false,
-            restart_policy="never"
+            auto_start = false,
+            restart_policy = "never",
         )
         MCPRepl.Supervisor.register_agent!(registry, agent)
 

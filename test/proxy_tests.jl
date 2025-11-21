@@ -46,7 +46,12 @@ end
         empty!(Proxy.REPL_REGISTRY)
 
         # Register a test REPL
-        Proxy.register_repl("test-repl-1", 3001; pid=12345, metadata=Dict("test" => "data"))
+        Proxy.register_repl(
+            "test-repl-1",
+            3001;
+            pid = 12345,
+            metadata = Dict("test" => "data"),
+        )
 
         # Verify it's in the registry
         repl = Proxy.get_repl("test-repl-1")
@@ -102,18 +107,18 @@ end
         @test repl.status == :ready
 
         # Simulate first error - should increment counter but stay ready
-        Proxy.update_repl_status("heartbeat-test", :ready; error="Error 1")
+        Proxy.update_repl_status("heartbeat-test", :ready; error = "Error 1")
         repl = Proxy.get_repl("heartbeat-test")
         @test repl.missed_heartbeats == 1
         @test repl.last_error == "Error 1"
 
         # Second error - still ready
-        Proxy.update_repl_status("heartbeat-test", :ready; error="Error 2")
+        Proxy.update_repl_status("heartbeat-test", :ready; error = "Error 2")
         repl = Proxy.get_repl("heartbeat-test")
         @test repl.missed_heartbeats == 2
 
         # Third error - now should be stopped
-        Proxy.update_repl_status("heartbeat-test", :ready; error="Error 3")
+        Proxy.update_repl_status("heartbeat-test", :ready; error = "Error 3")
         repl = Proxy.get_repl("heartbeat-test")
         @test repl.missed_heartbeats == 3
 
@@ -131,7 +136,14 @@ end
         # This is the exact pattern used in route_to_repl
         backend_url = "http://127.0.0.1:3006/"
         headers = ["Content-Type" => "application/json"]
-        body_str = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list", "params" => Dict()))
+        body_str = JSON.json(
+            Dict(
+                "jsonrpc" => "2.0",
+                "id" => 1,
+                "method" => "tools/list",
+                "params" => Dict(),
+            ),
+        )
 
         println("\nTesting HTTP.post arguments:")
         println("  URL: $backend_url")
@@ -173,7 +185,9 @@ end
 
         # Test the conversion logic used in proxy/register
         metadata_raw = get(parsed, "metadata", Dict())
-        metadata = metadata_raw isa Dict ? metadata_raw : Dict(String(k) => v for (k, v) in pairs(metadata_raw))
+        metadata =
+            metadata_raw isa Dict ? metadata_raw :
+            Dict(String(k) => v for (k, v) in pairs(metadata_raw))
 
         @test metadata isa Dict
         @test metadata["key"] == "value"
@@ -184,7 +198,8 @@ end
         parsed = JSON.parse(json_str)
 
         # Test the conversion logic used in route_to_repl
-        request_dict = parsed isa Dict ? parsed : Dict(String(k) => v for (k, v) in pairs(parsed))
+        request_dict =
+            parsed isa Dict ? parsed : Dict(String(k) => v for (k, v) in pairs(parsed))
 
         @test request_dict isa Dict
         @test request_dict["method"] == "test"
@@ -195,7 +210,7 @@ end
         empty!(Proxy.REPL_REGISTRY)
 
         # Register a test REPL
-        Proxy.register_repl("route-test", 3006; pid=Int(getpid()))
+        Proxy.register_repl("route-test", 3006; pid = Int(getpid()))
 
         # Create a JSON request string (as would come from HTTP)
         json_str = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""
@@ -206,7 +221,8 @@ end
         println("  Parsed type: $(typeof(parsed))")
 
         # Convert to Dict as done in handle_request
-        request_dict = parsed isa Dict ? parsed : Dict(String(k) => v for (k, v) in pairs(parsed))
+        request_dict =
+            parsed isa Dict ? parsed : Dict(String(k) => v for (k, v) in pairs(parsed))
         println("  Dict type: $(typeof(request_dict))")
 
         # Simulate what route_to_repl does
@@ -240,7 +256,7 @@ end
     @testset "Actual HTTP.post call with exact proxy pattern" begin
         # Start a simple echo server to test against
         echo_port = 9999
-        echo_server = HTTP.serve!(echo_port; verbose=false) do req
+        echo_server = HTTP.serve!(echo_port; verbose = false) do req
             # Echo back the request body
             return HTTP.Response(200, req.body)
         end
@@ -260,8 +276,8 @@ end
                 backend_url,
                 headers,
                 body_str;
-                readtimeout=5,
-                connect_timeout=2
+                readtimeout = 5,
+                connect_timeout = 2,
             )
 
             @test response.status == 200
@@ -276,12 +292,12 @@ end
     @testset "Full handle_request → route_to_repl → HTTP.post integration" begin
         # This tests the COMPLETE flow from handle_request to actual backend call
         echo_port = 9998
-        echo_server = HTTP.serve!(echo_port; verbose=false) do req
+        echo_server = HTTP.serve!(echo_port; verbose = false) do req
             # Return a mock MCP response
             mock_response = Dict(
                 "jsonrpc" => "2.0",
                 "id" => 1,
-                "result" => Dict("tools" => [Dict("name" => "test_tool")])
+                "result" => Dict("tools" => [Dict("name" => "test_tool")]),
             )
             return HTTP.Response(200, JSON.json(mock_response))
         end
@@ -289,13 +305,19 @@ end
         try
             # Register a REPL pointing to our echo server
             empty!(Proxy.REPL_REGISTRY)
-            Proxy.register_repl("integration-test", echo_port; pid=Int(getpid()))
+            Proxy.register_repl("integration-test", echo_port; pid = Int(getpid()))
 
             # Create HTTP request exactly as it would come from a client
             request_body = """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"""
-            req = HTTP.Request("POST", "/",
-                ["Content-Type" => "application/json", "X-MCPRepl-Target" => "integration-test"],
-                request_body)
+            req = HTTP.Request(
+                "POST",
+                "/",
+                [
+                    "Content-Type" => "application/json",
+                    "X-MCPRepl-Target" => "integration-test",
+                ],
+                request_body,
+            )
 
             println("\nFull integration test:")
             println("  Request body: $request_body")
