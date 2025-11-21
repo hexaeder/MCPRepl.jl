@@ -367,7 +367,7 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
     target_id = isempty(header_value) ? nothing : String(header_value)
 
     if target_id === nothing
-        # No target specified, try to use first available REPL
+        # No target specified - try to infer from context
         repls = list_repls()
         if isempty(repls)
             HTTP.setstatus(http, 503)
@@ -383,7 +383,16 @@ function route_to_repl_streaming(request::Dict, original_req::HTTP.Request, http
             )))
             return nothing
         end
-        target_id = first(repls).id
+        
+        # Smart routing: Prefer MCPRepl agent if available
+        # This prioritizes the main development REPL over test/temporary instances
+        mcprepl_idx = findfirst(r -> r.id == "MCPRepl", repls)
+        if mcprepl_idx !== nothing
+            target_id = repls[mcprepl_idx].id
+        else
+            # Fall back to first available REPL
+            target_id = first(repls).id
+        end
     end
 
     # Get the REPL connection
@@ -984,6 +993,24 @@ function handle_request(http::HTTP.Stream)
                         "properties" => Dict(),
                         "required" => []
                     )
+                ),
+                Dict(
+                    "name" => "start_agent",
+                    "description" => "Start a new Julia REPL agent process for a specific project. The agent will register with the proxy and be available for tool calls.",
+                    "inputSchema" => Dict(
+                        "type" => "object",
+                        "properties" => Dict(
+                            "project_path" => Dict(
+                                "type" => "string",
+                                "description" => "Path to the Julia project directory (containing Project.toml)"
+                            ),
+                            "agent_name" => Dict(
+                                "type" => "string",
+                                "description" => "Optional name for the agent (defaults to project directory name)"
+                            )
+                        ),
+                        "required" => ["project_path"]
+                    )
                 )
             ]
 
@@ -1126,6 +1153,104 @@ function handle_request(http::HTTP.Stream)
                     )
                 )))
                 return nothing
+            elseif tool_name == "start_agent"
+                # Parse arguments
+                project_path = get(args, "project_path", "")
+                agent_name = get(args, "agent_name", basename(project_path))
+                
+                if isempty(project_path)
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON.json(Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32602,
+                            "message" => "project_path is required"
+                        )
+                    )))
+                    return nothing
+                end
+                
+                # Check if agent already exists
+                existing = findfirst(r -> r.id == agent_name, repls)
+                if existing !== nothing
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON.json(Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict(
+                            "content" => [Dict(
+                                "type" => "text",
+                                "text" => "Agent '$agent_name' is already running on port $(repls[existing].port)"
+                            )]
+                        )
+                    )))
+                    return nothing
+                end
+                
+                # Spawn new Julia REPL process
+                try
+                    julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=\"$agent_name\")"`
+                    
+                    # Run in background
+                    proc = run(pipeline(julia_cmd, stdout=devnull, stderr=devnull), wait=false)
+                    
+                    # Wait for agent to register (max 10 seconds)
+                    registered = false
+                    for i in 1:100
+                        sleep(0.1)
+                        idx = findfirst(r -> r.id == agent_name, repls)
+                        if idx !== nothing
+                            registered = true
+                            new_agent = repls[idx]
+                            HTTP.setstatus(http, 200)
+                            HTTP.setheader(http, "Content-Type" => "application/json")
+                            HTTP.startwrite(http)
+                            write(http, JSON.json(Dict(
+                                "jsonrpc" => "2.0",
+                                "id" => get(request, "id", nothing),
+                                "result" => Dict(
+                                    "content" => [Dict(
+                                        "type" => "text",
+                                        "text" => "Successfully started agent '$agent_name' on port $(new_agent.port)\n\nProject: $project_path\nPID: $(new_agent.pid)\nStatus: $(new_agent.status)"
+                                    )]
+                                )
+                            )))
+                            return nothing
+                        end
+                    end
+                    
+                    # Timeout
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON.json(Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32603,
+                            "message" => "Agent process started but did not register within 10 seconds. Check logs for details."
+                        )
+                    )))
+                    return nothing
+                catch e
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, JSON.json(Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "error" => Dict(
+                            "code" => -32603,
+                            "message" => "Failed to start agent: $(sprint(showerror, e))"
+                        )
+                    )))
+                    return nothing
+                end
             else
                 # Tool requires backend REPL - check if any are available
                 if isempty(repls)

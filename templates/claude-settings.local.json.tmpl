@@ -1,7 +1,8 @@
 {
   "env": {
 {% if has_api_key %}    "JULIA_MCP_API_KEY": "{{api_key}}",
-{% end %}    "JULIA_MCP_PORT": "{{port}}"
+{% end %}    "JULIA_MCP_PORT": "{{port}}",
+    "JULIA_MCP_SESSION": "{{session_name}}"
   },
   "enabledMcpjsonServers": [
     "julia-repl"

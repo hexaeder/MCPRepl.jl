@@ -106,7 +106,7 @@ try
                 # Ensure proxy server is running first
                 proxy_port = 3000
                 if !MCPRepl.Proxy.is_server_running(proxy_port)
-                    @info "🔌 Starting persistent MCP proxy server on port $proxy_port..."
+                    # Start proxy silently - MCPRepl.start! will show progress via spinner
                     MCPRepl.Proxy.start_server(proxy_port; background=true)
                     sleep(1)  # Give proxy time to start
                 end

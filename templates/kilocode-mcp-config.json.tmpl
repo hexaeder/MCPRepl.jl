@@ -3,11 +3,10 @@
     "julia-repl": {
       "type": "streamable-http",
       "url": "http://localhost:{{port}}",
-{% if has_api_key %}
-      "headers": {
-        "Authorization": "{{api_key}}"
+      "headers": {{% if has_api_key %}
+        "Authorization": "{{api_key}}",{% end %}
+        "X-MCPRepl-Session": "{{session_name}}"
       },
-{% end %}
       "alwaysAllow": [
                   {{tool_list}}
       ],

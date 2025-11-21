@@ -1,10 +1,11 @@
 {
   "mcpServers": {
     "julia-repl": {
-      "httpUrl": "http://localhost:${JULIA_MCP_PORT}"{{#if has_api_key}},
+      "httpUrl": "http://localhost:${JULIA_MCP_PORT}",
       "headers": {
-        "Authorization": "Bearer ${JULIA_MCP_API_KEY}"
-      }{{/if}}
+        "X-MCPRepl-Session": "${JULIA_MCP_SESSION}"{{#if has_api_key}},
+        "Authorization": "Bearer ${JULIA_MCP_API_KEY}"{{/if}}
+      }
     }
   }
 }

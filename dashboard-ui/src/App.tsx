@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { fetchAgents, fetchEvents } from './api';
+import React, { useEffect, useState, useRef } from 'react';
+import { fetchAgents, fetchEvents, subscribeToEvents } from './api';
 import { Agent, AgentEvent } from './types';
 import { AgentCard } from './components/AgentCard';
 import { MetricCard } from './components/MetricCard';
@@ -13,25 +13,78 @@ export const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'overview' | 'events' | 'terminal'>('overview');
     const [eventFilter, setEventFilter] = useState<string>('interesting');
     const [selectedEvent, setSelectedEvent] = useState<AgentEvent | null>(null);
+    const terminalRef = useRef<HTMLDivElement>(null);
+    const terminalBottomRef = useRef<HTMLDivElement>(null);
+    const [isNearBottom, setIsNearBottom] = useState(true);
+    const [terminalSearch, setTerminalSearch] = useState('');
 
     useEffect(() => {
-        const loadData = async () => {
+        const loadInitialData = async () => {
             try {
                 const [agentsData, eventsData] = await Promise.all([
                     fetchAgents(),
-                    fetchEvents(undefined, 100)
+                    fetchEvents(undefined, 1000)
                 ]);
                 setAgents(agentsData);
                 setEvents(eventsData);
             } catch (error) {
-                console.error('Failed to load data:', error);
+                console.error('Failed to load initial data:', error);
             }
         };
 
-        loadData();
-        const interval = setInterval(loadData, 500);
-        return () => clearInterval(interval);
+        loadInitialData();
+        
+        // Poll for agents updates (less frequently)
+        const agentsInterval = setInterval(async () => {
+            try {
+                const agentsData = await fetchAgents();
+                setAgents(agentsData);
+            } catch (error) {
+                console.error('Failed to refresh agents:', error);
+            }
+        }, 2000);
+
+        // Subscribe to event stream
+        const unsubscribe = subscribeToEvents((newEvent) => {
+            setEvents(prev => {
+                // Check if event already exists
+                const exists = prev.some(e => 
+                    e.timestamp === newEvent.timestamp && 
+                    e.id === newEvent.id && 
+                    e.type === newEvent.type
+                );
+                if (exists) return prev;
+                
+                // Add new event and keep last 1000
+                return [...prev, newEvent].slice(-1000);
+            });
+        });
+
+        return () => {
+            clearInterval(agentsInterval);
+            unsubscribe();
+        };
     }, []);
+
+    // Autoscroll to bottom when new events arrive (only if near bottom)
+    useEffect(() => {
+        if (activeTab === 'terminal' && terminalBottomRef.current && isNearBottom) {
+            const timer = setTimeout(() => {
+                terminalBottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
+            }, 50);
+            return () => clearTimeout(timer);
+        }
+    }, [events, isNearBottom]);
+
+    // Track scroll position to detect if user is near bottom
+    const handleTerminalScroll = () => {
+        if (terminalRef.current) {
+            const { scrollTop, scrollHeight, clientHeight } = terminalRef.current;
+            const threshold = 100; // pixels from bottom
+            const nearBottom = scrollHeight - scrollTop - clientHeight <= threshold;
+            setIsNearBottom(nearBottom);
+        }
+    };
 
     const agentCount = Object.keys(agents).length;
     const eventCount = events.filter(e => e.type !== 'HEARTBEAT').length;
@@ -185,26 +238,105 @@ export const App: React.FC = () => {
                         )}
 
                         {activeTab === 'terminal' && (
-                            <div className="view active" id="terminal-view">
-                                <h2>Agent Log: {selectedAgent || 'Select an agent'}</h2>
+                            <div className="view active terminal-view" id="terminal-view">
+                                <div className="terminal-controls">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Search terminal..." 
+                                        className="terminal-search"
+                                        onChange={(e) => setTerminalSearch(e.target.value)}
+                                    />
+                                    <button onClick={() => terminalRef.current?.scrollTo({ top: 0, behavior: 'smooth' })} className="terminal-control-btn">↑ Top</button>
+                                    <button onClick={() => terminalBottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })} className="terminal-control-btn">↓ Bottom</button>
+                                </div>
                                 <div className="terminal">
-                                    <div className="terminal-output">
+                                    <div className="terminal-output" ref={terminalRef} onScroll={handleTerminalScroll}>
                                         {selectedAgent ? (
                                             events
-                                                .filter(e => e.id === selectedAgent)
-                                                .reverse()
-                                                .slice(0, 50)
-                                                .map((event, idx) => (
-                                                    <div key={idx} className="log-entry">
-                                                        <span className="log-time">[{event.timestamp}]</span>
-                                                        <span className={`log-type log-${event.type.toLowerCase()}`}>{event.type}</span>
-                                                        <span className="log-data">{JSON.stringify(event.data)}</span>
-                                                        {event.duration_ms && <span className="log-duration">({event.duration_ms.toFixed(2)}ms)</span>}
-                                                    </div>
-                                                ))
+                                                .filter(e => e.id === selectedAgent && e.type !== 'HEARTBEAT')
+                                                .slice(-1000)
+                                                .filter(event => {
+                                                    if (!terminalSearch) return true;
+                                                    const searchLower = terminalSearch.toLowerCase();
+                                                    const eventStr = JSON.stringify(event.data).toLowerCase();
+                                                    return eventStr.includes(searchLower);
+                                                })
+                                                .map((event, idx) => {
+                                                    const renderEvent = () => {
+                                                        switch (event.type) {
+                                                            case 'TOOL_CALL':
+                                                                // For ex tool, show the actual Julia expression
+                                                                if (event.data.tool === 'ex') {
+                                                                    const expr = event.data.arguments?.e || '';
+                                                                    return (
+                                                                        <>
+                                                                            <span className="terminal-prompt">julia&gt;</span>
+                                                                            <span className="terminal-code">{expr}</span>
+                                                                        </>
+                                                                    );
+                                                                }
+                                                                // For other tools, show tool name and args
+                                                                return (
+                                                                    <>
+                                                                        <span className="terminal-prompt">julia&gt;</span>
+                                                                        <span className="terminal-tool">{event.data.tool}</span>
+                                                                        <span className="terminal-args">({JSON.stringify(event.data.arguments).slice(0, 60)}...)</span>
+                                                                    </>
+                                                                );
+                                                            case 'CODE_EXECUTION':
+                                                                return (
+                                                                    <>
+                                                                        <span className="terminal-prompt">julia&gt;</span>
+                                                                        <span className="terminal-method">{event.data.method}</span>
+                                                                    </>
+                                                                );
+                                                            case 'OUTPUT':
+                                                                // Extract the actual content from the result
+                                                                let output = '';
+                                                                if (event.data.result?.content) {
+                                                                    // MCP result format with content array
+                                                                    const contents = event.data.result.content;
+                                                                    if (Array.isArray(contents)) {
+                                                                        output = contents.map((c: any) => c.text || '').join('\n');
+                                                                    }
+                                                                } else if (event.data.result) {
+                                                                    output = typeof event.data.result === 'string' 
+                                                                        ? event.data.result 
+                                                                        : JSON.stringify(event.data.result, null, 2);
+                                                                }
+                                                                
+                                                                return (
+                                                                    <>
+                                                                        <span className="terminal-output-text">{output || '(no output)'}</span>
+                                                                        {event.duration_ms && <span className="terminal-duration"> [{event.duration_ms.toFixed(1)}ms]</span>}
+                                                                    </>
+                                                                );
+                                                            case 'ERROR':
+                                                                return (
+                                                                    <>
+                                                                        <span className="terminal-error">ERROR: {event.data.message || JSON.stringify(event.data)}</span>
+                                                                    </>
+                                                                );
+                                                            case 'AGENT_START':
+                                                                return <span className="terminal-info">→ Agent started on port {event.data.port}</span>;
+                                                            case 'AGENT_STOP':
+                                                                return <span className="terminal-info">→ Agent stopped</span>;
+                                                            default:
+                                                                return <span className="terminal-default">{JSON.stringify(event.data)}</span>;
+                                                        }
+                                                    };
+                                                    
+                                                    return (
+                                                        <div key={idx} className={`terminal-line terminal-${event.type.toLowerCase()}`}>
+                                                            <span className="terminal-time">{event.timestamp.split(' ')[1]}</span>
+                                                            {renderEvent()}
+                                                        </div>
+                                                    );
+                                                })
                                         ) : (
-                                            <div className="log-placeholder">← Select an agent from the sidebar to view its log</div>
+                                            <div className="log-placeholder">← Select an agent from the sidebar to view its REPL activity</div>
                                         )}
+                                        <div ref={terminalBottomRef} />
                                     </div>
                                 </div>
                             </div>
