@@ -30,7 +30,7 @@ function setup_proxy_logging(port::Int)
     log_file = joinpath(cache_dir, "proxy-$port.log")
 
     # Use FileLogger with automatic flushing
-    logger = LoggingExtras.FileLogger(log_file; append=true, always_flush=true)
+    logger = LoggingExtras.FileLogger(log_file; append = true, always_flush = true)
     global_logger(logger)
 
     @info "Proxy logging initialized" log_file = log_file
@@ -65,7 +65,7 @@ const VITE_DEV_PORT = 3001
 
 Check if a proxy server is already running on the specified port.
 """
-function is_server_running(port::Int=3000)
+function is_server_running(port::Int = 3000)
     try
         # Try to connect to the port
         sock = connect(ip"127.0.0.1", port)
@@ -82,7 +82,7 @@ end
 Get the PID of the running proxy server from the PID file.
 Returns nothing if no PID file exists or process is not running.
 """
-function get_server_pid(port::Int=3000)
+function get_server_pid(port::Int = 3000)
     pid_file = get_pid_file_path(port)
 
     if !isfile(pid_file)
@@ -99,7 +99,7 @@ function get_server_pid(port::Int=3000)
                 return pid
             else
                 # Stale PID file, remove it
-                rm(pid_file, force=true)
+                rm(pid_file, force = true)
                 return nothing
             end
         else
@@ -116,7 +116,7 @@ end
 
 Get the path to the PID file for a proxy server on the given port.
 """
-function get_pid_file_path(port::Int=3000)
+function get_pid_file_path(port::Int = 3000)
     cache_dir = get(ENV, "XDG_CACHE_HOME") do
         if Sys.iswindows()
             joinpath(ENV["LOCALAPPDATA"], "MCPRepl")
@@ -134,7 +134,7 @@ end
 
 Write the current process PID to the PID file.
 """
-function write_pid_file(port::Int=3000)
+function write_pid_file(port::Int = 3000)
     pid_file = get_pid_file_path(port)
     write(pid_file, string(getpid()))
     SERVER_PID_FILE[] = pid_file
@@ -145,9 +145,9 @@ end
 
 Remove the PID file for the proxy server.
 """
-function remove_pid_file(port::Int=3000)
+function remove_pid_file(port::Int = 3000)
     pid_file = get_pid_file_path(port)
-    rm(pid_file, force=true)
+    rm(pid_file, force = true)
 end
 
 # ============================================================================
@@ -217,7 +217,7 @@ function start_vite_dev_server()
         # Start npm run dev in the background
         # Need to change directory before running
         proc = cd(dashboard_dir) do
-            run(pipeline(`npm run dev`, stdout=devnull, stderr=devnull), wait=false)
+            run(pipeline(`npm run dev`, stdout = devnull, stderr = devnull), wait = false)
         end
 
         VITE_DEV_PROCESS[] = proc
@@ -273,8 +273,8 @@ Register a REPL with the proxy server so it can route requests to it.
 function register_repl(
     id::String,
     port::Int;
-    pid::Union{Int,Nothing}=nothing,
-    metadata::Dict=Dict(),
+    pid::Union{Int,Nothing} = nothing,
+    metadata::Dict = Dict(),
 )
     lock(REPL_REGISTRY_LOCK) do
         REPL_REGISTRY[id] = REPLConnection(
@@ -347,7 +347,7 @@ Update the status of a registered REPL, optionally storing error information.
 function update_repl_status(
     id::String,
     status::Symbol;
-    error::Union{String,Nothing}=nothing,
+    error::Union{String,Nothing} = nothing,
 )
     lock(REPL_REGISTRY_LOCK) do
         if haskey(REPL_REGISTRY, id)
@@ -406,9 +406,9 @@ function try_reconnect(repl_id::String)
                         "params" => Dict(),
                     ),
                 );
-                readtimeout=2,
-                connect_timeout=2,
-                status_exception=false,
+                readtimeout = 2,
+                connect_timeout = 2,
+                status_exception = false,
             )
 
             if response.status == 200
@@ -734,9 +734,9 @@ function route_to_repl_streaming(
             backend_url,
             ["Content-Type" => "application/json"],
             body_str;
-            readtimeout=30,
-            connect_timeout=5,
-            status_exception=false,
+            readtimeout = 30,
+            connect_timeout = 5,
+            status_exception = false,
         )
 
         duration_ms = (time() - start_time) * 1000
@@ -770,7 +770,7 @@ function route_to_repl_streaming(
             target_id,
             Dashboard.OUTPUT,
             response_data;
-            duration_ms=duration_ms,
+            duration_ms = duration_ms,
         )
 
         # Update last heartbeat
@@ -895,7 +895,7 @@ function handle_request(http::HTTP.Stream)
                 # Vite is running - proxy the request to it
                 # Keep the full path including /dashboard since Vite is configured with base: '/dashboard/'
                 vite_url = "http://localhost:$(vite_port)$(path)"
-                vite_response = HTTP.get(vite_url, status_exception=false)
+                vite_response = HTTP.get(vite_url, status_exception = false)
 
                 HTTP.setstatus(http, vite_response.status)
                 for (name, value) in vite_response.headers
@@ -921,16 +921,21 @@ function handle_request(http::HTTP.Stream)
             end
         end        # Dashboard API: Get all agents
         if path == "/dashboard/api/agents"
-            agents = Dict{String,Any}()
-            for (id, conn) in REPL_REGISTRY
-                agents[id] = Dict(
-                    "id" => id,
-                    "port" => conn.port,
-                    "pid" => conn.pid,
-                    "status" => string(conn.status),
-                    "last_heartbeat" =>
-                        Dates.format(conn.last_heartbeat, "yyyy-mm-dd HH:MM:SS"),
-                )
+            agents = lock(REPL_REGISTRY_LOCK) do
+                result = Dict{String,Any}()
+                for (id, conn) in REPL_REGISTRY
+                    result[id] = Dict(
+                        "id" => id,
+                        "port" => conn.port,
+                        "pid" => conn.pid,
+                        "status" => string(conn.status),
+                        "last_heartbeat" => Dates.format(
+                            conn.last_heartbeat,
+                            "yyyy-mm-dd HH:MM:SS",
+                        ),
+                    )
+                end
+                result
             end
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
@@ -945,7 +950,7 @@ function handle_request(http::HTTP.Stream)
             id = get(query_params, "id", nothing)
             limit = parse(Int, get(query_params, "limit", "100"))
 
-            events = Dashboard.get_events(id=id, limit=limit)
+            events = Dashboard.get_events(id = id, limit = limit)
             events_json = [
                 Dict(
                     "id" => e.id,
@@ -985,7 +990,7 @@ function handle_request(http::HTTP.Stream)
             try
                 while isopen(http)
                     # Get events since last check
-                    events = Dashboard.get_events(id=id, limit=50)
+                    events = Dashboard.get_events(id = id, limit = 50)
                     new_events = filter(e -> e.timestamp > last_event_time, events)
 
                     for event in new_events
@@ -1037,14 +1042,14 @@ function handle_request(http::HTTP.Stream)
                     "tool" => "ex",
                     "arguments" => Dict("e" => "println(\"Hello, World!\")"),
                 ),
-                duration_ms=12.5,
+                duration_ms = 12.5,
             )
 
             Dashboard.log_event(
                 test_agent,
                 Dashboard.CODE_EXECUTION,
                 Dict("expression" => "2 + 2", "result" => "4"),
-                duration_ms=0.8,
+                duration_ms = 0.8,
             )
 
             Dashboard.log_event(
@@ -1219,7 +1224,7 @@ function handle_request(http::HTTP.Stream)
                 return nothing
             end
 
-            register_repl(id, port; pid=pid, metadata=metadata)
+            register_repl(id, port; pid = pid, metadata = metadata)
 
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Type" => "application/json")
@@ -1443,9 +1448,9 @@ function handle_request(http::HTTP.Stream)
                             backend_url,
                             ["Content-Type" => "application/json"],
                             body_str;
-                            readtimeout=5,
-                            connect_timeout=2,
-                            status_exception=false,
+                            readtimeout = 5,
+                            connect_timeout = 2,
+                            status_exception = false,
                         )
 
                         if backend_response.status == 200
@@ -1637,8 +1642,8 @@ function handle_request(http::HTTP.Stream)
 
                     # Run in background
                     proc = run(
-                        pipeline(julia_cmd, stdout=devnull, stderr=devnull),
-                        wait=false,
+                        pipeline(julia_cmd, stdout = devnull, stderr = devnull),
+                        wait = false,
                     )
 
                     # Wait for agent to register (max 10 seconds)
@@ -1809,7 +1814,7 @@ Start the persistent MCP proxy server.
 - HTTP.Server if running in foreground
 - nothing if started in background
 """
-function start_server(port::Int=3000; background::Bool=false, status_callback=nothing)
+function start_server(port::Int = 3000; background::Bool = false, status_callback = nothing)
     if is_server_running(port)
         existing_pid = get_server_pid(port)
         if existing_pid !== nothing
@@ -1820,7 +1825,7 @@ function start_server(port::Int=3000; background::Bool=false, status_callback=no
 
     if background
         # Start server in background process
-        return start_background_server(port; status_callback=status_callback)
+        return start_background_server(port; status_callback = status_callback)
     else
         # Start server in current process
         return start_foreground_server(port)
@@ -1832,7 +1837,7 @@ end
 
 Start the proxy server in the current process.
 """
-function start_foreground_server(port::Int=3000)
+function start_foreground_server(port::Int = 3000)
     if SERVER[] !== nothing
         @warn "Server already running in this process"
         return SERVER[]
@@ -1861,7 +1866,7 @@ function start_foreground_server(port::Int=3000)
 
     # Start HTTP server with streaming support
     server =
-        HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose=false, stream=true)
+        HTTP.serve!(handle_request, ip"127.0.0.1", port; verbose = false, stream = true)
     SERVER[] = server
 
     @info "MCP Proxy Server started successfully" port = port pid = getpid()
@@ -1877,7 +1882,7 @@ Start the proxy server in a detached background process.
 If `status_callback` is provided, it will be called with status updates instead of
 printing directly (useful when parent has its own spinner).
 """
-function start_background_server(port::Int=3000; status_callback=nothing)
+function start_background_server(port::Int = 3000; status_callback = nothing)
     # Create a Julia script that starts the server
     script = """
     using Pkg
@@ -1905,13 +1910,13 @@ function start_background_server(port::Int=3000; status_callback=nothing)
 
     if Sys.iswindows()
         # Windows: use START command
-        run(`cmd /c start julia $script_file`, wait=false)
+        run(`cmd /c start julia $script_file`, wait = false)
     else
         # Unix: use nohup and redirect output
         log_file = joinpath(dirname(get_pid_file_path(port)), "proxy-$port-background.log")
         run(
-            pipeline(`nohup julia $script_file`, stdout=log_file, stderr=log_file),
-            wait=false,
+            pipeline(`nohup julia $script_file`, stdout = log_file, stderr = log_file),
+            wait = false,
         )
     end
 
@@ -1966,7 +1971,7 @@ end
 
 Stop the proxy server running on the specified port.
 """
-function stop_server(port::Int=3000)
+function stop_server(port::Int = 3000)
     # Stop Vite dev server first
     stop_vite_dev_server()
 
@@ -1982,9 +1987,9 @@ function stop_server(port::Int=3000)
         if pid !== nothing
             @info "Stopping background proxy server" pid = pid
             if Sys.iswindows()
-                run(`taskkill /PID $pid /F`, wait=false)
+                run(`taskkill /PID $pid /F`, wait = false)
             else
-                run(`kill $pid`, wait=false)
+                run(`kill $pid`, wait = false)
             end
             remove_pid_file(port)
         end
@@ -1999,7 +2004,7 @@ function stop_server(port::Int=3000)
                     if !isempty(pid_str)
                         pid_num = parse(Int, pid_str)
                         @info "Killing process on port $port" pid = pid_num
-                        run(`kill $pid_num`, wait=false)
+                        run(`kill $pid_num`, wait = false)
                     end
                 end
             end
@@ -2027,7 +2032,7 @@ Restart the proxy server (stop existing if running, then start new).
 - HTTP.Server if running in foreground
 - nothing if started in background
 """
-function restart_server(port::Int=3000; background::Bool=false)
+function restart_server(port::Int = 3000; background::Bool = false)
     # Stop existing server if running (won't error if not running)
     if is_server_running(port)
         @info "Stopping existing proxy server on port $port"
@@ -2037,7 +2042,7 @@ function restart_server(port::Int=3000; background::Bool=false)
 
     # Start new server
     @info "Starting proxy server on port $port"
-    return start_server(port; background=background)
+    return start_server(port; background = background)
 end
 
 end # module Proxy
