@@ -2443,8 +2443,9 @@ function handle_request(http::HTTP.Stream)
                     # Pass workspace_dir=project_path so it checks for .mcprepl/security.json in the project
                     # If project has .mcprepl/agents.json with this agent name, it uses that
                     # Otherwise falls back to .mcprepl/security.json or lax mode with warning
+                    # Use wait() to keep the process alive until the server is stopped
 
-                    julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=$(repr(session_name)), workspace_dir=$(repr(project_path)))"`
+                    julia_cmd = `julia --project=$project_path -e "using MCPRepl; MCPRepl.start!(agent_name=$(repr(session_name)), workspace_dir=$(repr(project_path))); wait()"`
 
                     # Add environment variable tag for easy identification
                     env = copy(ENV)
