@@ -412,7 +412,6 @@ function create_security_config(project_path::String, mode::Symbol, port::Int)
         "mode" => string(config.mode),
         "api_keys" => config.api_keys,
         "allowed_ips" => config.allowed_ips,
-        "port" => config.port,
         "created_at" => config.created_at,
     )
 

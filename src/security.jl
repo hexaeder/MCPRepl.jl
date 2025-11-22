@@ -201,7 +201,6 @@ function save_security_config(config::SecurityConfig, workspace_dir::String = pw
             "mode" => string(config.mode),
             "api_keys" => config.api_keys,
             "allowed_ips" => config.allowed_ips,
-            "port" => config.port,
             "created_at" => config.created_at,
         )
 
