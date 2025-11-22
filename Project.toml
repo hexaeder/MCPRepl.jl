@@ -1,6 +1,6 @@
 name = "MCPRepl"
 uuid = "b62cb57a-788d-40b5-9d64-84a1dfc37ce3"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["Hans Würfel <git@wuerfel.io>", "Kahli Burke <kahli@kahliburke.com>"]
 
 [deps]
