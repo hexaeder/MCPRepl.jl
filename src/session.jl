@@ -89,7 +89,9 @@ Return the server's capabilities to advertise to clients.
 """
 function get_server_capabilities()
     return Dict{String,Any}(
-        "tools" => Dict{String,Any}(),  # We support tools (no specific features to advertise)
+        "tools" => Dict{String,Any}(
+            "listChanged" => true,  # We support tools/list_changed notifications
+        ),
         "prompts" => Dict{String,Any}(),  # We support prompts
         "resources" => Dict{String,Any}(),  # We support resources
         "logging" => Dict{String,Any}(),  # We support logging

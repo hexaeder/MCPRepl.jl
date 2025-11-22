@@ -65,6 +65,8 @@ const REPL_REGISTRY = Dict{String,REPLConnection}()
 const REPL_REGISTRY_LOCK = ReentrantLock()
 const SESSION_REGISTRY = Dict{String,MCPSession}()  # Track MCP client sessions
 const SESSION_LOCK = ReentrantLock()
+const CLIENT_CONNECTIONS = Dict{String,Channel{Dict}}()  # Track active client notification channels
+const CLIENT_CONNECTIONS_LOCK = ReentrantLock()
 const VITE_DEV_PROCESS = Ref{Union{Base.Process,Nothing}}(nothing)
 const VITE_DEV_PORT = 3001
 
@@ -264,6 +266,74 @@ function stop_vite_dev_server()
 end
 
 # ============================================================================
+# MCP Notification Support
+# ============================================================================
+
+"""
+    notify_tools_list_changed()
+
+Send notifications/tools/list_changed to all connected MCP clients.
+This tells clients to refresh their tools list after a Julia session registers.
+"""
+function notify_tools_list_changed()
+    @info "Broadcasting tools/list_changed notification to all connected clients"
+
+    notification = Dict(
+        "jsonrpc" => "2.0",
+        "method" => "notifications/tools/list_changed",
+        "params" => Dict(),
+    )
+
+    # Send notification to all active client connections
+    lock(CLIENT_CONNECTIONS_LOCK) do
+        for (session_id, channel) in CLIENT_CONNECTIONS
+            try
+                # Non-blocking put - if channel is full, skip this client
+                if isopen(channel) && length(channel.data) < 10
+                    put!(channel, notification)
+                    @debug "Sent notification to client" session_id = session_id
+                end
+            catch e
+                @debug "Failed to send notification to client" session_id = session_id error =
+                    e
+            end
+        end
+    end
+end
+
+"""
+    register_client_connection(session_id::String) -> Channel{Dict}
+
+Register a new client connection and return a channel for sending notifications.
+"""
+function register_client_connection(session_id::String)
+    channel = Channel{Dict}(32)  # Buffer up to 32 notifications
+
+    lock(CLIENT_CONNECTIONS_LOCK) do
+        CLIENT_CONNECTIONS[session_id] = channel
+    end
+
+    @debug "Registered client connection" session_id = session_id
+    return channel
+end
+
+"""
+    unregister_client_connection(session_id::String)
+
+Remove a client connection when the session ends.
+"""
+function unregister_client_connection(session_id::String)
+    lock(CLIENT_CONNECTIONS_LOCK) do
+        if haskey(CLIENT_CONNECTIONS, session_id)
+            channel = CLIENT_CONNECTIONS[session_id]
+            close(channel)
+            delete!(CLIENT_CONNECTIONS, session_id)
+            @debug "Unregistered client connection" session_id = session_id
+        end
+    end
+end
+
+# ============================================================================
 # REPL Registry Management
 # ============================================================================
 
@@ -325,6 +395,9 @@ function register_repl(
     if !isempty(pending)
         @async flush_pending_requests(id, pending)
     end
+
+    # Notify all connected MCP clients that tools list has changed
+    notify_tools_list_changed()
 end
 
 """
@@ -2160,6 +2233,9 @@ function handle_request(http::HTTP.Stream)
                 params isa Dict ? params : Dict(String(k) => v for (k, v) in pairs(params))
             result = initialize_session!(session, params_dict)
 
+            # Register client connection for notifications
+            notification_channel = register_client_connection(session.id)
+
             # Respond with session ID header as per MCP spec
             # The Mcp-Session-Id header tells the client to include this ID on all subsequent requests
             HTTP.setstatus(http, 200)
@@ -2268,44 +2344,28 @@ function handle_request(http::HTTP.Stream)
             )
             return nothing
         elseif method == "tools/list"
-            # Always include proxy management tools, plus backend tools if available
+            # Always include proxy management tools, plus backend tools from ALL registered REPLs
             repls = list_repls()
             @info "tools/list handling" num_repls = length(repls) repl_ids =
                 [r.id for r in repls]
 
             # Get proxy tools from registry
             proxy_tools = get_proxy_tool_schemas()
+            all_tools = copy(proxy_tools)
 
-            if isempty(repls)
-                # No backends - return only proxy tools
-                HTTP.setstatus(http, 200)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => get(request, "id", nothing),
-                            "result" => Dict("tools" => proxy_tools),
-                        ),
-                    ),
-                )
-                return nothing
-            else
-                # Fetch backend tools and combine with proxy tools
-                # Forward request to first available backend
-                request_dict =
-                    request isa Dict ? request :
-                    Dict(String(k) => v for (k, v) in pairs(request))
-                target_id = first(repls).id
-                repl = get_repl(target_id)
+            # Fetch tools from ALL registered REPLs and combine them
+            request_dict =
+                request isa Dict ? request :
+                Dict(String(k) => v for (k, v) in pairs(request))
+
+            for repl_info in repls
+                repl = get_repl(repl_info.id)
 
                 if repl !== nothing && repl.status == :ready
-                    # Try to get tools from backend
+                    # Try to get tools from this backend
                     try
                         backend_url = "http://127.0.0.1:$(repl.port)/"
-                        body_str = JSON.json(request)
+                        body_str = JSON.json(request_dict)
                         backend_response = HTTP.request(
                             "POST",
                             backend_url,
@@ -2320,47 +2380,38 @@ function handle_request(http::HTTP.Stream)
                             backend_data = JSON.parse(String(backend_response.body))
                             if haskey(backend_data, "result") &&
                                haskey(backend_data["result"], "tools")
-                                # Combine proxy tools + backend tools
-                                all_tools =
-                                    vcat(proxy_tools, backend_data["result"]["tools"])
-                                HTTP.setstatus(http, 200)
-                                HTTP.setheader(http, "Content-Type" => "application/json")
-                                HTTP.startwrite(http)
-                                write(
-                                    http,
-                                    JSON.json(
-                                        Dict(
-                                            "jsonrpc" => "2.0",
-                                            "id" => get(request, "id", nothing),
-                                            "result" => Dict("tools" => all_tools),
-                                        ),
-                                    ),
-                                )
-                                return nothing
+                                # Add this REPL's tools to the combined list
+                                backend_tools = backend_data["result"]["tools"]
+                                append!(all_tools, backend_tools)
+                                @debug "Added tools from REPL" repl_id = repl_info.id num_tools =
+                                    length(backend_tools)
                             end
                         end
                     catch e
-                        @warn "Failed to fetch backend tools, returning proxy tools only" exception =
+                        @warn "Failed to fetch tools from REPL" repl_id = repl_info.id exception =
                             e
                     end
                 end
-
-                # Fallback: return only proxy tools if backend fetch failed
-                HTTP.setstatus(http, 200)
-                HTTP.setheader(http, "Content-Type" => "application/json")
-                HTTP.startwrite(http)
-                write(
-                    http,
-                    JSON.json(
-                        Dict(
-                            "jsonrpc" => "2.0",
-                            "id" => get(request, "id", nothing),
-                            "result" => Dict("tools" => proxy_tools),
-                        ),
-                    ),
-                )
-                return nothing
             end
+
+            @info "Returning combined tools list" proxy_tools = length(proxy_tools) total_tools =
+                length(all_tools)
+
+            # Return combined tools from proxy + all REPLs
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict("tools" => all_tools),
+                    ),
+                ),
+            )
+            return nothing
         elseif method == "tools/call"
             # Handle proxy-level tools (always available)
             params = get(request, "params", Dict())
