@@ -837,6 +837,10 @@ function start!(;
     proxy_port = 3000  # Default proxy port
     proxy_running = Proxy.is_server_running(proxy_port)
 
+    # Temporarily suppress Info logs during startup to avoid interfering with spinner
+    old_logger = global_logger()
+    global_logger(ConsoleLogger(stderr, Logging.Warn))
+
     # Start animated spinner for startup
     spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
     spinner_idx = Ref(1)
@@ -2663,7 +2667,8 @@ Terminates the active debug session and returns to normal execution.
 
                 # Start heartbeat task to keep proxy updated
                 @async begin
-                    @info "Heartbeat task started" repl_id = repl_id proxy_port = proxy_port
+                    @debug "Heartbeat task started" repl_id = repl_id proxy_port =
+                        proxy_port
                     while SERVER[] !== nothing
                         try
                             sleep(5)  # Send heartbeat every 5 seconds
@@ -2676,7 +2681,7 @@ Terminates the active debug session and returns to normal execution.
                                     "method" => "proxy/heartbeat",
                                     "params" => Dict("id" => repl_id),
                                 )
-                                @info "Sending heartbeat" repl_id = repl_id
+                                @debug "Sending heartbeat" repl_id = repl_id
                                 HTTP.post(
                                     "http://127.0.0.1:$proxy_port/",
                                     ["Content-Type" => "application/json"],
@@ -2684,7 +2689,7 @@ Terminates the active debug session and returns to normal execution.
                                     readtimeout = 5,
                                     connect_timeout = 2,
                                 )
-                                @info "Heartbeat sent successfully" repl_id = repl_id
+                                @debug "Heartbeat sent successfully" repl_id = repl_id
                             else
                                 @warn "Heartbeat skipped" server_active =
                                     (SERVER[] !== nothing) proxy_running =
@@ -2706,6 +2711,10 @@ Terminates the active debug session and returns to normal execution.
     # Stop the spinner and show completion
     spinner_active[] = false
     wait(spinner_task)  # Wait for spinner task to finish
+
+    # Restore original logger
+    global_logger(old_logger)
+
     # Green checkmark, dark blue text, yellow dragon, muted cyan port number
     print(
         "\r\033[K\033[1;32m✓\033[0m \033[38;5;24mMCP REPL server started\033[0m \033[33m🐉\033[0m \033[90m(port $actual_port)\033[0m\n",
