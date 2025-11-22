@@ -396,6 +396,82 @@ function create_handler(
                 return HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
             end
 
+            # Handle logging/setLevel request
+            if request["method"] == "logging/setLevel"
+                params = get(request, "params", Dict())
+                level = get(params, "level", nothing)
+
+                # Validate log level according to RFC 5424
+                valid_levels = [
+                    "debug",
+                    "info",
+                    "notice",
+                    "warning",
+                    "error",
+                    "critical",
+                    "alert",
+                    "emergency",
+                ]
+
+                if level === nothing || !(level in valid_levels)
+                    error_response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "error" => Dict(
+                            "code" => -32602,
+                            "message" => "Invalid params: level must be one of $(join(valid_levels, ", "))",
+                        ),
+                    )
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(error_response),
+                    )
+                end
+
+                # Map MCP log levels to Julia Logging levels
+                level_map = Dict(
+                    "debug" => Logging.Debug,
+                    "info" => Logging.Info,
+                    "notice" => Logging.Info,
+                    "warning" => Logging.Warn,
+                    "error" => Logging.Error,
+                    "critical" => Logging.Error,
+                    "alert" => Logging.Error,
+                    "emergency" => Logging.Error,
+                )
+
+                julia_level = level_map[level]
+
+                # Set the global log level
+                try
+                    global_logger(ConsoleLogger(stderr, julia_level))
+                    @info "Log level set" level = level julia_level = julia_level
+
+                    response =
+                        Dict("jsonrpc" => "2.0", "id" => request["id"], "result" => Dict())
+                    return HTTP.Response(
+                        200,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(response),
+                    )
+                catch e
+                    error_response = Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => request["id"],
+                        "error" => Dict(
+                            "code" => -32603,
+                            "message" => "Internal error: $(string(e))",
+                        ),
+                    )
+                    return HTTP.Response(
+                        500,
+                        ["Content-Type" => "application/json"],
+                        JSON.json(error_response),
+                    )
+                end
+            end
+
             # Handle session info request (custom extension)
             if request["method"] == "session/info"
                 if session !== nothing

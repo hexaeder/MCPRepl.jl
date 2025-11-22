@@ -2177,6 +2177,96 @@ function handle_request(http::HTTP.Stream)
                 ),
             )
             return nothing
+        elseif method == "logging/setLevel"
+            # Handle MCP logging/setLevel request
+            params = get(request, "params", Dict())
+            level = get(params, "level", nothing)
+
+            # Validate log level according to RFC 5424
+            valid_levels = [
+                "debug",
+                "info",
+                "notice",
+                "warning",
+                "error",
+                "critical",
+                "alert",
+                "emergency",
+            ]
+
+            if level === nothing || !(level in valid_levels)
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "error" => Dict(
+                                "code" => -32602,
+                                "message" => "Invalid params: level must be one of $(join(valid_levels, ", "))",
+                            ),
+                        ),
+                    ),
+                )
+                return nothing
+            end
+
+            # Map MCP log levels to Julia Logging levels
+            level_map = Dict(
+                "debug" => Logging.Debug,
+                "info" => Logging.Info,
+                "notice" => Logging.Info,
+                "warning" => Logging.Warn,
+                "error" => Logging.Error,
+                "critical" => Logging.Error,
+                "alert" => Logging.Error,
+                "emergency" => Logging.Error,
+            )
+
+            julia_level = level_map[level]
+
+            # Set the global log level
+            try
+                global_logger(ConsoleLogger(stderr, julia_level))
+                @info "Log level set" level = level julia_level = julia_level
+            catch e
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(
+                    http,
+                    JSON.json(
+                        Dict(
+                            "jsonrpc" => "2.0",
+                            "id" => get(request, "id", nothing),
+                            "error" => Dict(
+                                "code" => -32603,
+                                "message" => "Internal error: $(string(e))",
+                            ),
+                        ),
+                    ),
+                )
+                return nothing
+            end
+
+            # Success response (empty result as per spec)
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "application/json")
+            HTTP.startwrite(http)
+            write(
+                http,
+                JSON.json(
+                    Dict(
+                        "jsonrpc" => "2.0",
+                        "id" => get(request, "id", nothing),
+                        "result" => Dict(),
+                    ),
+                ),
+            )
+            return nothing
         elseif method == "tools/list"
             # Always include proxy management tools, plus backend tools if available
             repls = list_repls()
