@@ -14,7 +14,8 @@ using JSON
 using Dates
 using UUIDs
 
-export MCPSession, SessionState, initialize_session!, close_session!, get_session_info
+export MCPSession,
+    SessionState, initialize_session!, close_session!, get_session_info, update_activity!
 
 # Session states
 @enum SessionState begin

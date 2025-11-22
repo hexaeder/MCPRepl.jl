@@ -5,3 +5,13 @@ repos:
     rev: v2.2.0
     hooks:
       - id: julia-formatter
+  
+  - repo: local
+    hooks:
+      - id: julia-jet-analysis
+        name: JET.jl Static Analysis
+        entry: julia scripts/pre-commit-jet.jl
+        language: system
+        files: \.jl$
+        pass_filenames: false
+        description: "Runs JET.jl static analysis to catch UndefVarError and missing exports"

@@ -1,6 +1,7 @@
 using ReTest
 
 # Include all test files (both from templates and multi-agent)
+include("static_analysis_tests.jl")  # Run first to catch import/export issues
 include("security_tests.jl")
 include("setup_tests.jl")
 include("server_tests.jl")
