@@ -1,4 +1,4 @@
-using JSON3
+using JSON
 
 function check_claude_status()
     # Check if claude command exists
@@ -37,14 +37,14 @@ end
 
 function read_gemini_settings()
     gemini_dir, settings_path = get_gemini_settings_path()
-    
+
     if !isfile(settings_path)
         return Dict()
     end
-    
+
     try
         content = read(settings_path, String)
-        return JSON3.read(content, Dict)
+        return JSON.parse(content)
     catch
         return Dict()
     end
@@ -52,16 +52,14 @@ end
 
 function write_gemini_settings(settings::Dict)
     gemini_dir, settings_path = get_gemini_settings_path()
-    
+
     # Create .gemini directory if it doesn't exist
     if !isdir(gemini_dir)
         mkdir(gemini_dir)
     end
-    
+
     try
-        io = IOBuffer()
-        JSON3.pretty(io, settings)
-        content = String(take!(io))
+        content = JSON.json(settings, 4)
         write(settings_path, content)
         return true
     catch
@@ -76,11 +74,11 @@ function check_gemini_status()
     catch
         return :gemini_not_found
     end
-    
+
     # Check if MCP server is configured in settings.json
     settings = read_gemini_settings()
     mcp_servers = get(settings, "mcpServers", Dict())
-    
+
     if haskey(mcp_servers, "julia-repl")
         server_config = mcp_servers["julia-repl"]
         if haskey(server_config, "url") && server_config["url"] == "http://localhost:3000"
@@ -97,11 +95,11 @@ end
 
 function add_gemini_mcp_server(transport_type::String)
     settings = read_gemini_settings()
-    
+
     if !haskey(settings, "mcpServers")
         settings["mcpServers"] = Dict()
     end
-    
+
     if transport_type == "http"
         settings["mcpServers"]["julia-repl"] = Dict(
             "url" => "http://localhost:3000"
@@ -113,18 +111,18 @@ function add_gemini_mcp_server(transport_type::String)
     else
         return false
     end
-    
+
     return write_gemini_settings(settings)
 end
 
 function remove_gemini_mcp_server()
     settings = read_gemini_settings()
-    
+
     if haskey(settings, "mcpServers") && haskey(settings["mcpServers"], "julia-repl")
         delete!(settings["mcpServers"], "julia-repl")
         return write_gemini_settings(settings)
     end
-    
+
     return true  # Already removed
 end
 
@@ -135,7 +133,7 @@ function setup()
     # Show current status
     println("🔧 MCPRepl Setup")
     println()
-    
+
     # Claude status
     if claude_status == :claude_not_found
         println("📊 Claude status: ❌ Claude Code not found in PATH")
@@ -148,7 +146,7 @@ function setup()
     else
         println("📊 Claude status: ❌ MCP server not configured")
     end
-    
+
     # Gemini status
     if gemini_status == :gemini_not_found
         println("📊 Gemini status: ❌ Gemini CLI not found in PATH")
@@ -165,7 +163,7 @@ function setup()
 
     # Show options
     println("Available actions:")
-    
+
     # Claude options
     if claude_status != :claude_not_found
         println("   Claude Code:")
@@ -178,7 +176,7 @@ function setup()
             println("     [2] Add Claude script transport")
         end
     end
-    
+
     # Gemini options
     if gemini_status != :gemini_not_found
         println("   Gemini CLI:")
@@ -191,7 +189,7 @@ function setup()
             println("     [5] Add Gemini script transport")
         end
     end
-    
+
     println()
     print("   Enter choice: ")
 

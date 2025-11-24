@@ -2,7 +2,7 @@ module MCPRepl
 
 using REPL
 using HTTP
-using JSON3
+using JSON
 
 include("MCPServer.jl")
 include("setup.jl")
