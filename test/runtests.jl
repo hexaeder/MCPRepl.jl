@@ -2,7 +2,7 @@ using Test
 using MCPRepl
 using MCPRepl: MCPTool
 using HTTP
-using JSON3
+using JSON
 using Dates
 
 @testset "MCPRepl Tests" begin
@@ -85,7 +85,7 @@ using Dates
 
                 # Parse response JSON
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
                 @test json_response.jsonrpc == "2.0"
                 @test json_response.error.code == -32600
@@ -110,7 +110,7 @@ using Dates
 
             try
                 # Test tools/list request
-                request_body = JSON3.write(Dict(
+                request_body = JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => 1,
                     "method" => "tools/list"
@@ -126,7 +126,7 @@ using Dates
 
                 # Parse response
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
                 @test json_response.jsonrpc == "2.0"
                 @test json_response.id == 1
@@ -156,7 +156,7 @@ using Dates
 
             try
                 # Test reverse_text tool
-                request_body = JSON3.write(Dict(
+                request_body = JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => 2,
                     "method" => "tools/call",
@@ -176,7 +176,7 @@ using Dates
 
                 # Parse response
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
                 @test json_response.jsonrpc == "2.0"
                 @test json_response.id == 2
@@ -186,7 +186,7 @@ using Dates
                 @test json_response.result.content[1].text == "olleh"
 
                 # Test calculate tool
-                request_body = JSON3.write(Dict(
+                request_body = JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => 3,
                     "method" => "tools/call",
@@ -206,7 +206,7 @@ using Dates
 
                 # Parse response
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
                 @test json_response.result.content[1].text == "14"
 
