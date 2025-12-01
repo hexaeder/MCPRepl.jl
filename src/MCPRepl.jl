@@ -32,6 +32,14 @@ function execute_repllike(str)
             If you need another package, prompt the user!
         """
     end
+    # Check for varinfo() usage which is slow and problematic
+    if contains(str, "varinfo(")
+        return """
+            ERROR: Using varinfo() is not allowed because it takes too long to execute.
+            Use the investigate_environment tool instead to get information about the Julia environment.
+            If unclear, ask the user.
+        """
+    end
     # eval using/import to suppress interactive ask for instllation
     if contains(str, r"(^|\n)using\s") || contains(str, r"(^|\n)import\s")
         # Replace each import/using statement with @eval prefix

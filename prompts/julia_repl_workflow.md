@@ -31,6 +31,27 @@ This prompt teaches AI agents the proper workflow for Julia development using th
 - Clean up variables the user doesn't need
 - Ask before long-running operations (>5 seconds)
 
+### 💬 REPL Communication Protocol
+- **CRITICAL**: The REPL is for information gathering ONLY, NOT for user communication
+- **All communication with the user MUST happen through the chat interface**
+- The user can observe REPL activity, but don't use it as a communication channel
+- The REPL returns both stdout and the expression's return value - use these for YOUR analysis
+- Print only what YOU need to gather information, not to communicate with the user:
+  - ✅ Let expressions return values naturally: `result = compute()` (you receive the value)
+  - ✅ Use `@show` or `println()` if YOU need to inspect intermediate values
+  - ✅ Use `@doc` to check documentation (you receive the docs)
+  - ✅ Run tests that print their results (you receive pass/fail info)
+  - ❌ DON'T add `println("Starting computation...")` to narrate to the user
+  - ❌ DON'T use `@info "Checking function..."` to update the user on progress
+  - ❌ DON'T print explanatory messages like `println("This tests the edge case")`
+- After gathering information via REPL, communicate findings through chat
+- Example workflow:
+  ```
+  1. Execute: result = my_function(test_data)  # You receive the return value
+  2. Verify: @test result == expected          # You receive test output
+  3. Communicate via chat: "The function works correctly, returning [explanation]"
+  ```
+
 ### 🔄 Revise.jl Integration
 - Changes to Julia functions in `src/` are automatically picked up
 - **Exception**: Struct and constant redefinitions require REPL restart
