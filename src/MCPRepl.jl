@@ -417,15 +417,30 @@ end
 function set_prefix!(repl)
     mode = get_mainmode(repl)
     mode.prompt = REPL.contextual_prompt(repl, "✻ julia> ")
+    return nothing
 end
+
 function unset_prefix!(repl)
     mode = get_mainmode(repl)
     mode.prompt = REPL.contextual_prompt(repl, REPL.JULIA_PROMPT)
+    return nothing
 end
+
 function get_mainmode(repl)
-    only(filter(repl.interface.modes) do mode
-        mode isa REPL.Prompt && mode.prompt isa Function && contains(mode.prompt(), "julia>")
-    end)
+    if isdefined(REPL.LineEdit, :find_mode) && hasmethod(REPL.LineEdit.find_mode, Tuple{Any,Symbol})
+        mode = REPL.LineEdit.find_mode(repl.interface.modes, :julia)
+        !isnothing(mode) && return mode
+    end
+
+    modes = filter(repl.interface.modes) do mode
+        mode isa REPL.LineEdit.Prompt && mode.prompt isa Function && contains(mode.prompt(), "julia>")
+    end
+
+    if isempty(modes)
+        error("Could not find Julia REPL main mode")
+    end
+
+    return first(modes)
 end
 
 function stop!()
