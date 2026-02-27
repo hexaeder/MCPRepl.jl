@@ -1,4 +1,10 @@
-# MCPRepl.jl
+> [\!IMPORTANT]
+> **This repository is no longer maintained.**
+>
+> Development has moved to [Kaimon.jl](https://github.com/kahliburke/Kaimon.jl), a full rebrand and major expansion of this project. Please use Kaimon.jl instead.
+
+---
+
 
 I strongly believe that REPL-driven development is the best thing you can do in Julia, so AI Agents should learn it too!
 
