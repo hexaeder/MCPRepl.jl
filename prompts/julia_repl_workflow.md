@@ -56,7 +56,8 @@ This prompt teaches AI agents the proper workflow for Julia development using th
 - Changes to Julia functions in `src/` are automatically picked up
 - **Exception**: Struct and constant redefinitions require REPL restart
 - Always ask the user to restart REPL for struct/constant changes
-- Code defined in the `src/` folder of a package should never be directly included, use `using` or `import` to load the package and have Revise take care of the rest.
+- Code defined in the `src/` or `ext/` folder of a package should **never** be directly `include`d — use `using` or `import` to load the package and let Revise handle hot reloading. Including package source files directly can corrupt the module state and break the environment.
+- If a change is not picked up by Revise, first try `Revise.retry()`. If that still does not pick up the change, **stop and ask the user** what to do (e.g. whether to restart the REPL).
 
 ## Best Practices ✅
 
@@ -173,10 +174,13 @@ let x = 10, y = 20
 end
 ```
 
-### 🚫 Including Whole Files
+### 🚫 Including Package Source Files
+**NEVER** `include` files from a package's `src/` or `ext/` folders — this bypasses the module system and can corrupt the environment:
+
 ```julia
-include("src/myfile.jl")   # ❌ Prefer specific blocks
-include("test/tests.jl")   # ❌ Prefer specific testsets
+include("src/myfile.jl")        # ❌ NEVER — use `using`/`import` instead
+include("ext/MyExtension.jl")   # ❌ NEVER — can break extension loading
+include("test/tests.jl")        # ❌ Prefer specific @testset blocks
 ```
 
 ### 🚫 Struct/Constant Redefinition
