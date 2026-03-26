@@ -16,20 +16,39 @@ Base.display(d::IOBufferDisplay, x) = show(d.io, MIME("text/plain"), x)
 Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 
 function execute_repllike(str)
-    # Check for Pkg.activate usage
-    if contains(str, "activate(") && !contains(str, r"#.*overwrite no-activate-rule")
+    # Hard block: Pkg.activate — no override allowed
+    if contains(str, "Pkg.activate(")
         return """
-            ERROR: Using Pkg.activate to change environments is not allowed.
-            You should assume you are in the correct environment for your tasks.
-            You may use Pkg.status() to see the current environment and available packages.
-            If you need to use a third-party 'activate' function, add '# overwrite no-activate-rule' at the end of your command.
+            ERROR: Pkg.activate() is not allowed. You must stay in the current environment.
+            You may use Pkg.status() to inspect available packages.
+            If you think the currect environment is not sufficient, ask the user to change it!
         """
     end
+    # Hard block: Pkg.add — no override allowed
     if contains(str, "Pkg.add(")
         return """
-            ERROR: Using Pkg.add to install packages is not allowed.
-            You should assume all necessary packages are already installed in the environment.
-            If you need another package, prompt the user!
+            ERROR: Pkg.add() is not allowed. You must assume all necessary packages are already installed.
+            If you need another package, ask the user to install it!
+        """
+    end
+    # Soft block: bare activate( — catches `using Pkg; activate(...)` style
+    if contains(str, "activate(") && !contains(str, r"#\s*this is not Pkg\.activate")
+        return """
+            ERROR: Calling activate() is not allowed (this may be Pkg.activate in disguise).
+            You must stay in the current environment.
+            If this 'activate' is genuinely a third-party function unrelated to Pkg,
+            annotate the line with:
+              # this is not Pkg.activate
+        """
+    end
+    # Soft block: bare add( — catches `using Pkg; add(...)` style
+    if contains(str, r"\badd\(") && !contains(str, r"#\s*this is not Pkg\.add")
+        return """
+            ERROR: Calling add() is not allowed (this may be Pkg.add in disguise).
+            You must assume all necessary packages are already installed.
+            If this 'add' is genuinely a third-party function unrelated to Pkg,
+            annotate the line with:
+              # this is not Pkg.add
         """
     end
     # Check for varinfo() usage which is slow and problematic
