@@ -72,7 +72,12 @@ function execute_repllike(str)
     captured_output = Pipe()
     response = redirect_stdout(captured_output) do
         redirect_stderr(captured_output) do
-            r = REPL.eval_on_backend(expr, backend)
+            # Julia 1.12+ renamed eval_with_backend to eval_on_backend
+            r = if VERSION >= v"1.12"
+                REPL.eval_on_backend(expr, backend)
+            else
+                REPL.eval_with_backend(expr, backend)
+            end
             close(Base.pipe_writer(captured_output))
             r
         end
