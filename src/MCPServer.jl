@@ -128,10 +128,15 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                 return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(response))
             end
 
-            # Handle initialized notification
-            if request.method == "notifications/initialized"
-                # This is a notification, no response needed
-                return HTTP.Response(200, ["Content-Type" => "application/json"], "{}")
+            # Handle notifications (no id field) — no response body needed
+            if !haskey(request, :id)
+                return HTTP.Response(204, [], "")
+            end
+
+            # Handle ping
+            if request.method == "ping"
+                response = Dict("jsonrpc" => "2.0", "id" => request.id, "result" => Dict())
+                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON3.write(response))
             end
 
 
