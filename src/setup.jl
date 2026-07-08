@@ -257,10 +257,10 @@ function setup()
         verb = configured ? "Add/Replace" : "Add"
         println("   Claude Code:")
         configured && offer("Remove Claude MCP configuration", remove_claude)
-        offer("$verb HTTP transport   (local — this project)", () -> configure_claude("http", "local"))
-        offer("$verb script transport (local — this project)", () -> configure_claude("script", "local"))
-        offer("$verb HTTP transport   (user — ALL projects)", () -> configure_claude("http", "user"))
-        offer("$verb script transport (user — ALL projects)", () -> configure_claude("script", "user"))
+        offer("$verb script transport        (local — this project)", () -> configure_claude("script", "local"))
+        offer("$verb script transport        (user — ALL projects)", () -> configure_claude("script", "user"))
+        offer("$verb HTTP transport [legacy] (local — this project)", () -> configure_claude("http", "local"))
+        offer("$verb HTTP transport [legacy] (user — ALL projects)", () -> configure_claude("http", "user"))
     end
 
     if gemini_status != :gemini_not_found
@@ -268,8 +268,8 @@ function setup()
         verb = configured ? "Add/Replace" : "Add"
         println("   Gemini CLI (settings.json is user-wide):")
         configured && offer("Remove Gemini MCP configuration", remove_gemini)
-        offer("$verb HTTP transport", () -> configure_gemini("http"))
         offer("$verb script transport", () -> configure_gemini("script"))
+        offer("$verb HTTP transport [legacy]", () -> configure_gemini("http"))
     end
 
     println()
@@ -283,6 +283,8 @@ function setup()
     actions[choice]()
 
     println()
-    println("   💡 HTTP for direct connection, script for agent compatibility")
+    println("   💡 Prefer the script transport: it enables multiplexing across")
+    println("      several REPLs and works most reliably. HTTP is legacy (fixed")
+    println("      port 3000, single REPL, no routing).")
     println("   💡 'user' scope makes the server available in all your projects")
 end

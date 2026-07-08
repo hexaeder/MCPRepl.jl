@@ -41,6 +41,43 @@ For Claude Code, you can run the following command to make it aware of the MCP s
 claude mcp add julia-repl http://localhost:3000 --transport http
 ```
 
+You can also run `MCPRepl.setup()` for an interactive helper that configures
+Claude Code / Gemini with either the HTTP transport or the (recommended) script
+transport via the bundled `mcp-julia-adapter`.
+
+## Multiple REPLs (multiplexing)
+
+You can run several REPLs at once — e.g. one per project — and agents will route
+to the right one automatically. There is **no central daemon**:
+
+- Each `MCPRepl.start!()` binds its own port (the first keeps the historic
+  `3000`; later ones take an OS-assigned free port) and advertises itself with a
+  small file in `~/.mcprepl/registry/`. Each REPL gets a short, stable
+  **word-id** (e.g. `otter`) shown in its startup banner.
+- The **script transport** (`mcp-julia-adapter`) is the multiplexer. It is
+  launched per-project by the agent, reads the registry, and routes each call:
+  - a single REPL, or a unique nearest-ancestor of the agent's working
+    directory, is used **silently**;
+  - if the choice is ambiguous — or a *nearer* REPL appears mid-session — it asks
+    **you** to pick, via an MCP elicitation dialog (Claude Code ≥ 2.1.76). The
+    LLM is never involved in routing.
+  - clients without elicitation get a text prompt listing the REPLs; retry the
+    call with an argument `"repl": "<word>"` (or set `MCPREPL_PROJECT=<word>`).
+- REPLs in the **same git project** as the agent's working directory (any
+  subfolder) are treated as the ideal target — even sibling subfolders.
+
+You can also switch REPLs explicitly:
+- **`select-repl` prompt** — an MCP prompt exposed as the slash command
+  `/mcp__julia-repl__select-repl` (also listed under `/mcp`). It pops the picker
+  on demand, decided by *you*, not the model. Requires a client that surfaces MCP
+  prompts and supports elicitation (Claude Code ≥ 2.1.76); reconnect the server
+  after upgrading so the prompt is registered.
+- **`list_repls` / `select_repl` tools** — the agent can enumerate REPLs and set
+  the active one by word-id without any dialog.
+
+Use the script transport (not the fixed-port HTTP one) if you want multiplexing.
+Set `MCPREPL_REGISTRY_DIR` to relocate/isolate the registry directory.
+
 ## Disclaimer and Security Warning
 
 The core functionality of MCPRepl.jl involves opening a network port and executing any code that is sent to it. This is inherently dangerous and borderline stupid, but that's how it is in the great new world of coding agents.

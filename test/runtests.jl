@@ -4,6 +4,7 @@ using MCPRepl: MCPTool
 using HTTP
 using JSON
 using Dates
+using Sockets
 
 @testset "MCPRepl Tests" begin
     @testset "MCP Server Tests" begin
@@ -250,6 +251,67 @@ using Dates
         @test length(u_result) < length(unicode_big)
         um = match(r"Full output written to: (\S+)", u_result)
         um !== nothing && rm(um.captures[1]; force = true)
+    end
+
+    @testset "Word-id assignment" begin
+        # Deterministic: same project dir -> same word (stable across restarts)
+        w1 = MCPRepl.wordid_for("/some/project/foo", String[])
+        w2 = MCPRepl.wordid_for("/some/project/foo", String[])
+        @test w1 == w2
+        @test w1 in MCPRepl.WORDLIST
+
+        # Collision handling: if the deterministic word is taken, pick another
+        w3 = MCPRepl.wordid_for("/some/project/foo", [w1])
+        @test w3 != w1
+        @test w3 in MCPRepl.WORDLIST
+    end
+
+    @testset "Port selection" begin
+        # A free preferred port is returned as-is.
+        freeport = let s = Sockets.listen(Sockets.localhost, 0)
+            p = Int(Sockets.getsockname(s)[2]); close(s); p
+        end
+        @test MCPRepl.choose_port(freeport) == freeport
+
+        # If the preferred port is busy, fall back to a different (ephemeral) one.
+        held = Sockets.listen(Sockets.localhost, 0)
+        heldport = Int(Sockets.getsockname(held)[2])
+        try
+            fallback = MCPRepl.choose_port(heldport)
+            @test fallback != heldport
+            @test 1 <= fallback <= 65535
+        finally
+            close(held)
+        end
+    end
+
+    @testset "Registry file lifecycle" begin
+        # register_repl! writes a <pid>.json we can parse; unregister removes it.
+        MCPRepl.register_repl!(65123, "otter")
+        f = MCPRepl._REGISTRY_FILE[]
+        @test f !== nothing
+        @test isfile(f)
+        data = JSON.parse(read(f, String))
+        @test data["pid"] == getpid()
+        @test data["port"] == 65123
+        @test data["word"] == "otter"
+        @test haskey(data, "project_dir")
+        MCPRepl.unregister_repl!()
+        @test !isfile(f)
+        @test MCPRepl._REGISTRY_FILE[] === nothing
+    end
+
+    @testset "Adapter routing (python)" begin
+        # The multiplexing router lives in the Python adapter; exercise its logic
+        # (rank, resolution branches, elicitation round-trip) via its own fast,
+        # Julia-free test. Skip cleanly if python3 isn't on PATH.
+        py = Sys.which("python3")
+        if py === nothing
+            @info "python3 not found; skipping adapter routing tests"
+        else
+            script = joinpath(@__DIR__, "adapter_routing_test.py")
+            @test success(run(pipeline(`$py $script`; stdout = stdout, stderr = stderr)))
+        end
     end
 
     @testset "Install-prompt suppression" begin

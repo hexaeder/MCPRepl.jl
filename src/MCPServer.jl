@@ -255,7 +255,7 @@ function text_parameter(name::String, description::String, required::Bool = true
     return schema
 end
 
-function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Bool = true)
+function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Bool = true, word::Union{Nothing,AbstractString} = nothing)
     tools_dict = Dict(tool.name => tool for tool in tools)
     handler = create_handler(tools_dict, port)
 
@@ -300,10 +300,17 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
         end
 
         println()
-        println("🚀 MCP Server running on port $port with $(length(tools)) tools")
+        label = word === nothing ? "" : "'$word' "
+        println("🚀 MCP Server $(label)running on port $port with $(length(tools)) tools")
+        if word !== nothing
+            portnote = port == 3000 ? "" : " (port 3000 was busy — using $port)"
+            println("   🔖 This REPL is '$word'$portnote")
+            println("   📇 Registry: $(MCPRepl.registry_dir())")
+        end
         println()  # Add blank line at end of splash
     else
-        println("MCP Server running on port $port with $(length(tools)) tools")
+        label = word === nothing ? "" : "'$word' "
+        println("MCP Server $(label)running on port $port with $(length(tools)) tools")
     end
 
     return MCPServer(port, server, tools_dict)

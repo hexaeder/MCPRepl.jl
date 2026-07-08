@@ -3,6 +3,7 @@ module MCPRepl
 using REPL
 using HTTP
 using JSON
+using Sockets
 
 include("MCPServer.jl")
 include("setup.jl")
@@ -190,6 +191,153 @@ end
 function suppress_install_prompts!()
     empty!(REPL.install_packages_hooks)
     push!(REPL.install_packages_hooks, Returns(true))
+    return nothing
+end
+
+# Multiplexing across several REPLs ------------------------------------------
+#
+# Multiple Julia REPLs can each run their own MCPRepl server. There is no central
+# daemon: each REPL binds its own port and drops a small JSON file into a shared
+# registry directory. The per-project stdio adapter (`mcp-julia-adapter`) reads
+# that directory to discover REPLs and route each call to the right one. See the
+# adapter for the routing/elicitation logic.
+
+# Short, human-recognizable handles so a REPL can be named in the adapter's
+# picker ("otter — /path/to/foo"). Derived deterministically from the project
+# directory so a REPL keeps its word across restarts.
+const WORDLIST = [
+    "otter", "badger", "heron", "marten", "lynx", "ibis", "raven", "newt",
+    "koi", "vole", "finch", "shrew", "egret", "stoat", "quail", "tapir",
+    "gecko", "moth", "wren", "cobra", "civet", "dingo", "eagle", "ferret",
+    "gopher", "hare", "iguana", "jackal", "krill", "lemur", "mink", "numbat",
+    "osprey", "puma", "quokka", "robin", "seal", "toad", "urchin", "viper",
+    "walrus", "yak", "zebra", "bison", "crane", "dove", "elk", "fox",
+]
+
+# Directory that holds one `<pid>.json` file per running REPL. Under the home
+# directory so project trees stay clean. Override with MCPREPL_REGISTRY_DIR
+# (the adapter honors the same variable) to relocate or isolate the registry.
+registry_dir() = get(ENV, "MCPREPL_REGISTRY_DIR", joinpath(homedir(), ".mcprepl", "registry"))
+
+# realpath that never throws (falls back to the abspath) so registration can't
+# fail on an unusual project path.
+_realpath_safe(p) = try
+    realpath(p)
+catch
+    abspath(p)
+end
+
+# Nearest enclosing git project of `startdir`, searching upward but stopping
+# *before* the home directory (a `.git` at or above ~ is ignored). Returns "" if
+# none is found. The adapter uses this so any REPL inside the same git project as
+# the agent's working dir is treated as the ideal routing target — even a sibling
+# subfolder. See the adapter's matching logic.
+function _git_root(startdir::AbstractString)
+    dir = _realpath_safe(startdir)
+    home = _realpath_safe(homedir())
+    while true
+        dir == home && return ""            # reached ~ -> stop, no project
+        ispath(joinpath(dir, ".git")) && return dir
+        parent = dirname(dir)
+        parent == dir && return ""           # filesystem root
+        dir = parent
+    end
+end
+
+# Words currently claimed by *any* registry file (live or not — cheap best-effort
+# read used only to avoid handing out a duplicate word at start time).
+function _claimed_words()
+    dir = registry_dir()
+    words = String[]
+    isdir(dir) || return words
+    for f in readdir(dir; join = true)
+        endswith(f, ".json") || continue
+        try
+            data = JSON.parse(read(f, String))
+            w = get(data, "word", "")
+            isempty(w) || push!(words, w)
+        catch
+            # Ignore unreadable/partial files.
+        end
+    end
+    return words
+end
+
+# Deterministic word for a project dir, advancing past any word already taken.
+function wordid_for(project_dir::AbstractString, taken = _claimed_words())
+    n = length(WORDLIST)
+    base = 1 + (hash(_realpath_safe(project_dir)) % n)
+    for i in 0:(n - 1)
+        w = WORDLIST[1 + (base - 1 + i) % n]
+        w in taken || return w
+    end
+    return WORDLIST[base]  # every word taken (>48 live REPLs) — reuse deterministic pick
+end
+
+# Prefer the historic hardcoded port so single-REPL HTTP-transport users are
+# unaffected; if it is already bound (another REPL is there), take an OS-assigned
+# ephemeral port instead. Returns the port to bind.
+function choose_port(preferred::Int = 3000)
+    try
+        s = Sockets.listen(Sockets.localhost, preferred)
+        close(s)
+        return preferred
+    catch
+        s = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(s)[2])
+        close(s)
+        return port
+    end
+end
+
+# State for the registry file this REPL owns, so `stop!`/atexit can remove it.
+const _REGISTRY_FILE = Ref{Union{Nothing, String}}(nothing)
+const _WORD = Ref{Union{Nothing, String}}(nothing)
+const _PORT = Ref{Union{Nothing, Int}}(nothing)
+const _ATEXIT_INSTALLED = Ref(false)
+
+# Write this REPL's registry file. `word` is precomputed so the startup banner and
+# the file agree.
+function register_repl!(port::Int, word::AbstractString)
+    dir = registry_dir()
+    mkpath(dir)
+    active = Base.active_project()
+    project_dir = active === nothing ? pwd() : dirname(active)
+    data = Dict(
+        "pid" => getpid(),
+        "port" => port,
+        "host" => "127.0.0.1",
+        "word" => word,
+        "project_dir" => project_dir,
+        "project_name" => basename(project_dir),
+        "active_project" => active === nothing ? "" : active,
+        "pwd" => pwd(),
+        "git_root" => _git_root(pwd()),
+        "julia_version" => string(VERSION),
+        "started_at" => time(),
+    )
+    path = joinpath(dir, "$(getpid()).json")
+    write(path, JSON.json(data))
+    _REGISTRY_FILE[] = path
+    _WORD[] = word
+    _PORT[] = port
+    if !_ATEXIT_INSTALLED[]
+        atexit(unregister_repl!)   # best-effort cleanup on normal exit
+        _ATEXIT_INSTALLED[] = true
+    end
+    return nothing
+end
+
+function unregister_repl!()
+    f = _REGISTRY_FILE[]
+    if f !== nothing
+        try
+            rm(f; force = true)
+        catch
+            # Best-effort: a stale file is pruned by the adapter via pid-liveness.
+        end
+        _REGISTRY_FILE[] = nothing
+    end
     return nothing
 end
 
@@ -496,8 +644,18 @@ function start!(; verbose::Bool = true)
         end
     )
 
+    # Pick a port: keep the historic 3000 when free, else an ephemeral port so a
+    # second REPL can coexist. Assign a stable word-id for the adapter's picker.
+    port = choose_port(3000)
+    active = Base.active_project()
+    project_dir = active === nothing ? pwd() : dirname(active)
+    word = wordid_for(project_dir)
+
     # Create and start server
-    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool, whitespace_tool, investigate_tool], 3000; verbose=verbose)
+    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool, whitespace_tool, investigate_tool], port; verbose=verbose, word=word)
+
+    # Advertise this REPL to the shared registry so the adapter can route to it.
+    register_repl!(port, word)
 
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
@@ -579,8 +737,11 @@ end
 function stop!()
     if SERVER[] !== nothing
         println("Stop existing server...")
+        unregister_repl!()   # remove our registry file before dropping the server
         stop_mcp_server(SERVER[])
         SERVER[] = nothing
+        _WORD[] = nothing
+        _PORT[] = nothing
         if isdefined(Base, :active_repl)
             unset_prefix!(Base.active_repl) # Reset the prompt prefix
         end

@@ -1,101 +1,688 @@
 #!/usr/bin/env python3
 """
-MCP Julia REPL Adapter
+MCP Julia REPL Adapter (multiplexing router)
 
-This adapter bridges stdin/stdout MCP clients to the HTTP-based Julia MCP server.
-It reads JSON-RPC messages from stdin and forwards them to http://localhost:3000,
-then returns responses to stdout.
+This adapter is the MCP server as far as the client (Claude Code, Gemini, ...) is
+concerned. It is launched once per project session over stdio, with its working
+directory set to the project the agent is working in.
 
-Usage:
-    ./mcp-julia-adapter
+Multiple Julia REPLs can run at once, each on its own port, each advertising
+itself with a `<pid>.json` file in ~/.mcprepl/registry/. This adapter discovers
+those REPLs and routes every `tools/call` to the correct one:
 
-The Julia MCP server must be running first:
+  * exactly one REPL, or a unique nearest-ancestor of our cwd  -> route silently
+  * otherwise, or when a strictly-nearer REPL appears          -> ask the USER
+    which REPL to use, via MCP elicitation (no LLM involved)
+  * if the client does not support elicitation                 -> return a
+    "pick a REPL, retry with repl=<word>" message to the caller instead
+
+Julia stays a plain HTTP request/response endpoint; all routing lives here.
+
+The Julia REPL server(s) must be running first:
     julia --project -e "using MCPRepl; MCPRepl.start!()"
 """
 
 import json
+import os
 import sys
+import time
+import glob
 import urllib.request
 import urllib.error
-import time
+
+
+# Registry location. Honors MCPREPL_REGISTRY_DIR (same variable the Julia side
+# reads) so the registry can be relocated or isolated; defaults under ~/.mcprepl.
+REGISTRY_DIR = os.environ.get(
+    "MCPREPL_REGISTRY_DIR",
+    os.path.join(os.path.expanduser("~"), ".mcprepl", "registry"))
+TOOLS_CACHE = os.path.join(os.path.dirname(REGISTRY_DIR.rstrip(os.sep)),
+                           "tools_cache.json")
+INF = float("inf")
+
+
+# --- Registry discovery ------------------------------------------------------
+
+def pid_alive(pid):
+    """True if a process with this pid exists (best-effort, POSIX)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists but not ours
+    except Exception:
+        return False
+    return True
+
+
+def registry_mtime():
+    """mtime of the registry dir (changes when files are added/removed)."""
+    try:
+        return os.stat(REGISTRY_DIR).st_mtime
+    except OSError:
+        return None
+
+
+def read_registry():
+    """Return the list of live REPL records, pruning dead ones."""
+    repls = []
+    for path in glob.glob(os.path.join(REGISTRY_DIR, "*.json")):
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+        except Exception:
+            continue
+        pid = data.get("pid")
+        if not isinstance(pid, int) or not pid_alive(pid):
+            continue
+        repls.append(data)
+    return repls
+
+
+def git_root(startdir):
+    """Nearest enclosing git project of startdir, stopping *before* ~.
+
+    Returns the directory containing `.git`, or "" if none is found below the
+    home directory. Mirrors `_git_root` on the Julia side.
+    """
+    try:
+        d = os.path.realpath(startdir)
+        home = os.path.realpath(os.path.expanduser("~"))
+    except Exception:
+        return ""
+    while True:
+        if d == home:
+            return ""
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return ""
+        d = parent
+
+
+def dir_rank(project_dir, cwd):
+    """Directory distance from cwd up to project_dir.
+
+    0  -> same directory
+    k  -> project_dir is the k-th ancestor of cwd (nearer = smaller)
+    INF -> project_dir is not an ancestor of cwd (fallback-only candidate)
+    """
+    try:
+        project_dir = os.path.realpath(project_dir)
+        cwd = os.path.realpath(cwd)
+    except Exception:
+        return INF
+    if project_dir == cwd:
+        return 0
+    prefix = project_dir.rstrip(os.sep) + os.sep
+    if not cwd.startswith(prefix):
+        return INF
+    return cwd[len(prefix):].count(os.sep) + 1
+
+
+# --- Talking to a REPL -------------------------------------------------------
+
+def post_to_repl(port, request, timeout=600):
+    """Forward a JSON-RPC request to a REPL's HTTP server; return parsed reply."""
+    data = json.dumps(request).encode("utf-8")
+    req = urllib.request.Request(
+        "http://127.0.0.1:%d" % port,
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body.strip() else None
+
+
+def repl_reachable(port):
+    """Cheap liveness probe: a ping should return quickly."""
+    try:
+        post_to_repl(port, {"jsonrpc": "2.0", "id": "probe", "method": "ping"},
+                     timeout=3)
+        return True
+    except Exception:
+        return False
+
+
+# --- JSON-RPC framing helpers ------------------------------------------------
+
+def emit(obj):
+    """Write one JSON-RPC message to stdout."""
+    print(json.dumps(obj), flush=True)
+
+
+def error_result(request_id, message, code=-32603):
+    return {"jsonrpc": "2.0", "id": request_id,
+            "error": {"code": code, "message": message}}
+
+
+def tool_text_result(request_id, text):
+    """A successful tools/call result carrying a plain-text body."""
+    return {"jsonrpc": "2.0", "id": request_id,
+            "result": {"content": [{"type": "text", "text": text}]}}
+
+
+# Two tools the adapter answers itself (never routed to a REPL): a manual
+# alternative to the elicitation picker, so a REPL can be listed/selected with a
+# plain tool call and no interactive dialog.
+ADAPTER_TOOLS = [
+    {"name": "list_repls",
+     "description": "List the running Julia REPLs the adapter has discovered — "
+                    "their word-id, working directory, project, port, and which "
+                    "one this session is routed to. Use it to see your options, "
+                    "then `select_repl` to choose.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "select_repl",
+     "description": "Route this session's Julia calls to a specific REPL, chosen "
+                    "by its word-id (see `list_repls`). The choice sticks until "
+                    "that REPL disappears or another is selected.",
+     "inputSchema": {"type": "object",
+                     "properties": {"repl": {
+                         "type": "string",
+                         "description": "word-id of the REPL to use (e.g. 'otter')"}},
+                     "required": ["repl"]}},
+]
+
+
+def inject_adapter_tools(reply):
+    """Append the adapter-local tools to a forwarded tools/list result."""
+    try:
+        tools = reply.setdefault("result", {}).setdefault("tools", [])
+        have = {t.get("name") for t in tools}
+        for t in ADAPTER_TOOLS:
+            if t["name"] not in have:
+                tools.append(t)
+    except Exception:
+        pass
+    return reply
+
+
+# --- The router --------------------------------------------------------------
+
+class Router:
+    def __init__(self):
+        self.selected = None            # dict: {"project_dir","port","word"}
+        self.last_mtime = None
+        self.client_supports_elicitation = False
+        self.elicit_seq = 0
+        self.known_words = set()  # REPL word-ids seen at the last resolution
+        self.cwd = os.path.realpath(os.getcwd())
+        self.git_root = git_root(self.cwd)  # enclosing git project of our cwd, or ""
+
+    # -- discovery with an mtime + reachability fast path --------------------
+    def scan(self):
+        mtime = registry_mtime()
+        if (mtime is not None and mtime == self.last_mtime
+                and self.selected is not None
+                and repl_reachable(self.selected["port"])):
+            return None  # unchanged and current selection healthy -> no rescan
+        self.last_mtime = mtime
+        return read_registry()
+
+    def find_by_word(self, repls, word):
+        for r in repls:
+            if r.get("word") == word:
+                return r
+        return None
+
+    def as_selection(self, repl):
+        return {"project_dir": repl.get("project_dir", ""),
+                "port": repl["port"], "word": repl.get("word", "?")}
+
+    def repl_rank(self, repl):
+        """Nearness of a REPL to this session (smaller = nearer).
+
+        0    -> the REPL lives in the same git project as our cwd (any subfolder;
+                the ideal target). git projects are matched by their root, so a
+                sibling-subfolder REPL still scores 0.
+        k>=1 -> no shared git project, but the REPL's active project (or its pwd)
+                is the (k-1)-th ancestor of our cwd.
+        INF  -> unrelated (fallback-only candidate).
+        """
+        rg = repl.get("git_root", "")
+        if self.git_root and rg and os.path.realpath(rg) == self.git_root:
+            return 0
+        d = dir_rank(repl.get("project_dir", ""), self.cwd)
+        if d != INF:
+            return d + 1
+        d = dir_rank(repl.get("pwd", ""), self.cwd)
+        if d != INF:
+            return d + 1
+        return INF
+
+    def nearest(self, repls):
+        """The single strictly-nearest REPL, or None if there's a tie."""
+        ranked = sorted(repls, key=self.repl_rank)
+        best = self.repl_rank(ranked[0])
+        contenders = [r for r in ranked if self.repl_rank(r) == best]
+        return ranked[0] if len(contenders) == 1 else None
+
+    def resolve(self, request):
+        """Return (selection_dict, error_or_prompt_response).
+
+        On success the first element is set and the request should be forwarded.
+        Otherwise the second element is a full JSON-RPC response to emit instead
+        (an error, or an elicitation-driven pick that already updated state).
+        """
+        request_id = request.get("id")
+
+        # Honor an explicit override (fallback path / power users).
+        args = request.get("params", {}).get("arguments", {}) or {}
+        override = args.get("repl") or os.environ.get("MCPREPL_PROJECT")
+
+        rescan = self.scan()
+        if rescan is None:
+            return self.selected, None  # fast path: keep current selection
+
+        repls = rescan
+        # Track which REPLs are new since we last looked, so a freshly-started
+        # REPL can trigger a re-prompt. A restart keeps its (deterministic)
+        # word-id, so it is NOT counted as new -> silent rebind.
+        live_words = {r.get("word") for r in repls}
+        newly_appeared = live_words - self.known_words
+        self.known_words = live_words
+
+        if not repls:
+            self.selected = None
+            return None, error_result(
+                request_id,
+                "No Julia REPL registered. Start one with: "
+                "julia --project -e 'using MCPRepl; MCPRepl.start!()'")
+
+        if override:
+            match = self.find_by_word(repls, override)
+            if match:
+                self.selected = self.as_selection(match)
+                return self.selected, None
+            # else fall through to normal resolution / prompt
+
+        # Currently-selected REPL still present?
+        current = None
+        if self.selected is not None:
+            current = self.find_by_word(repls, self.selected["word"])
+
+        if current is not None:
+            # Re-prompt when a *newly-appeared* REPL is at least as near as the
+            # current selection (a nearer one, or an equally-near one — e.g. a
+            # second REPL in the same git project). Farther newcomers, and
+            # restarts of existing REPLs, keep the current selection silently.
+            cur_rank = self.repl_rank(current)
+            rival = any(self.repl_rank(r) <= cur_rank
+                        for r in repls if r.get("word") in newly_appeared)
+            if not rival:
+                # Adopt any new port (covers a same-project restart) silently.
+                self.selected = self.as_selection(current)
+                return self.selected, None
+            # A rival newcomer appeared -> fall through to prompt.
+        else:
+            # Selection vanished, or first call.
+            if len(repls) == 1:
+                self.selected = self.as_selection(repls[0])
+                return self.selected, None
+            near = self.nearest(repls)
+            if near is not None and self.repl_rank(near) < INF:
+                self.selected = self.as_selection(near)
+                return self.selected, None
+
+        # Ambiguous -> ask the user.
+        return None, self.prompt_for_repl(request, repls)
+
+    # -- user-facing picker --------------------------------------------------
+    def prompt_for_repl(self, request, repls):
+        request_id = request.get("id")
+        default = self.nearest(repls) or repls[0]
+
+        if not self.client_supports_elicitation:
+            lines = ["Multiple Julia REPLs are available. Re-issue this call with "
+                     'an argument `"repl": "<word>"` to choose one:', ""]
+            for r in repls:
+                lines.append("  * %s — %s  [%s]" % (
+                    r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+                    r.get("active_project", "") or "no project"))
+            lines.append("")
+            lines.append("Suggested (nearest to this session): %s" %
+                         default.get("word", "?"))
+            return tool_text_result(request_id, "\n".join(lines))
+
+        word = self.run_elicitation(repls)
+        if word is None:
+            return error_result(request_id,
+                                "REPL selection cancelled; no REPL chosen for this call.")
+        match = self.find_by_word(repls, word)
+        if match is None:
+            return error_result(request_id,
+                                "Selected REPL '%s' is no longer available." % word)
+        self.selected = self.as_selection(match)
+        return None  # signal: selection made, caller should forward
+
+    def run_elicitation(self, repls):
+        """Emit an elicitation picker over `repls`; return the chosen word or None.
+
+        The caller is responsible for having checked client_supports_elicitation.
+        """
+        self.elicit_seq += 1
+        elicit_id = "mcprepl-elicit-%d" % self.elicit_seq
+        default = self.nearest(repls) or repls[0]
+        enum = [r.get("word", "?") for r in repls]
+        enum_names = ["%s — %s  [%s]" % (
+            r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+            r.get("active_project", "") or "no project") for r in repls]
+        # Also spell the options out in the message body so they are visible
+        # without expanding the (client-rendered) dropdown.
+        listing = "\n".join("  • " + n for n in enum_names)
+        message = "Pick the Julia REPL to route this session to:\n" + listing
+        emit({
+            "jsonrpc": "2.0",
+            "id": elicit_id,
+            "method": "elicitation/create",
+            "params": {
+                "message": message,
+                "requestedSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repl": {
+                            "type": "string",
+                            "title": "Julia REPL",
+                            "description": "Which REPL to route this session's calls to.",
+                            "enum": enum,
+                            "enumNames": enum_names,
+                            "default": default.get("word", enum[0]),
+                        }
+                    },
+                    "required": ["repl"],
+                },
+            },
+        })
+        return self.await_elicit_response(elicit_id)
+
+    def await_elicit_response(self, elicit_id):
+        """Block reading stdin until the elicitation reply arrives.
+
+        Any unrelated request that arrives meanwhile is handled inline so we do
+        not deadlock the session; its response is emitted before we resume.
+        """
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") == elicit_id and ("result" in msg or "error" in msg):
+                if "error" in msg:
+                    return None
+                result = msg.get("result", {})
+                if result.get("action") != "accept":
+                    return None
+                return result.get("content", {}).get("repl")
+            # Unrelated traffic while we wait -> handle it now.
+            handle_message(self, msg)
+        return None  # stdin closed
+
+
+# --- Adapter-local tools -----------------------------------------------------
+
+def _handle_list_repls(router, request):
+    request_id = request.get("id")
+    repls = read_registry()
+    if not repls:
+        emit(tool_text_result(request_id, "No Julia REPLs are currently running."))
+        return
+    sel_word = router.selected["word"] if router.selected else None
+    lines = ["Discovered Julia REPLs (this session's cwd: %s):" % router.cwd, ""]
+    for r in sorted(repls, key=router.repl_rank):
+        mark = "→ " if r.get("word") == sel_word else "  "
+        note = "  (same git project)" if router.repl_rank(r) == 0 else ""
+        lines.append("%s%s — %s  [%s]  port %s%s" % (
+            mark, r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+            r.get("active_project", "") or "no project", r.get("port", "?"), note))
+    if sel_word:
+        lines += ["", "Currently routed to: %s" % sel_word]
+    else:
+        lines += ["", "No REPL selected yet; use select_repl to choose one."]
+    emit(tool_text_result(request_id, "\n".join(lines)))
+
+
+def _handle_select_repl(router, request):
+    request_id = request.get("id")
+    word = (request.get("params", {}).get("arguments", {}) or {}).get("repl", "")
+    repls = read_registry()
+    match = router.find_by_word(repls, word)
+    if match is None:
+        avail = ", ".join(r.get("word", "?") for r in repls) or "(none running)"
+        emit(tool_text_result(
+            request_id,
+            "No running REPL with word-id '%s'. Available: %s" % (word, avail)))
+        return
+    router.selected = router.as_selection(match)
+    router.last_mtime = registry_mtime()
+    router.known_words = {r.get("word") for r in repls}
+    emit(tool_text_result(
+        request_id,
+        "Routing this session to '%s' — %s [%s]." % (
+            match.get("word", "?"), match.get("pwd", match.get("project_dir", "?")),
+            match.get("active_project", "") or "no project")))
+
+
+def _prompt_result(request_id, text):
+    """A prompts/get result carrying a single confirmation message."""
+    return {"jsonrpc": "2.0", "id": request_id, "result": {
+        "description": "Julia REPL selection",
+        "messages": [{"role": "user",
+                      "content": {"type": "text", "text": text}}],
+    }}
+
+
+def _handle_prompts_get(router, request):
+    """User-triggered REPL picker (the `select-repl` MCP prompt).
+
+    Shows the elicitation dialog directly — the user chooses, not the LLM — and
+    sets the sticky routing. Returns only a one-line confirmation message.
+    """
+    request_id = request.get("id")
+    name = request.get("params", {}).get("name")
+    if name != "select-repl":
+        emit(error_result(request_id, "Unknown prompt: %s" % name, code=-32602))
+        return
+    repls = read_registry()
+    if not repls:
+        emit(_prompt_result(request_id,
+                            "No Julia REPLs are running; nothing to select."))
+        return
+    if len(repls) == 1:
+        r = repls[0]
+        router.selected = router.as_selection(r)
+        router.last_mtime = registry_mtime()
+        router.known_words = {r.get("word") for r in repls}
+        emit(_prompt_result(request_id,
+             "Only one Julia REPL is running; routing this session to '%s' (%s)."
+             % (r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")))))
+        return
+    if not router.client_supports_elicitation:
+        avail = ", ".join(r.get("word", "?") for r in repls)
+        emit(_prompt_result(request_id,
+             "Multiple REPLs are running (%s). This client can't show a picker; "
+             "call the select_repl tool with the desired word-id." % avail))
+        return
+    word = router.run_elicitation(repls)
+    if word is None:
+        emit(_prompt_result(request_id,
+                            "REPL selection cancelled; routing unchanged."))
+        return
+    match = router.find_by_word(repls, word)
+    if match is None:
+        emit(_prompt_result(request_id,
+                            "Selected REPL '%s' is no longer available." % word))
+        return
+    router.selected = router.as_selection(match)
+    router.last_mtime = registry_mtime()
+    router.known_words = {r.get("word") for r in repls}
+    emit(_prompt_result(request_id,
+         "Julia REPL routing set to '%s' — %s [%s]." % (
+             match.get("word", "?"), match.get("pwd", match.get("project_dir", "?")),
+             match.get("active_project", "") or "no project")))
+
+
+# --- Top-level message handling ---------------------------------------------
+
+def handle_message(router, request):
+    """Handle one inbound JSON-RPC message from the client."""
+    method = request.get("method")
+    is_notification = "id" not in request
+    request_id = request.get("id")
+
+    # Notifications: forward-and-forget semantics, but nothing needs a REPL.
+    if is_notification:
+        return
+
+    if method == "initialize":
+        caps = request.get("params", {}).get("capabilities", {}) or {}
+        router.client_supports_elicitation = "elicitation" in caps
+        # Echo a live REPL's serverInfo if we can; else answer statically. Either
+        # way advertise the adapter's own `prompts` capability (the user-triggered
+        # REPL picker) on top of whatever the REPL offers.
+        repls = read_registry()
+        reply = None
+        for r in repls:
+            try:
+                reply = post_to_repl(r["port"], request, timeout=10)
+                if reply is not None:
+                    break
+            except Exception:
+                continue
+        if reply is None:
+            reply = {"jsonrpc": "2.0", "id": request_id, "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "julia-mcp-adapter", "version": "2.0.0"},
+            }}
+        try:
+            reply.setdefault("result", {}).setdefault("capabilities", {})["prompts"] = {}
+        except Exception:
+            pass
+        emit(reply)
+        return
+
+    if method == "prompts/list":
+        emit({"jsonrpc": "2.0", "id": request_id, "result": {"prompts": [{
+            "name": "select-repl",
+            "description": "Choose which running Julia REPL this session routes to "
+                           "(shows a picker; no effect on the conversation beyond a "
+                           "one-line confirmation).",
+            "arguments": [],
+        }]}})
+        return
+
+    if method == "prompts/get":
+        _handle_prompts_get(router, request)
+        return
+
+    if method == "ping":
+        emit({"jsonrpc": "2.0", "id": request_id, "result": {}})
+        return
+
+    if method == "tools/list":
+        repls = read_registry()
+        for r in repls:
+            try:
+                reply = post_to_repl(r["port"], request, timeout=10)
+                if reply is not None:
+                    _cache_tools(reply)
+                    emit(inject_adapter_tools(reply))
+                    return
+            except Exception:
+                continue
+        emit(inject_adapter_tools(_cached_tools(request_id)))
+        return
+
+    if method == "tools/call":
+        tool_name = request.get("params", {}).get("name")
+        if tool_name == "list_repls":
+            _handle_list_repls(router, request)
+            return
+        if tool_name == "select_repl":
+            _handle_select_repl(router, request)
+            return
+        selection, alt = router.resolve(request)
+        if selection is None and alt is not None:
+            emit(alt)
+            return
+        if selection is None:
+            # prompt_for_repl returned None -> selection was just made.
+            selection = router.selected
+        _forward_call(router, selection, request)
+        return
+
+    # Anything else: try the selected/any REPL, else method-not-found.
+    emit(error_result(request_id, "Method not found: %s" % method, code=-32601))
+
+
+def _forward_call(router, selection, request):
+    request_id = request.get("id")
+    try:
+        reply = post_to_repl(selection["port"], request)
+        if reply is not None:
+            emit(reply)
+    except urllib.error.URLError:
+        # The chosen REPL died mid-session: drop it and re-resolve once.
+        router.selected = None
+        router.last_mtime = None
+        selection2, alt = router.resolve(request)
+        if selection2 is None and alt is not None:
+            emit(alt)
+            return
+        if selection2 is None:
+            selection2 = router.selected
+        try:
+            reply = post_to_repl(selection2["port"], request)
+            if reply is not None:
+                emit(reply)
+        except Exception as e:
+            emit(error_result(request_id,
+                              "Selected Julia REPL is unreachable: %s" % e))
+    except Exception as e:
+        emit(error_result(request_id, "Internal error: %s" % e))
+
+
+def _cache_tools(reply):
+    try:
+        os.makedirs(os.path.dirname(TOOLS_CACHE), exist_ok=True)
+        with open(TOOLS_CACHE, "w") as fh:
+            json.dump(reply.get("result", {}), fh)
+    except Exception:
+        pass
+
+
+def _cached_tools(request_id):
+    try:
+        with open(TOOLS_CACHE) as fh:
+            result = json.load(fh)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+    except Exception:
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": []}}
 
 
 def main():
-    """Main adapter loop - reads stdin, forwards to HTTP server, writes to stdout"""
+    router = Router()
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-
         try:
-            # Parse JSON-RPC request from stdin
             request = json.loads(line)
-
-            # Notifications have no "id" — forward but never emit a response
-            is_notification = "id" not in request
-
-            # Forward to HTTP server with timeout
-            data = json.dumps(request).encode('utf-8')
-            req = urllib.request.Request('http://localhost:3000',
-                                       data=data,
-                                       headers={'Content-Type': 'application/json'})
-
-            with urllib.request.urlopen(req, timeout=600) as response:
-                body = response.read().decode('utf-8')
-                if not is_notification and body.strip():
-                    print(body, flush=True)
-
         except json.JSONDecodeError as e:
-            # Invalid JSON from stdin
-            error_response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": f"Parse error: {str(e)}"
-                }
-            }
-            print(json.dumps(error_response), flush=True)
-
-        except urllib.error.URLError as e:
-            # Connection failed to HTTP server - try to recover
-            request_id = request.get("id") if 'request' in locals() else None
-
-            # For connection errors, try a brief retry
-            if "Connection refused" in str(e):
-                try:
-                    time.sleep(0.1)  # Brief delay
-                    with urllib.request.urlopen(req, timeout=600) as response:
-                        body = response.read().decode('utf-8')
-                        if not is_notification and body.strip():
-                            print(body, flush=True)
-                        continue
-                except:
-                    pass  # Fall through to error response
-
-            if not is_notification:
-                error_response = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32603,
-                        "message": f"Connection failed: {str(e)}. Is the Julia MCP server running?"
-                    }
-                }
-                print(json.dumps(error_response), flush=True)
-
+            emit({"jsonrpc": "2.0", "id": None,
+                  "error": {"code": -32700, "message": "Parse error: %s" % e}})
+            continue
+        try:
+            handle_message(router, request)
         except Exception as e:
-            # Other errors - ensure proper ID handling
-            request_id = request.get("id") if 'request' in locals() else None
-            error_response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32603,
-                    "message": f"Internal error: {str(e)}"
-                }
-            }
-            print(json.dumps(error_response), flush=True)
+            if "id" in request:
+                emit(error_result(request.get("id"), "Internal error: %s" % e))
 
 
 if __name__ == "__main__":
