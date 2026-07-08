@@ -59,24 +59,12 @@ function execute_repllike(str)
             If unclear, ask the user.
         """
     end
-    # eval using/import to suppress interactive ask for instllation
-    if contains(str, r"(^|\n)using\s") || contains(str, r"(^|\n)import\s")
-        # Replace each import/using statement with @eval prefix
-        str = replace(str, r"(^|\n)(using\s[^\n]*)" => s"\1@eval \2")
-        str = replace(str, r"(^|\n)(import\s[^\n]*)" => s"\1@eval \2")
-    end
-
-
-    # alternative approach to @eval on using/import?
-    # old_stdin = stdin
-    # redirect_stdin(devnull)
-    # try
-    #     using Optim
-    # catch e
-    #     rethrow(e)
-    # finally
-    #     redirect_stdin(old_stdin)
-    # end
+    # Note: `using Foo` for a package missing from the env used to hang on a
+    # stdin install-prompt. That prompt is injected by the REPL backend's
+    # `check_for_missing_packages_and_run_hooks` -> `install_packages_hooks`
+    # (REPL.jl). We neutralize that hook in `start!` (see
+    # `suppress_install_prompts!`), so a plain `using Foo` now surfaces Base's
+    # clean `ArgumentError` instead of blocking. No source rewriting needed.
 
     repl = Base.active_repl
     # expr = Meta.parse(str)
@@ -87,23 +75,42 @@ function execute_repllike(str)
     printstyled("\nagent> ", color=:red, bold=:true)
     print(str, "\n")
 
-    # Capture stdout/stderr during execution
+    # Capture stdout/stderr during execution while *streaming* it live to the
+    # user's real terminal, so long-running code shows progress instead of only
+    # flushing at the end. We pre-link the pipe with async support (so the
+    # reader end is non-blocking) and tee it: every chunk goes both to the
+    # original terminal and to a buffer we return to the agent.
+    orig_out = stdout
     captured_output = Pipe()
+    Base.link_pipe!(captured_output; reader_supports_async = true, writer_supports_async = true)
+    buf = IOBuffer()
+    reader = @async begin
+        try
+            while !eof(captured_output)
+                data = readavailable(captured_output)
+                write(orig_out, data)
+                flush(orig_out)
+                write(buf, data)
+            end
+        catch e
+            @warn "MCPRepl: output tee reader failed" exception = e
+        end
+    end
+
     response = redirect_stdout(captured_output) do
         redirect_stderr(captured_output) do
             # Julia 1.12+ renamed eval_with_backend to eval_on_backend
-            r = if VERSION >= v"1.12"
+            if VERSION >= v"1.12"
                 REPL.eval_on_backend(expr, backend)
             else
                 REPL.eval_with_backend(expr, backend)
             end
-            close(Base.pipe_writer(captured_output))
-            r
         end
     end
-    captured_content = read(captured_output, String)
-    # reshow the stuff which was printed to stdout/stderr before
-    print(captured_content)
+    # Closing the writer signals EOF to the tee reader; wait for it to drain.
+    close(Base.pipe_writer(captured_output))
+    wait(reader)
+    captured_content = String(take!(buf))
 
     disp = IOBufferDisplay()
 
@@ -124,6 +131,66 @@ function execute_repllike(str)
     display_content = String(take!(disp.io))
 
     return captured_content*display_content
+end
+
+# Large-output handling ------------------------------------------------------
+#
+# REPL output (especially long stacktraces) is returned verbatim to the agent
+# and counts directly against its context window. To bound token usage we keep
+# a generous head (which holds the `ERROR:` line and the top of the stacktrace)
+# plus a small tail, elide the middle, and spill the *full* output to a file the
+# agent can Read/Grep on demand.
+const MAX_OUTPUT_CHARS = 12_000
+const HEAD_CHARS = 6_000
+const TAIL_CHARS = 2_000
+
+function maybe_truncate_output(text::AbstractString)
+    total_chars = length(text)
+    total_chars <= MAX_OUTPUT_CHARS && return text
+
+    total_lines = count(==('\n'), text) + 1
+    elided_chars = total_chars - HEAD_CHARS - TAIL_CHARS
+
+    # Persist the full output outside the project tree so the agent can inspect
+    # the elided part if it needs to. cleanup=false keeps the file after exit.
+    dir = joinpath(tempdir(), "mcprepl")
+    mkpath(dir)
+    path = tempname(dir; cleanup = false) * ".txt"
+    try
+        write(path, text)
+    catch e
+        # If we can't spill, fall back to returning the untruncated text rather
+        # than losing information.
+        @warn "MCPRepl: failed to write full output to file" exception = e
+        return text
+    end
+
+    marker = string(
+        "\n\n",
+        "…… [output truncated: $elided_chars of $total_chars chars / $total_lines lines elided] ……\n",
+        "Full output written to: $path\n",
+        "Read or Grep that file if you need the elided middle section.\n\n",
+    )
+
+    return first(text, HEAD_CHARS) * marker * last(text, TAIL_CHARS)
+end
+
+# Missing-package prompt suppression -----------------------------------------
+#
+# When `using Foo` names a package not in the environment, the REPL backend's
+# `check_for_missing_packages_and_run_hooks` (REPL.jl) invokes Pkg's
+# `install_packages_hooks`, which prompts on stdin ("install? [y/n]"). In a
+# shared, agent-driven REPL stdin isn't routed, so that prompt hangs forever.
+#
+# We replace the hook list with a single no-op hook that returns `true`
+# ("handled"), so no prompt is shown; evaluation then proceeds and Base throws
+# its normal, informative `ArgumentError` ("Package Foo not found ... Pkg.add").
+# This is global for the session, which is the right default for this server:
+# no contested stdin prompts. The user can still `Pkg.add` explicitly.
+function suppress_install_prompts!()
+    empty!(REPL.install_packages_hooks)
+    push!(REPL.install_packages_hooks, Returns(true))
+    return nothing
 end
 
 SERVER = Ref{Union{Nothing, MCPServer}}(nothing)
@@ -311,6 +378,8 @@ end
 function start!(; verbose::Bool = true)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
+    suppress_install_prompts!() # `using MissingPkg` errors cleanly instead of hanging on a stdin prompt
+
     usage_instructions_tool = MCPTool(
         "usage_instructions",
         "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents.",
@@ -353,7 +422,7 @@ function start!(; verbose::Bool = true)
         MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`"),
         args -> begin
             try
-                execute_repllike(get(args, "expression", ""))
+                maybe_truncate_output(execute_repllike(get(args, "expression", "")))
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
@@ -420,7 +489,7 @@ function start!(; verbose::Bool = true)
         ),
         args -> begin
             try
-                execute_repllike("MCPRepl.repl_status_report()")
+                maybe_truncate_output(execute_repllike("MCPRepl.repl_status_report()"))
             catch e
                 "Error investigating environment: $e"
             end
@@ -432,8 +501,10 @@ function start!(; verbose::Bool = true)
 
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)
+        install_interrupt_keybinding!(Base.active_repl)
     else
         atreplinit(set_prefix!)
+        atreplinit(install_interrupt_keybinding!)
     end
     nothing
 end
@@ -465,6 +536,44 @@ function get_mainmode(repl)
     end
 
     return first(modes)
+end
+
+# Ctrl-C interrupt for agent-launched work -----------------------------------
+#
+# The agent's code runs on the REPL backend (root) task. When *you* run code,
+# the terminal is in cooked mode and Ctrl-C is a real SIGINT delivered to that
+# task — so it interrupts. But while the *agent* runs code you are sitting at
+# the live prompt (raw mode), so Ctrl-C is read as a keystroke whose default
+# binding only clears the input line; it never reaches the backend.
+#
+# We wrap the `^C` (0x03) keybinding so that, when the backend is mid-eval
+# (`in_eval`), it schedules an InterruptException onto the backend task —
+# exactly what a real SIGINT would do. `eval_user_input` turns that into an
+# error response and the backend loop keeps running, so your REPL survives.
+# When the backend is idle, the original clear-the-line behavior is preserved.
+#
+# No timer, no time limit: a legitimately long task runs untouched until you
+# decide to stop it.
+const _ORIG_CTRLC = Base.IdDict{Any,Function}()
+
+function install_interrupt_keybinding!(repl)
+    isdefined(repl, :interface) || return nothing
+    for mode in repl.interface.modes
+        mode isa REPL.LineEdit.Prompt || continue
+        kd = mode.keymap_dict
+        (haskey(kd, '\x03') && kd['\x03'] isa Function) || continue
+        # Capture the true original once, so repeated start!() calls don't nest wrappers.
+        orig = get!(_ORIG_CTRLC, mode, kd['\x03'])
+        kd['\x03'] = (s, p, c) -> begin
+            be = Base.active_repl_backend
+            if be !== nothing && getfield(be, :in_eval)
+                schedule(getfield(be, :backend_task), InterruptException(); error=true)
+                return :ignore
+            end
+            return Base.invokelatest(orig, s, p, c)
+        end
+    end
+    return nothing
 end
 
 function stop!()

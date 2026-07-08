@@ -1,5 +1,21 @@
 using JSON3
 
+# Run `cmd`, capturing stdout, but never block longer than `timeout` seconds.
+# Belt-and-suspenders backstop for the Claude CLI health-check (see below); on
+# timeout we kill the process and return "" (treated as "not configured" —
+# purely cosmetic, it only drives the startup splash).
+function _read_cmd_timeout(cmd::Cmd; timeout::Real = 5.0)
+    proc = open(pipeline(cmd; stderr = devnull))
+    timer = Timer(_ -> (process_running(proc) && kill(proc)), timeout)
+    try
+        return read(proc, String)
+    catch
+        return ""
+    finally
+        close(timer)
+    end
+end
+
 function check_claude_status()
     # Check if claude command exists
     try
@@ -8,19 +24,24 @@ function check_claude_status()
         return :claude_not_found
     end
 
-    # Check if MCP server is already configured
+    # Check if the julia-repl MCP server is configured.
+    #
+    # We use `claude mcp get julia-repl`, NOT `claude mcp list`: newer Claude CLIs
+    # health-check servers, and `list` health-checks *every* configured server —
+    # so one unreachable/slow server elsewhere stalls REPL startup for ~30s.
+    # `get julia-repl` only checks this one server (local + already running here),
+    # so it returns promptly. The timeout above is a backstop.
     try
-        output = read(`claude mcp list`, String)
-        if contains(output, "julia-repl")
-            # Detect transport method
-            if contains(output, "http://localhost:3000")
-                return :configured_http
-            elseif contains(output, "mcp-julia-adapter")
-                return :configured_script
-            else
-                return :configured_unknown
-            end
+        output = _read_cmd_timeout(`claude mcp get julia-repl`; timeout = 5.0)
+        # Detect transport method (markers appear only when configured)
+        if contains(output, "http://localhost:3000")
+            return :configured_http
+        elseif contains(output, "mcp-julia-adapter")
+            return :configured_script
+        elseif contains(output, "Scope:") || contains(output, "Status:")
+            return :configured_unknown
         else
+            # "No MCP server named ..." / empty (timeout) → not configured
             return :not_configured
         end
     catch
@@ -37,11 +58,11 @@ end
 
 function read_gemini_settings()
     gemini_dir, settings_path = get_gemini_settings_path()
-    
+
     if !isfile(settings_path)
         return Dict()
     end
-    
+
     try
         content = read(settings_path, String)
         return JSON3.read(content, Dict)
@@ -52,12 +73,12 @@ end
 
 function write_gemini_settings(settings::Dict)
     gemini_dir, settings_path = get_gemini_settings_path()
-    
+
     # Create .gemini directory if it doesn't exist
     if !isdir(gemini_dir)
         mkdir(gemini_dir)
     end
-    
+
     try
         io = IOBuffer()
         JSON3.pretty(io, settings)
@@ -76,11 +97,11 @@ function check_gemini_status()
     catch
         return :gemini_not_found
     end
-    
+
     # Check if MCP server is configured in settings.json
     settings = read_gemini_settings()
     mcp_servers = get(settings, "mcpServers", Dict())
-    
+
     if haskey(mcp_servers, "julia-repl")
         server_config = mcp_servers["julia-repl"]
         if haskey(server_config, "url") && server_config["url"] == "http://localhost:3000"
@@ -97,11 +118,11 @@ end
 
 function add_gemini_mcp_server(transport_type::String)
     settings = read_gemini_settings()
-    
+
     if !haskey(settings, "mcpServers")
         settings["mcpServers"] = Dict()
     end
-    
+
     if transport_type == "http"
         settings["mcpServers"]["julia-repl"] = Dict(
             "url" => "http://localhost:3000"
@@ -113,18 +134,18 @@ function add_gemini_mcp_server(transport_type::String)
     else
         return false
     end
-    
+
     return write_gemini_settings(settings)
 end
 
 function remove_gemini_mcp_server()
     settings = read_gemini_settings()
-    
+
     if haskey(settings, "mcpServers") && haskey(settings["mcpServers"], "julia-repl")
         delete!(settings["mcpServers"], "julia-repl")
         return write_gemini_settings(settings)
     end
-    
+
     return true  # Already removed
 end
 
@@ -135,7 +156,7 @@ function setup()
     # Show current status
     println("🔧 MCPRepl Setup")
     println()
-    
+
     # Claude status
     if claude_status == :claude_not_found
         println("📊 Claude status: ❌ Claude Code not found in PATH")
@@ -148,7 +169,7 @@ function setup()
     else
         println("📊 Claude status: ❌ MCP server not configured")
     end
-    
+
     # Gemini status
     if gemini_status == :gemini_not_found
         println("📊 Gemini status: ❌ Gemini CLI not found in PATH")
@@ -165,7 +186,7 @@ function setup()
 
     # Show options
     println("Available actions:")
-    
+
     # Claude options
     if claude_status != :claude_not_found
         println("   Claude Code:")
@@ -178,7 +199,7 @@ function setup()
             println("     [2] Add Claude script transport")
         end
     end
-    
+
     # Gemini options
     if gemini_status != :gemini_not_found
         println("   Gemini CLI:")
@@ -191,7 +212,7 @@ function setup()
             println("     [5] Add Gemini script transport")
         end
     end
-    
+
     println()
     print("   Enter choice: ")
 

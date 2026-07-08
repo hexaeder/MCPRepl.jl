@@ -217,4 +217,53 @@ using Dates
             end
         end
     end
+
+    @testset "Large Output Truncation" begin
+        # Small output passes through untouched
+        small = "just a little output\n"
+        @test MCPRepl.maybe_truncate_output(small) === small
+
+        # Output at the threshold is not truncated
+        at_limit = repeat("x", MCPRepl.MAX_OUTPUT_CHARS)
+        @test MCPRepl.maybe_truncate_output(at_limit) == at_limit
+
+        # Oversized output is truncated to head + marker + tail, and shrinks
+        big = "HEAD-MARKER\n" * repeat("y", MCPRepl.MAX_OUTPUT_CHARS * 2) * "\nTAIL-MARKER"
+        result = MCPRepl.maybe_truncate_output(big)
+        @test length(result) < length(big)
+        @test startswith(result, "HEAD-MARKER")          # head preserved (holds ERROR: line)
+        @test endswith(result, "TAIL-MARKER")            # tail preserved
+        @test occursin("output truncated", result)
+        @test occursin("Full output written to:", result)
+
+        # The pointed-to file exists and holds the complete original output
+        m = match(r"Full output written to: (\S+)", result)
+        @test m !== nothing
+        path = m.captures[1]
+        @test isfile(path)
+        @test read(path, String) == big
+        rm(path; force = true)
+
+        # Unicode boundaries are handled (no invalid-index crash)
+        unicode_big = repeat("λ→∑", MCPRepl.MAX_OUTPUT_CHARS)
+        u_result = MCPRepl.maybe_truncate_output(unicode_big)
+        @test length(u_result) < length(unicode_big)
+        um = match(r"Full output written to: (\S+)", u_result)
+        um !== nothing && rm(um.captures[1]; force = true)
+    end
+
+    @testset "Install-prompt suppression" begin
+        hooks = MCPRepl.REPL.install_packages_hooks
+        saved = copy(hooks)
+        try
+            MCPRepl.suppress_install_prompts!()
+            # Exactly one no-op hook that reports "handled" (true) without prompting,
+            # so a missing `using Foo` surfaces Base's ArgumentError instead of stdin.
+            @test length(hooks) == 1
+            @test hooks[1](Symbol[:SomeMissingPkg]) === true
+        finally
+            empty!(hooks)
+            append!(hooks, saved)
+        end
+    end
 end
