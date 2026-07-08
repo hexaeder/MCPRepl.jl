@@ -165,6 +165,9 @@ def private_repl_e2e(root, registry_dir, tools_cache):
         assert "42" in r3["result"]["content"][0]["text"], r3
         print("PASS: private REPL routed by word + live state persists")
 
+        # Interrupt a running eval on this (real, interactive) private REPL.
+        cancellation_e2e(registry_dir, tools_cache, word, projC, env=env)
+
         # Kill it via the adapter; the tmux session must be gone.
         out = drive_adapter(registry_dir, tools_cache, projC, [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -180,6 +183,57 @@ def private_repl_e2e(root, registry_dir, tools_cache):
         print("PASS: private REPL killed (tmux session gone)")
     finally:
         tmux("kill-server")  # tear down the isolated tmux server, best-effort
+
+
+def cancellation_e2e(registry_dir, tools_cache, word, cwd, env=None):
+    """Interrupt a running eval end-to-end: start an (effectively) infinite loop
+    on a real interactive REPL, then send notifications/cancelled and confirm the
+    adapter's interrupt lands as a real InterruptException (rather than hanging).
+
+    Must target a REPL with a real backend (an interactive one — the private tmux
+    REPL, not the headless `julia -e` servers). Uses a timed driver (not the batch
+    `drive_adapter`): the cancellation must arrive *after* Julia has entered the
+    eval, which is exactly the real Esc case.
+    """
+    wrapper = os.path.join(registry_dir, "_run_cancel.py")
+    with open(wrapper, "w") as fh:
+        fh.write(
+            "import importlib.util, importlib.machinery, os\n"
+            "l=importlib.machinery.SourceFileLoader('a', %r)\n"
+            "s=importlib.util.spec_from_loader('a', l); a=importlib.util.module_from_spec(s); l.exec_module(a)\n"
+            "a.REGISTRY_DIR=%r; a.TOOLS_CACHE=%r\n"
+            "a.main()\n" % (ADAPTER, registry_dir, tools_cache))
+
+    p = subprocess.Popen([sys.executable, wrapper], stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, cwd=cwd, env=env)
+
+    def send(m):
+        p.stdin.write(json.dumps(m) + "\n")
+        p.stdin.flush()
+
+    send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+          "params": {"capabilities": {}}})
+    # A tight loop with a yield point (sleep) so the async InterruptException can
+    # actually land. `repl=<word>` pins routing to the chosen REPL.
+    send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+          "params": {"name": "exec_repl",
+                     "arguments": {"expression": "while true; sleep(0.01); end",
+                                   "repl": word}}})
+    time.sleep(4)   # let Julia receive the call and enter the eval (in_eval=true)
+    send({"jsonrpc": "2.0", "method": "notifications/cancelled",
+          "params": {"requestId": 2, "reason": "test"}})
+    # communicate() flushes and closes stdin (EOF -> adapter shuts down), then
+    # collects stdout/stderr. Don't close stdin ourselves or it double-closes.
+    out, err = p.communicate(timeout=30)
+    if err.strip():
+        print("  cancel adapter stderr:", err.strip())
+    msgs = [json.loads(l) for l in out.splitlines() if l.strip()]
+    r2 = [o for o in msgs if o.get("id") == 2]
+    assert r2, "the cancelled exec_repl must still return a (interrupted) reply"
+    text = json.dumps(r2[0])
+    assert "InterruptException" in text, "eval should end with an InterruptException: %s" % text
+    print("PASS: running eval interrupted via notifications/cancelled")
 
 
 def main():
@@ -243,7 +297,9 @@ def main():
         assert not emitted_elicit, "unique nearest-ancestor B should NOT prompt"
         print("PASS: unique nearest-ancestor (B) routed silently, no prompt")
 
-        # --- private (agent-spawned) REPL: spawn -> route -> kill via adapter ---
+        # --- private (agent-spawned) REPL: spawn -> route -> kill via adapter,
+        #     plus interrupting a running eval via notifications/cancelled (the
+        #     private REPL is a real interactive backend, unlike headless A/B). ---
         private_repl_e2e(root, registry_dir, tools_cache)
 
         print("\nALL INTEGRATION CHECKS PASSED")

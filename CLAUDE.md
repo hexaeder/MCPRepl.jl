@@ -86,6 +86,22 @@ supported transport.
   `prompts/julia_repl_workflow.md` + `prompts/private_repl_workflow.md`, so it
   works even with zero REPLs) and advertises a teaser via `initialize.instructions`.
 
+### Cancellation (interrupting a running eval)
+- The adapter honors MCP `notifications/cancelled` (e.g. the user pressing Esc). It
+  posts a plain `interrupt` request to whichever REPL is serving the cancelled
+  call; the Julia handler calls `request_interrupt!`, which schedules an
+  `InterruptException` onto the REPL backend task — the same primitive as the
+  Ctrl-C keybinding. The eval ends with an `InterruptException` and the REPL
+  survives for the next call.
+- This requires the adapter's stdin reader to stay responsive during a blocking
+  eval, so routed calls are forwarded on **worker threads** (`_dispatch_forward` /
+  `_forward_worker`), serialized per-REPL by `_PORT_LOCKS`, with the in-flight
+  `id -> port` map (`_INFLIGHT`) telling a cancellation where to send the interrupt.
+  `HTTP.serve!` on the Julia side already tasks each request separately, so the
+  `interrupt` lands while `exec_repl` is mid-eval. On shutdown `drain_workers`
+  lets in-flight replies finish (bounded). Interrupts only land at Julia safepoints
+  (e.g. allocations, `sleep`, I/O); a truly tight loop with no safepoint may not.
+
 ### Tool Capabilities
 
 #### `exec_repl` tool:

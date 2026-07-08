@@ -32,6 +32,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -60,6 +61,24 @@ SESSION_PREFIX = "mcprepl-"
 SPAWNED_SESSIONS = set()     # tmux session names spawned by *this* adapter
 SPAWN_TIMEOUT = 180.0        # seconds to wait for a spawned REPL to register
 SPAWN_POLL = 0.5             # poll interval while waiting
+
+# --- Concurrency: keep the stdin reader responsive during a long eval ---------
+# A routed tools/call (exec_repl) blocks on Julia's HTTP response for as long as
+# the code runs. If we did that on the reader thread, the client's
+# notifications/cancelled (Esc) would sit unread in our stdin pipe until the eval
+# finished — never interrupting it. So we forward routed calls on worker threads
+# and keep reading stdin. `_EMIT_LOCK` serializes stdout writes across threads;
+# `_INFLIGHT` maps a request id to the REPL port handling it, so a cancellation
+# can post an `interrupt` to that REPL; `_PORT_LOCKS` serializes evals per REPL
+# (one backend, one global stdout redirect) so concurrent calls can't interleave.
+_EMIT_LOCK = threading.Lock()
+_INFLIGHT = {}               # request id -> port currently serving it
+_INFLIGHT_LOCK = threading.Lock()
+_PORT_LOCKS = {}             # port -> Lock serializing that REPL's evals
+_PORT_LOCKS_GUARD = threading.Lock()
+_WORKERS = set()             # live forward-worker threads, for graceful drain
+_WORKERS_GUARD = threading.Lock()
+DRAIN_TIMEOUT = 10.0         # seconds to let in-flight replies finish on shutdown
 
 # Server-level teaser returned from `initialize`, so an agent knows when to reach
 # for the Julia REPL even before any REPL exists.
@@ -202,8 +221,9 @@ def repl_reachable(port):
 # --- JSON-RPC framing helpers ------------------------------------------------
 
 def emit(obj):
-    """Write one JSON-RPC message to stdout."""
-    print(json.dumps(obj), flush=True)
+    """Write one JSON-RPC message to stdout (thread-safe)."""
+    with _EMIT_LOCK:
+        print(json.dumps(obj), flush=True)
 
 
 def error_result(request_id, message, code=-32603):
@@ -326,6 +346,12 @@ class Router:
     def as_selection(self, repl):
         return {"project_dir": repl.get("project_dir", ""),
                 "port": repl["port"], "word": repl.get("word", "?")}
+
+    def drop_selection(self):
+        """Forget the current selection so the next call re-resolves (a worker
+        thread calls this when its REPL died mid-call)."""
+        self.selected = None
+        self.last_mtime = None
 
     def repl_rank(self, repl):
         """Nearness of a REPL to this session (smaller = nearer).
@@ -817,7 +843,13 @@ def handle_message(router, request):
     is_notification = "id" not in request
     request_id = request.get("id")
 
-    # Notifications: forward-and-forget semantics, but nothing needs a REPL.
+    # Cancellation (a notification): the client asks us to abort an in-flight
+    # request. Interrupt the eval on whichever REPL is serving it.
+    if method == "notifications/cancelled":
+        _handle_cancelled(request)
+        return
+
+    # Other notifications: forward-and-forget semantics, but nothing needs a REPL.
     if is_notification:
         return
 
@@ -892,38 +924,106 @@ def handle_message(router, request):
         if selection is None:
             # prompt_for_repl returned None -> selection was just made.
             selection = router.selected
-        _forward_call(router, selection, request)
+        # Forward on a worker thread so a long eval doesn't block the reader (and
+        # thus a cancellation). Resolution above stays on the reader thread, so
+        # router state is only mutated single-threaded.
+        _dispatch_forward(router, selection, request)
         return
 
     # Anything else: try the selected/any REPL, else method-not-found.
     emit(error_result(request_id, "Method not found: %s" % method, code=-32601))
 
 
-def _forward_call(router, selection, request):
+def _port_lock(port):
+    with _PORT_LOCKS_GUARD:
+        lock = _PORT_LOCKS.get(port)
+        if lock is None:
+            lock = _PORT_LOCKS[port] = threading.Lock()
+        return lock
+
+
+def _dispatch_forward(router, selection, request):
+    """Forward a routed call on a worker thread so the reader stays responsive.
+
+    The in-flight id->port mapping is recorded HERE, on the reader thread, before
+    the worker starts — so a cancellation that arrives on the very next line
+    always finds the port (no race with the worker spinning up).
+    """
     request_id = request.get("id")
-    try:
-        reply = post_to_repl(selection["port"], request)
-        if reply is not None:
-            emit(reply)
-    except urllib.error.URLError:
-        # The chosen REPL died mid-session: drop it and re-resolve once.
-        router.selected = None
-        router.last_mtime = None
-        selection2, alt = router.resolve(request)
-        if selection2 is None and alt is not None:
-            emit(alt)
-            return
-        if selection2 is None:
-            selection2 = router.selected
+    port = selection["port"]
+    with _INFLIGHT_LOCK:
+        _INFLIGHT[request_id] = port
+    t = threading.Thread(target=_forward_worker, args=(router, selection, request),
+                         daemon=True)
+    with _WORKERS_GUARD:
+        _WORKERS.add(t)
+    t.start()
+
+
+def drain_workers(timeout=DRAIN_TIMEOUT):
+    """Wait (bounded) for in-flight forward workers to emit their replies.
+
+    Called on shutdown so a reply whose eval was just finishing (or was cancelled)
+    still reaches the client. A genuinely stuck eval can't hold us past `timeout`.
+    """
+    deadline = time.time() + timeout
+    with _WORKERS_GUARD:
+        pending = list(_WORKERS)
+    for t in pending:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        t.join(timeout=remaining)
+
+
+def _forward_worker(router, selection, request):
+    request_id = request.get("id")
+    port = selection["port"]
+    # Serialize evals per REPL: one backend task + one global stdout redirect on
+    # the Julia side means two concurrent execute_repllike calls would corrupt
+    # each other's captured output. A cancellation still reaches the reader thread
+    # (which never takes this lock), so a blocked-on-lock call is still cancellable.
+    with _port_lock(port):
         try:
-            reply = post_to_repl(selection2["port"], request)
+            reply = post_to_repl(port, request)
             if reply is not None:
                 emit(reply)
+        except urllib.error.URLError:
+            # The chosen REPL died mid-call: forget it (next call re-resolves).
+            router.drop_selection()
+            emit(error_result(
+                request_id,
+                "Selected Julia REPL became unreachable (it may have exited). "
+                "Retry — the adapter will re-resolve to a live REPL."))
         except Exception as e:
-            emit(error_result(request_id,
-                              "Selected Julia REPL is unreachable: %s" % e))
-    except Exception as e:
-        emit(error_result(request_id, "Internal error: %s" % e))
+            emit(error_result(request_id, "Internal error: %s" % e))
+        finally:
+            with _INFLIGHT_LOCK:
+                _INFLIGHT.pop(request_id, None)
+            with _WORKERS_GUARD:
+                _WORKERS.discard(threading.current_thread())
+
+
+def _handle_cancelled(request):
+    """Honor an MCP `notifications/cancelled`: interrupt the eval in flight.
+
+    We look up the port serving the cancelled request id and post an `interrupt`
+    to that REPL, which schedules an InterruptException onto its backend task
+    (identical to a local Ctrl-C). Best-effort and per-spec: if the id isn't in
+    flight (already finished, or was never a routed call) we simply do nothing,
+    and any late response the worker still emits is the client's to ignore.
+    """
+    params = request.get("params", {}) or {}
+    rid = params.get("requestId")
+    with _INFLIGHT_LOCK:
+        port = _INFLIGHT.get(rid)
+    if port is None:
+        return
+    try:
+        post_to_repl(port, {"jsonrpc": "2.0", "id": "mcprepl-interrupt-%s" % rid,
+                            "method": "interrupt"}, timeout=5)
+    except Exception:
+        pass
 
 
 def _cache_tools(reply):
@@ -990,6 +1090,7 @@ def main():
                 if "id" in request:
                     emit(error_result(request.get("id"), "Internal error: %s" % e))
     finally:
+        drain_workers()          # let in-flight replies finish (bounded)
         reap_spawned_sessions()
 
 

@@ -65,6 +65,23 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                 return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(response))
             end
 
+            # Handle interrupt: cancel a long-running agent eval from a *second*
+            # request. HTTP.serve! handles each request on its own task, so this
+            # runs while an `exec_repl` is blocked on the backend; it schedules an
+            # InterruptException onto the backend task (same as Ctrl-C). The adapter
+            # posts this when the client sends notifications/cancelled. Best-effort:
+            # `interrupted` is false if nothing was running.
+            if request["method"] == "interrupt"
+                interrupted = try
+                    MCPRepl.request_interrupt!()
+                catch
+                    false
+                end
+                response = Dict("jsonrpc" => "2.0", "id" => request["id"],
+                                "result" => Dict("interrupted" => interrupted))
+                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(response))
+            end
+
 
             # Handle tool listing
             if request["method"] == "tools/list"

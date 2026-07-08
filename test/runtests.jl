@@ -217,6 +217,41 @@ using Sockets
                 sleep(0.1)
             end
         end
+
+        @testset "Interrupt method" begin
+            # With no interactive REPL backend (as in this test process),
+            # request_interrupt! is a no-op that reports nothing was running.
+            @test MCPRepl.request_interrupt!() == false
+
+            test_port = 3005
+            server = MCPRepl.start_mcp_server(tools, test_port)
+            sleep(0.1)
+            try
+                request_body = JSON.json(Dict(
+                    "jsonrpc" => "2.0",
+                    "id" => 7,
+                    "method" => "interrupt"
+                ))
+
+                response = HTTP.post(
+                    "http://localhost:$test_port/",
+                    ["Content-Type" => "application/json"],
+                    request_body
+                )
+
+                @test response.status == 200
+                json_response = JSON.parse(String(response.body))
+                @test json_response["id"] == 7
+                # No backend eval in flight -> interrupted == false, but the
+                # method is handled (not a "method not found" error).
+                @test haskey(json_response, "result")
+                @test json_response["result"]["interrupted"] == false
+
+            finally
+                MCPRepl.stop_mcp_server(server)
+                sleep(0.1)
+            end
+        end
     end
 
     @testset "Large Output Truncation" begin

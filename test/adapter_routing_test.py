@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADAPTER = os.path.join(REPO, "mcp-julia-adapter")
@@ -474,6 +475,66 @@ def test_autokill_and_reap(ad, reg):
         ad.SPAWNED_SESSIONS.clear()
 
 
+# --- cancellation: notifications/cancelled -> interrupt the serving REPL ------
+
+class _SlowInterruptibleHandler(http.server.BaseHTTPRequestHandler):
+    """A fake REPL: `tools/call` blocks until an `interrupt` arrives (or times
+    out), mimicking Julia serving a second request while an eval is in flight."""
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        req = json.loads(self.rfile.read(n))
+        m = req.get("method")
+        if m == "interrupt":
+            self.server.interrupts.append(req)
+            res = {"jsonrpc": "2.0", "id": req.get("id"),
+                   "result": {"interrupted": True}}
+        elif m == "tools/call":
+            for _ in range(300):                 # up to ~3s, cut short on interrupt
+                if self.server.interrupts:
+                    break
+                time.sleep(0.01)
+            res = {"jsonrpc": "2.0", "id": req["id"],
+                   "result": {"content": [{"type": "text", "text": "eval-finished"}]}}
+        else:
+            res = {"jsonrpc": "2.0", "id": req.get("id"), "result": {}}
+        body = json.dumps(res).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def test_cancellation(reg):
+    # ThreadingHTTPServer so the interrupt POST is served concurrently with the
+    # still-blocked tools/call — exactly how Julia's HTTP.serve! behaves.
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowInterruptibleHandler)
+    srv.interrupts = []
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        clear(reg)
+        write_repl(reg, 1, port, "otter", "/tmp/projA")
+        out = _drive(reg, "/tmp", [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            call(2),   # exec_repl -> routed to the slow fake REPL (blocks)
+            # ...and while it blocks, the client cancels it (a notification).
+            {"jsonrpc": "2.0", "method": "notifications/cancelled",
+             "params": {"requestId": 2, "reason": "test"}},
+        ])
+        assert srv.interrupts, "adapter must post an interrupt on cancellation"
+        assert srv.interrupts[0].get("method") == "interrupt"
+        # The routed reply still comes back (its id is the caller's to ignore).
+        assert any(o.get("id") == 2 and "result" in o for o in out)
+        print("PASS cancellation -> interrupt posted to the serving REPL")
+    finally:
+        srv.shutdown()
+
+
 def main():
     reg = tempfile.mkdtemp(prefix="mcprepl-adapter-test-")
     try:
@@ -489,6 +550,7 @@ def main():
         test_initialize_instructions(ad, reg)
         test_spawn_kill(ad, reg)
         test_autokill_and_reap(ad, reg)
+        test_cancellation(reg)
         print("\nALL ADAPTER ROUTING TESTS PASSED")
         return 0
     finally:

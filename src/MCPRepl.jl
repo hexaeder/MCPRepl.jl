@@ -702,6 +702,20 @@ end
 # decide to stop it.
 const _ORIG_CTRLC = Base.IdDict{Any,Function}()
 
+# Schedule an InterruptException onto the REPL backend task iff it is mid-eval —
+# exactly what a real SIGINT does. Returns true if an interrupt was scheduled.
+# Shared by the Ctrl-C keybinding (local user) and the HTTP `interrupt` method
+# (remote cancellation via the adapter): both must behave identically, and both
+# run on a task *other* than the backend, so the exception actually lands.
+function request_interrupt!()
+    be = Base.active_repl_backend
+    if be !== nothing && getfield(be, :in_eval)
+        schedule(getfield(be, :backend_task), InterruptException(); error = true)
+        return true
+    end
+    return false
+end
+
 function install_interrupt_keybinding!(repl)
     isdefined(repl, :interface) || return nothing
     for mode in repl.interface.modes
@@ -711,11 +725,7 @@ function install_interrupt_keybinding!(repl)
         # Capture the true original once, so repeated start!() calls don't nest wrappers.
         orig = get!(_ORIG_CTRLC, mode, kd['\x03'])
         kd['\x03'] = (s, p, c) -> begin
-            be = Base.active_repl_backend
-            if be !== nothing && getfield(be, :in_eval)
-                schedule(getfield(be, :backend_task), InterruptException(); error=true)
-                return :ignore
-            end
+            request_interrupt!() && return :ignore
             return Base.invokelatest(orig, s, p, c)
         end
     end

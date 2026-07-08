@@ -87,6 +87,14 @@ the adapter's `spawn_repl` tool: a real interactive Julia session in a detached
 the shared pool, reachable only by its word-id, and auto-killed when the client
 session ends (`persist: true` opts out). Kill it explicitly with `kill_repl`.
 
+### Cancelling a running eval
+
+The adapter honors MCP cancellation (e.g. pressing Esc in Claude Code): it
+interrupts the running Julia eval — scheduling an `InterruptException` onto the
+backend, just like Ctrl-C — instead of leaving it to run to completion. The REPL
+survives and is ready for the next call. (Interrupts land at Julia safepoints, so
+a tight loop with no allocation/`sleep`/I/O may not be interruptible.)
+
 ## Disclaimer and Security Warning
 
 The core functionality of MCPRepl.jl involves opening a network port and executing any code that is sent to it. This is inherently dangerous and borderline stupid, but that's how it is in the great new world of coding agents.
