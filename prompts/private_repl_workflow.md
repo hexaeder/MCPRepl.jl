@@ -1,9 +1,10 @@
 # Private (Agent-Spawned) Julia REPLs
 
-Everything above describes working in a **shared** REPL that the user started. If
-**no** REPL is available — or you have a longer-running task where you want to
-keep live state — you can start your own **private** REPL with the `spawn_repl`
-tool. This section refines the "never start/kill a server" rule above: you MAY
+The section above introduced private REPLs as one option when no suitable REPL is
+running. Here is the detail. If **no** REPL fits your task — or you have a
+longer-running task where you want to keep live state — you can start your own
+**private** REPL with the `spawn_repl` tool. This refines the "never start/kill a
+shared server" rule above: you MAY
 manage *your own private* REPL, but **only** through the `spawn_repl` / `kill_repl`
 tools (never via `julia`/`pkill`/`kill` in bash, and never touch the user's
 shared REPL).

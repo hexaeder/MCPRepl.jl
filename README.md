@@ -34,16 +34,18 @@ Within Julia, call
 ``` julia-repl
 julia> using MCPRepl; MCPRepl.start!()
 ```
-to open the HTTP endpoints.
+to make the REPL discoverable by the adapter.
 
-For Claude Code, you can run the following command to make it aware of the MCP server
+The MCP server your client connects to is the bundled `mcp-julia-adapter` (a small
+stdio script). It discovers running REPLs, routes calls to the right one, and can
+even spawn private REPLs for an agent when none is running. Register it once with
+Claude Code:
 ```sh
-claude mcp add julia-repl http://localhost:3000 --transport http
+claude mcp add julia-repl /path/to/MCPRepl/mcp-julia-adapter
 ```
 
-You can also run `MCPRepl.setup()` for an interactive helper that configures
-Claude Code / Gemini with either the HTTP transport or the (recommended) script
-transport via the bundled `mcp-julia-adapter`.
+The easiest way is `MCPRepl.setup()`, an interactive helper that configures Claude
+Code / Gemini with the adapter (choose local or user scope).
 
 ## Multiple REPLs (multiplexing)
 
@@ -54,8 +56,8 @@ to the right one automatically. There is **no central daemon**:
   `3000`; later ones take an OS-assigned free port) and advertises itself with a
   small file in `~/.mcprepl/registry/`. Each REPL gets a short, stable
   **word-id** (e.g. `otter`) shown in its startup banner.
-- The **script transport** (`mcp-julia-adapter`) is the multiplexer. It is
-  launched per-project by the agent, reads the registry, and routes each call:
+- The **adapter** (`mcp-julia-adapter`) is the MCP server and the multiplexer. It
+  is launched per-project by the client, reads the registry, and routes each call:
   - a single REPL, or a unique nearest-ancestor of the agent's working
     directory, is used **silently**;
   - if the choice is ambiguous — or a *nearer* REPL appears mid-session — it asks
@@ -75,8 +77,15 @@ You can also switch REPLs explicitly:
 - **`list_repls` / `select_repl` tools** — the agent can enumerate REPLs and set
   the active one by word-id without any dialog.
 
-Use the script transport (not the fixed-port HTTP one) if you want multiplexing.
 Set `MCPREPL_REGISTRY_DIR` to relocate/isolate the registry directory.
+
+### Private (agent-spawned) REPLs
+
+When no suitable REPL is running, an agent can start its own **private** REPL via
+the adapter's `spawn_repl` tool: a real interactive Julia session in a detached
+`tmux` session (so you can `tmux attach` to watch or take over). It is hidden from
+the shared pool, reachable only by its word-id, and auto-killed when the client
+session ends (`persist: true` opts out). Kill it explicitly with `kill_repl`.
 
 ## Disclaimer and Security Warning
 

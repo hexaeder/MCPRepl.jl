@@ -38,7 +38,13 @@ MCPRepl.stop!()   # Stop server when done
 
 ## MCP Server Configuration
 
-The MCP server runs on `http://localhost:3000` and provides tools for Julia development.
+The MCP server the client connects to is the stdio **`mcp-julia-adapter`**, not the
+Julia REPL. Each REPL runs a plain JSON-RPC-over-HTTP endpoint (first REPL on port
+3000, later ones on ephemeral ports) that only answers `tools/list`/`tools/call`/
+`ping`; the adapter owns the MCP handshake (`initialize`/`serverInfo`), the
+`usage_instructions`/`list_repls`/`select_repl`/`spawn_repl`/`kill_repl` tools, and
+all routing. There is no HTTP transport or OAuth anymore — the adapter is the only
+supported transport.
 
 ### Server Management
 - **MCPRepl.start!()**: Starts a server and registers it for discovery. Binds

@@ -274,9 +274,9 @@ function wordid_for(project_dir::AbstractString, taken = _claimed_words())
     return WORDLIST[base]  # every word taken (>48 live REPLs) — reuse deterministic pick
 end
 
-# Prefer the historic hardcoded port so single-REPL HTTP-transport users are
-# unaffected; if it is already bound (another REPL is there), take an OS-assigned
-# ephemeral port instead. Returns the port to bind.
+# Prefer the historic default port 3000 for the first REPL; if it is already bound
+# (another REPL is there), take an OS-assigned ephemeral port instead so a second
+# REPL can coexist. Returns the port to bind.
 function choose_port(preferred::Int = 3000)
     try
         s = Sockets.listen(Sockets.localhost, preferred)
@@ -534,27 +534,9 @@ function start!(; verbose::Bool = true, private::Bool = false)
 
     suppress_install_prompts!() # `using MissingPkg` errors cleanly instead of hanging on a stdin prompt
 
-    usage_instructions_tool = MCPTool(
-        "usage_instructions",
-        "Get detailed instructions for proper Julia REPL usage, best practices, and workflow guidelines for AI agents.",
-        Dict(
-            "type" => "object",
-            "properties" => Dict(),
-            "required" => []
-        ),
-        args -> begin
-            try
-                workflow_path = joinpath(dirname(dirname(@__FILE__)), "prompts", "julia_repl_workflow.md")
-                if isfile(workflow_path)
-                    return read(workflow_path, String)
-                else
-                    return "Error: julia_repl_workflow.md not found at $workflow_path"
-                end
-            catch e
-                return "Error reading usage instructions: $e"
-            end
-        end
-    )
+    # Note: `usage_instructions` is owned by the adapter, not the REPL. The adapter
+    # serves it even when no REPL is running (exactly when a bootstrapping agent
+    # needs it), so there is no Julia-side copy.
 
     repl_tool = MCPTool(
         "exec_repl",
@@ -563,7 +545,7 @@ function start!(; verbose::Bool = true, private::Bool = false)
 
         **PREREQUISITE**: Before using this tool, you MUST first call the `usage_instructions` tool to understand proper Julia REPL workflow, best practices, and etiquette for shared REPL usage.
 
-        Once this function is available, **never** use `julia` commands in bash, always use the REPL.
+        Prefer the REPL for anything iterative or stateful: you skip startup/precompile latency (TTFX) and keep live state across calls. Not every task needs it, though — a self-contained one-shot is fine to run as `julia --project=<path> --startup-file=no somescript.jl` in bash (always pass `--startup-file=no` there so the user's startup.jl doesn't interfere).
 
         The tool returns raw text output containing: all printed content from stdout and stderr streams, plus the mime text/plain representation of the expression's return value (unless the expression ends with a semicolon).
 
@@ -658,7 +640,7 @@ function start!(; verbose::Bool = true, private::Bool = false)
     word = wordid_for(project_dir)
 
     # Create and start server
-    SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool, whitespace_tool, investigate_tool], port; verbose=verbose, word=word)
+    SERVER[] = start_mcp_server([repl_tool, whitespace_tool, investigate_tool], port; verbose=verbose, word=word)
 
     # Advertise this REPL to the shared registry so the adapter can route to it.
     register_repl!(port, word; private = private)

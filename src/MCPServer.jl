@@ -20,66 +20,11 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
         body = String(req.body)
 
         try
-            # Handle OAuth well-known metadata requests first (before JSON parsing)
-            if req.target == "/.well-known/oauth-authorization-server"
-                oauth_metadata = Dict(
-                    "issuer" => "http://localhost:$port",
-                    "authorization_endpoint" => "http://localhost:$port/oauth/authorize",
-                    "token_endpoint" => "http://localhost:$port/oauth/token",
-                    "registration_endpoint" => "http://localhost:$port/oauth/register",
-                    "grant_types_supported" => ["authorization_code", "client_credentials"],
-                    "response_types_supported" => ["code"],
-                    "scopes_supported" => ["read", "write"],
-                    "client_registration_types_supported" => ["dynamic"],
-                    "code_challenge_methods_supported" => ["S256"]
-                )
-                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(oauth_metadata))
-            end
-
-            # Handle dynamic client registration
-            if req.target == "/oauth/register" && req.method == "POST"
-                client_id = "claude-code-" * string(rand(UInt64), base=16)
-                client_secret = string(rand(UInt128), base=16)
-
-                registration_response = Dict(
-                    "client_id" => client_id,
-                    "client_secret" => client_secret,
-                    "client_id_issued_at" => Int(floor(time())),
-                    "grant_types" => ["authorization_code", "client_credentials"],
-                    "response_types" => ["code"],
-                    "redirect_uris" => ["http://localhost:8080/callback", "http://127.0.0.1:8080/callback"],
-                    "token_endpoint_auth_method" => "client_secret_basic",
-                    "scope" => "read write"
-                )
-                return HTTP.Response(201, ["Content-Type" => "application/json"], JSON.json(registration_response))
-            end
-
-            # Handle authorization endpoint
-            if startswith(req.target, "/oauth/authorize")
-                # For local development, auto-approve all requests
-                uri = HTTP.URI(req.target)
-                query_params = HTTP.queryparams(uri)
-                redirect_uri = get(query_params, "redirect_uri", "")
-                state = get(query_params, "state", "")
-
-                auth_code = "auth_" * string(rand(UInt64), base=16)
-                redirect_url = "$redirect_uri?code=$auth_code&state=$state"
-
-                return HTTP.Response(302, ["Location" => redirect_url], "")
-            end
-
-            # Handle token endpoint
-            if req.target == "/oauth/token" && req.method == "POST"
-                access_token = "access_" * string(rand(UInt128), base=16)
-
-                token_response = Dict(
-                    "access_token" => access_token,
-                    "token_type" => "Bearer",
-                    "expires_in" => 3600,
-                    "scope" => "read write"
-                )
-                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(token_response))
-            end
+            # This server is not a standalone MCP endpoint: the stdio adapter
+            # (mcp-julia-adapter) is the MCP server the client talks to. Julia only
+            # answers the plain JSON-RPC methods the adapter forwards — tools/list,
+            # tools/call, ping — plus a helpful empty-body error. The MCP handshake
+            # (initialize/serverInfo) and any OAuth dance are owned by the adapter.
 
             # Handle empty body (like GET requests)
             if isempty(body)
@@ -107,25 +52,6 @@ function create_handler(tools::Dict{String, MCPTool}, port::Int)
                     )
                 )
                 return HTTP.Response(400, ["Content-Type" => "application/json"], JSON.json(error_response))
-            end
-
-            # Handle initialization
-            if request["method"] == "initialize"
-                response = Dict(
-                    "jsonrpc" => "2.0",
-                    "id" => request["id"],
-                    "result" => Dict(
-                        "protocolVersion" => "2024-11-05",
-                        "capabilities" => Dict(
-                            "tools" => Dict()
-                        ),
-                        "serverInfo" => Dict(
-                            "name" => "julia-mcp-server",
-                            "version" => "1.0.0"
-                        )
-                    )
-                )
-                return HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(response))
             end
 
             # Handle notifications (no id field) — no response body needed
@@ -262,46 +188,20 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
     # Suppress HTTP server logging
     server = HTTP.serve!(handler, port; verbose=false)
 
+    # This is a REPL bridge, not a standalone MCP server: the stdio adapter is the
+    # server clients connect to, and it discovers this REPL through the registry.
+    # So the banner just confirms the REPL registered itself and how to reach it.
     if verbose
-        # Check MCP status and show contextual message
+        # Nudge the user to register the adapter if neither client has it configured.
         claude_status = MCPRepl.check_claude_status()
         gemini_status = MCPRepl.check_gemini_status()
-
-        # Claude status
-        if claude_status == :configured_http
-            println("✅ Claude: MCP server configured (HTTP transport)")
-        elseif claude_status == :configured_script
-            println("✅ Claude: MCP server configured (script transport)")
-        elseif claude_status == :configured_unknown
-            println("✅ Claude: MCP server configured")
-        elseif claude_status == :claude_not_found
-            println("⚠️ Claude: Not found in PATH")
-        else
-            println("⚠️ Claude: MCP server not configured")
-        end
-
-        # Gemini status
-        if gemini_status == :configured_http
-            println("✅ Gemini: MCP server configured (HTTP transport)")
-        elseif gemini_status == :configured_script
-            println("✅ Gemini: MCP server configured (script transport)")
-        elseif gemini_status == :configured_unknown
-            println("✅ Gemini: MCP server configured")
-        elseif gemini_status == :gemini_not_found
-            println("⚠️ Gemini: Not found in PATH")
-        else
-            println("⚠️ Gemini: MCP server not configured")
-        end
-
-        # Show setup guidance if needed
         if claude_status == :not_configured || gemini_status == :not_configured
+            println("💡 Call MCPRepl.setup() to register the Julia REPL adapter with your MCP client.")
             println()
-            println("💡 Call MCPRepl.setup() to configure MCP servers interactively")
         end
 
-        println()
         label = word === nothing ? "" : "'$word' "
-        println("🚀 MCP Server $(label)running on port $port with $(length(tools)) tools")
+        println("🚀 Julia REPL $(label)ready on port $port ($(length(tools)) tools) — discoverable by the MCP adapter.")
         if word !== nothing
             portnote = port == 3000 ? "" : " (port 3000 was busy — using $port)"
             println("   🔖 This REPL is '$word'$portnote")
@@ -310,7 +210,7 @@ function start_mcp_server(tools::Vector{MCPTool}, port::Int = 3000; verbose::Boo
         println()  # Add blank line at end of splash
     else
         label = word === nothing ? "" : "'$word' "
-        println("MCP Server $(label)running on port $port with $(length(tools)) tools")
+        println("Julia REPL $(label)ready on port $port ($(length(tools)) tools)")
     end
 
     return MCPServer(port, server, tools_dict)

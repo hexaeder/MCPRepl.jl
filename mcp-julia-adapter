@@ -279,19 +279,17 @@ ADAPTER_TOOLS = [
 def inject_adapter_tools(reply):
     """Append the adapter-local tools to a forwarded tools/list result.
 
-    `usage_instructions` may also be advertised by a Julia REPL, but the adapter
-    intercepts and answers the call itself, so override the listed description to
-    match the adapter's version (keeping listing and behavior consistent).
+    The Julia REPLs expose only exec_repl / investigate_environment /
+    remove-trailing-whitespace; every adapter-owned tool (usage_instructions,
+    list_repls, select_repl, spawn_repl, kill_repl) is added here so it is
+    advertised even when no REPL is running.
     """
     try:
         tools = reply.setdefault("result", {}).setdefault("tools", [])
         by_name = {t.get("name"): t for t in tools}
         for t in ADAPTER_TOOLS:
-            existing = by_name.get(t["name"])
-            if existing is None:
+            if t["name"] not in by_name:
                 tools.append(t)
-            elif t["name"] == "usage_instructions":
-                existing["description"] = t["description"]
     except Exception:
         pass
     return reply
@@ -826,31 +824,16 @@ def handle_message(router, request):
     if method == "initialize":
         caps = request.get("params", {}).get("capabilities", {}) or {}
         router.client_supports_elicitation = "elicitation" in caps
-        # Echo a live REPL's serverInfo if we can; else answer statically. Either
-        # way advertise the adapter's own `prompts` capability (the user-triggered
-        # REPL picker) on top of whatever the REPL offers.
-        repls = read_registry()
-        reply = None
-        for r in repls:
-            try:
-                reply = post_to_repl(r["port"], request, timeout=10)
-                if reply is not None:
-                    break
-            except Exception:
-                continue
-        if reply is None:
-            reply = {"jsonrpc": "2.0", "id": request_id, "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "julia-mcp-adapter", "version": "2.0.0"},
-            }}
-        try:
-            reply.setdefault("result", {}).setdefault("capabilities", {})["prompts"] = {}
-            # Teaser so the agent knows when to reach for the REPL, even with none up.
-            reply["result"]["instructions"] = ADAPTER_INSTRUCTIONS
-        except Exception:
-            pass
-        emit(reply)
+        # The adapter IS the MCP server: it owns the handshake, serverInfo, the
+        # `prompts` capability (the user-triggered REPL picker), and the teaser
+        # instructions — all answered here, regardless of whether any REPL is up.
+        # (The Julia REPLs are plain JSON-RPC endpoints and don't speak initialize.)
+        emit({"jsonrpc": "2.0", "id": request_id, "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}, "prompts": {}},
+            "serverInfo": {"name": "julia-mcp-adapter", "version": "2.0.0"},
+            "instructions": ADAPTER_INSTRUCTIONS,
+        }})
         return
 
     if method == "prompts/list":

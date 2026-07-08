@@ -33,10 +33,8 @@ function check_claude_status()
     # so it returns promptly. The timeout above is a backstop.
     try
         output = _read_cmd_timeout(`claude mcp get julia-repl`; timeout = 5.0)
-        # Detect transport method (markers appear only when configured)
-        if contains(output, "http://localhost:3000")
-            return :configured_http
-        elseif contains(output, "mcp-julia-adapter")
+        # Detect configuration (the adapter path appears only when configured)
+        if contains(output, "mcp-julia-adapter")
             return :configured_script
         elseif contains(output, "Scope:") || contains(output, "Status:")
             return :configured_unknown
@@ -102,9 +100,7 @@ function check_gemini_status()
 
     if haskey(mcp_servers, "julia-repl")
         server_config = mcp_servers["julia-repl"]
-        if haskey(server_config, "url") && server_config["url"] == "http://localhost:3000"
-            return :configured_http
-        elseif haskey(server_config, "command")
+        if haskey(server_config, "command")
             return :configured_script
         else
             return :configured_unknown
@@ -114,24 +110,16 @@ function check_gemini_status()
     end
 end
 
-function add_gemini_mcp_server(transport_type::String)
+function add_gemini_mcp_server()
     settings = read_gemini_settings()
 
     if !haskey(settings, "mcpServers")
         settings["mcpServers"] = Dict()
     end
 
-    if transport_type == "http"
-        settings["mcpServers"]["julia-repl"] = Dict(
-            "url" => "http://localhost:3000"
-        )
-    elseif transport_type == "script"
-        settings["mcpServers"]["julia-repl"] = Dict(
-            "command" => "$(pkgdir(MCPRepl))/mcp-julia-adapter"
-        )
-    else
-        return false
-    end
+    settings["mcpServers"]["julia-repl"] = Dict(
+        "command" => "$(pkgdir(MCPRepl))/mcp-julia-adapter"
+    )
 
     return write_gemini_settings(settings)
 end
@@ -149,18 +137,14 @@ end
 
 # --- Claude configuration actions -------------------------------------------
 # `scope` is one of "local" (this project only) or "user" (all projects).
-function claude_add_cmd(transport::String, scope::String)
+function claude_add_cmd(scope::String)
     scope_flag = scope == "local" ? String[] : ["-s", scope]
-    if transport == "http"
-        return `claude mcp add $scope_flag julia-repl http://localhost:3000 --transport http`
-    else # "script"
-        return `claude mcp add $scope_flag julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`
-    end
+    return `claude mcp add $scope_flag julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`
 end
 
-function configure_claude(transport::String, scope::String)
+function configure_claude(scope::String)
     scopelabel = scope == "user" ? "user — all projects" : "local — this project"
-    label = "$transport transport ($scopelabel)"
+    label = "adapter ($scopelabel)"
     println("\n   Configuring Claude with $label ...")
     # Best-effort remove of any existing entry in this scope so re-runs truly replace.
     try
@@ -168,7 +152,7 @@ function configure_claude(transport::String, scope::String)
     catch
     end
     try
-        run(claude_add_cmd(transport, scope))
+        run(claude_add_cmd(scope))
         println("   ✅ Successfully configured Claude $label")
     catch e
         println("   ❌ Failed to configure Claude $label: $e")
@@ -191,13 +175,12 @@ function remove_claude()
 end
 
 # --- Gemini configuration actions (settings.json is inherently user-wide) ----
-function configure_gemini(transport::String)
-    label = "$transport transport"
-    println("\n   Configuring Gemini with $label ...")
-    if add_gemini_mcp_server(transport)
-        println("   ✅ Successfully configured Gemini $label")
+function configure_gemini()
+    println("\n   Configuring Gemini with the adapter ...")
+    if add_gemini_mcp_server()
+        println("   ✅ Successfully configured Gemini")
     else
-        println("   ❌ Failed to configure Gemini $label")
+        println("   ❌ Failed to configure Gemini")
     end
 end
 
@@ -221,27 +204,19 @@ function setup()
     # Claude status
     if claude_status == :claude_not_found
         println("📊 Claude status: ❌ Claude Code not found in PATH")
-    elseif claude_status == :configured_http
-        println("📊 Claude status: ✅ MCP server configured (HTTP transport)")
-    elseif claude_status == :configured_script
-        println("📊 Claude status: ✅ MCP server configured (script transport)")
-    elseif claude_status == :configured_unknown
-        println("📊 Claude status: ✅ MCP server configured (unknown transport)")
+    elseif claude_status in (:configured_script, :configured_unknown)
+        println("📊 Claude status: ✅ Julia REPL adapter configured")
     else
-        println("📊 Claude status: ❌ MCP server not configured")
+        println("📊 Claude status: ❌ Julia REPL adapter not configured")
     end
 
     # Gemini status
     if gemini_status == :gemini_not_found
         println("📊 Gemini status: ❌ Gemini CLI not found in PATH")
-    elseif gemini_status == :configured_http
-        println("📊 Gemini status: ✅ MCP server configured (HTTP transport)")
-    elseif gemini_status == :configured_script
-        println("📊 Gemini status: ✅ MCP server configured (script transport)")
-    elseif gemini_status == :configured_unknown
-        println("📊 Gemini status: ✅ MCP server configured (unknown transport)")
+    elseif gemini_status in (:configured_script, :configured_unknown)
+        println("📊 Gemini status: ✅ Julia REPL adapter configured")
     else
-        println("📊 Gemini status: ❌ MCP server not configured")
+        println("📊 Gemini status: ❌ Julia REPL adapter not configured")
     end
     println()
 
@@ -253,23 +228,20 @@ function setup()
     offer(label, action) = (push!(actions, action); println("     [$(length(actions))] $label"))
 
     if claude_status != :claude_not_found
-        configured = claude_status in (:configured_http, :configured_script, :configured_unknown)
+        configured = claude_status in (:configured_script, :configured_unknown)
         verb = configured ? "Add/Replace" : "Add"
         println("   Claude Code:")
         configured && offer("Remove Claude MCP configuration", remove_claude)
-        offer("$verb script transport        (local — this project)", () -> configure_claude("script", "local"))
-        offer("$verb script transport        (user — ALL projects)", () -> configure_claude("script", "user"))
-        offer("$verb HTTP transport [legacy] (local — this project)", () -> configure_claude("http", "local"))
-        offer("$verb HTTP transport [legacy] (user — ALL projects)", () -> configure_claude("http", "user"))
+        offer("$verb adapter (local — this project)", () -> configure_claude("local"))
+        offer("$verb adapter (user — ALL projects)", () -> configure_claude("user"))
     end
 
     if gemini_status != :gemini_not_found
-        configured = gemini_status in (:configured_http, :configured_script, :configured_unknown)
+        configured = gemini_status in (:configured_script, :configured_unknown)
         verb = configured ? "Add/Replace" : "Add"
         println("   Gemini CLI (settings.json is user-wide):")
         configured && offer("Remove Gemini MCP configuration", remove_gemini)
-        offer("$verb script transport", () -> configure_gemini("script"))
-        offer("$verb HTTP transport [legacy]", () -> configure_gemini("http"))
+        offer("$verb adapter", configure_gemini)
     end
 
     println()
@@ -283,8 +255,7 @@ function setup()
     actions[choice]()
 
     println()
-    println("   💡 Prefer the script transport: it enables multiplexing across")
-    println("      several REPLs and works most reliably. HTTP is legacy (fixed")
-    println("      port 3000, single REPL, no routing).")
-    println("   💡 'user' scope makes the server available in all your projects")
+    println("   💡 The adapter multiplexes across several REPLs and lets agents")
+    println("      spawn their own private REPLs when none is running.")
+    println("   💡 'user' scope makes the adapter available in all your projects")
 end
