@@ -24,6 +24,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import socketserver
 import subprocess
 import sys
@@ -46,12 +47,15 @@ def load_adapter(registry_dir):
     return mod
 
 
-def write_repl(registry_dir, pid, port, word, project_dir, git_root="", pwd=None):
+def write_repl(registry_dir, pid, port, word, project_dir, git_root="", pwd=None,
+               private=False, spawn_token="", owner_pid=0):
     with open(os.path.join(registry_dir, "%d.json" % pid), "w") as fh:
         json.dump({"pid": pid, "port": port, "word": word,
                    "project_dir": project_dir, "pwd": pwd or project_dir,
                    "git_root": git_root,
-                   "active_project": project_dir + "/Project.toml"}, fh)
+                   "active_project": project_dir + "/Project.toml",
+                   "private": private, "spawn_token": spawn_token,
+                   "owner_pid": owner_pid}, fh)
 
 
 def clear(registry_dir):
@@ -302,6 +306,174 @@ def test_prompt_picker(reg):
     print("PASS select-repl prompt (user-triggered picker)")
 
 
+# --- private REPLs: filtering, discoverability, spawn/kill, auto-kill --------
+
+def _capture(ad):
+    """Redirect the adapter's emit() into a list; returns (list, restore_fn)."""
+    out = []
+    saved = ad.emit
+    ad.emit = lambda obj: out.append(obj)
+    return out, (lambda: setattr(ad, "emit", saved))
+
+
+def test_private_filtering(ad, reg):
+    clear(reg)
+    write_repl(reg, 700, 9000, "beaver", "/tmp/privP", private=True,
+               spawn_token="tok-beaver", owner_pid=os.getpid())
+
+    # Only a private REPL exists: automatic resolution ignores it (empty pool).
+    r = ad.Router(); r.cwd = "/tmp/x"
+    sel, alt = r.resolve(call())
+    assert sel is None and alt is not None
+    assert "No Julia REPL" in alt["error"]["message"]
+
+    # ...but an explicit override reaches the private REPL even as the only one.
+    r2 = ad.Router(); r2.cwd = "/tmp/x"
+    sel, alt = r2.resolve(call(2, {"repl": "beaver"}))
+    assert alt is None and sel and sel["word"] == "beaver"
+
+    # A shared REPL alongside it: the private one is excluded from the pool.
+    write_repl(reg, 701, 9001, "otter", "/tmp/x")
+    r3 = ad.Router(); r3.cwd = "/tmp/x"
+    sel, alt = r3.resolve(call(3))
+    assert alt is None and sel["word"] == "otter"
+
+    # list_repls hides private REPLs.
+    out, restore = _capture(ad)
+    try:
+        ad._handle_list_repls(ad.Router(), {"id": 9, "params": {}})
+    finally:
+        restore()
+    txt = out[-1]["result"]["content"][0]["text"]
+    assert "otter" in txt and "beaver" not in txt
+    print("PASS private REPL filtering (hidden from pool, reachable by word)")
+
+
+def test_usage_instructions(ad, reg):
+    clear(reg)  # zero REPLs: must still work
+    out, restore = _capture(ad)
+    try:
+        ad._handle_usage_instructions({"id": 1})
+    finally:
+        restore()
+    txt = out[-1]["result"]["content"][0]["text"]
+    assert "spawn_repl" in txt and "private" in txt.lower()
+    print("PASS usage_instructions (adapter-owned, zero-REPL-safe)")
+
+
+def test_initialize_instructions(ad, reg):
+    clear(reg)  # no REPL -> the adapter answers initialize statically
+    out, restore = _capture(ad)
+    try:
+        ad.handle_message(ad.Router(), {
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"capabilities": {}}})
+    finally:
+        restore()
+    result = out[-1]["result"]
+    assert "instructions" in result and "spawn_repl" in result["instructions"]
+    print("PASS initialize teaser (instructions advertised)")
+
+
+def _fake_tmux(reg, calls, word):
+    """A run_tmux stub that records calls and, on new-session, registers the REPL."""
+    def _run(args):
+        calls.append(list(args))
+        if args and args[0] == "new-session":
+            # The launch command is a single shell-quoted string; dig the token out.
+            m = re.search(r"MCPREPL_SPAWN_TOKEN=(\S+)", " ".join(args))
+            if m:
+                write_repl(reg, 90001, 6000, word, "/tmp/spawnP", private=True,
+                           spawn_token=m.group(1), owner_pid=os.getpid())
+        return (0, "", "")
+    return _run
+
+
+def test_spawn_kill(ad, reg):
+    clear(reg)
+    ad.SPAWNED_SESSIONS.clear()
+    calls = []
+    saved = (ad.run_tmux, ad.shutil.which, ad.SPAWN_TIMEOUT, ad.SPAWN_POLL)
+    ad.run_tmux = _fake_tmux(reg, calls, "beaver")
+    ad.shutil.which = lambda name: "/usr/bin/tmux"
+    ad.SPAWN_TIMEOUT, ad.SPAWN_POLL = 5.0, 0.01
+    try:
+        out, restore = _capture(ad)
+        try:
+            ad._handle_spawn_repl(ad.Router(), {
+                "id": 1, "params": {"name": "spawn_repl",
+                                    "arguments": {"project": reg}}})
+        finally:
+            restore()
+        txt = out[-1]["result"]["content"][0]["text"]
+        assert "beaver" in txt, txt
+        new = [c for c in calls if c and c[0] == "new-session"]
+        assert new and "MCPREPL_OWNER_PID=" in " ".join(new[0])
+        assert any(s.startswith(ad.SESSION_PREFIX) for s in ad.SPAWNED_SESSIONS)
+
+        # kill_repl refuses a shared (non-private) REPL...
+        write_repl(reg, 90002, 6001, "otter", "/tmp/shared")
+        out, restore = _capture(ad)
+        try:
+            ad._handle_kill_repl(ad.Router(), {
+                "id": 2, "params": {"arguments": {"repl": "otter"}}})
+        finally:
+            restore()
+        assert "Refusing" in out[-1]["result"]["content"][0]["text"]
+
+        # ...but kills the private one and untracks its session.
+        calls.clear()
+        out, restore = _capture(ad)
+        try:
+            ad._handle_kill_repl(ad.Router(), {
+                "id": 3, "params": {"arguments": {"repl": "beaver"}}})
+        finally:
+            restore()
+        assert "Killed" in out[-1]["result"]["content"][0]["text"]
+        assert any(c and c[0] == "kill-session" for c in calls)
+        assert not any(s.startswith(ad.SESSION_PREFIX) for s in ad.SPAWNED_SESSIONS)
+        print("PASS spawn_repl / kill_repl (tracked, private-only kill)")
+    finally:
+        (ad.run_tmux, ad.shutil.which, ad.SPAWN_TIMEOUT, ad.SPAWN_POLL) = saved
+        ad.SPAWNED_SESSIONS.clear()
+
+
+def test_autokill_and_reap(ad, reg):
+    calls = []
+    saved = (ad.run_tmux, ad.pid_alive)
+    ad.run_tmux = lambda args: (calls.append(list(args)), (0, "", ""))[1]
+    try:
+        # reap_spawned_sessions kills exactly the sessions we spawned.
+        ad.SPAWNED_SESSIONS.clear()
+        ad.SPAWNED_SESSIONS.add("mcprepl-abc")
+        ad.reap_spawned_sessions()
+        assert ["kill-session", "-t", "mcprepl-abc"] in calls
+        assert not ad.SPAWNED_SESSIONS
+
+        # orphan reap: kill private w/ dead owner; spare live-owner / persist / shared.
+        clear(reg)
+        LIVE_OWNER, DEAD_OWNER = 111, 222
+        # record pids (1..4) stay "alive" so read_registry keeps them; only the
+        # dead owner distinguishes an orphan.
+        alive = {1, 2, 3, 4, LIVE_OWNER}
+        ad.pid_alive = lambda pid: pid in alive
+        write_repl(reg, 1, 5000, "dead", "/tmp/a", private=True,
+                   spawn_token="tok-dead", owner_pid=DEAD_OWNER)
+        write_repl(reg, 2, 5001, "live", "/tmp/b", private=True,
+                   spawn_token="tok-live", owner_pid=LIVE_OWNER)
+        write_repl(reg, 3, 5002, "keep", "/tmp/c", private=True,
+                   spawn_token="tok-keep", owner_pid=0)   # persist
+        write_repl(reg, 4, 5003, "shared", "/tmp/d")       # not private
+        calls.clear()
+        ad.reap_orphan_private_sessions()
+        killed = [c[2] for c in calls if c and c[0] == "kill-session"]
+        assert killed == ["mcprepl-tok-dead"], killed
+        print("PASS auto-kill on exit + orphan reap")
+    finally:
+        (ad.run_tmux, ad.pid_alive) = saved
+        ad.SPAWNED_SESSIONS.clear()
+
+
 def main():
     reg = tempfile.mkdtemp(prefix="mcprepl-adapter-test-")
     try:
@@ -312,6 +484,11 @@ def main():
         test_manual_tools(reg)
         test_prompt_picker(reg)
         test_elicitation_roundtrip(reg)
+        test_private_filtering(ad, reg)
+        test_usage_instructions(ad, reg)
+        test_initialize_instructions(ad, reg)
+        test_spawn_kill(ad, reg)
+        test_autokill_and_reap(ad, reg)
         print("\nALL ADAPTER ROUTING TESTS PASSED")
         return 0
     finally:

@@ -22,11 +22,17 @@ The Julia REPL server(s) must be running first:
     julia --project -e "using MCPRepl; MCPRepl.start!()"
 """
 
+import atexit
+import glob
 import json
 import os
+import secrets
+import shlex
+import shutil
+import signal
+import subprocess
 import sys
 import time
-import glob
 import urllib.request
 import urllib.error
 
@@ -39,6 +45,52 @@ REGISTRY_DIR = os.environ.get(
 TOOLS_CACHE = os.path.join(os.path.dirname(REGISTRY_DIR.rstrip(os.sep)),
                            "tools_cache.json")
 INF = float("inf")
+
+# Directory holding this script, used to locate the shipped prompt files.
+ADAPTER_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- Private (agent-spawned) REPLs -------------------------------------------
+# An agent with no REPL can spawn its own *private* one via the `spawn_repl`
+# tool: a real interactive Julia REPL running inside a detached tmux session, so
+# it behaves exactly like a shared REPL from Julia's side but is hidden from the
+# routing pool and reachable only by explicit word-id. Sessions are named
+# `mcprepl-<token>`; we remember the ones we spawned so we can kill them when
+# this adapter (i.e. the client session) exits.
+SESSION_PREFIX = "mcprepl-"
+SPAWNED_SESSIONS = set()     # tmux session names spawned by *this* adapter
+SPAWN_TIMEOUT = 180.0        # seconds to wait for a spawned REPL to register
+SPAWN_POLL = 0.5             # poll interval while waiting
+
+# Server-level teaser returned from `initialize`, so an agent knows when to reach
+# for the Julia REPL even before any REPL exists.
+ADAPTER_INSTRUCTIONS = (
+    "This server bridges to a warm, persistent Julia REPL. Prefer it over running "
+    "`julia` in bash: you skip precompile/startup latency (TTFX) and keep live "
+    "state — variables, loaded packages, Revise hot-reload — across calls. Use "
+    "`exec_repl` to evaluate Julia code. If no REPL is running you can start your "
+    "own private one with `spawn_repl` (ideal for longer simulations you want to "
+    "inspect interactively if they fail, instead of re-running a cold script). "
+    "Call `usage_instructions` before first use.")
+
+
+def is_private(repl):
+    """True if a registry record is a private (agent-spawned, pool-hidden) REPL."""
+    return bool(repl.get("private"))
+
+
+def session_name(token):
+    return SESSION_PREFIX + token
+
+
+def run_tmux(args):
+    """Run `tmux <args>`; return (rc, stdout, stderr). Isolated for testing."""
+    try:
+        p = subprocess.run(["tmux"] + list(args), capture_output=True, text=True)
+        return p.returncode, p.stdout, p.stderr
+    except FileNotFoundError:
+        return 127, "", "tmux not found"
+    except Exception as e:  # pragma: no cover - defensive
+        return 1, "", str(e)
 
 
 # --- Registry discovery ------------------------------------------------------
@@ -165,10 +217,19 @@ def tool_text_result(request_id, text):
             "result": {"content": [{"type": "text", "text": text}]}}
 
 
-# Two tools the adapter answers itself (never routed to a REPL): a manual
-# alternative to the elicitation picker, so a REPL can be listed/selected with a
-# plain tool call and no interactive dialog.
+# Tools the adapter answers itself (never routed to a REPL): manual REPL
+# selection, the private-REPL lifecycle (spawn/kill), and the usage guide — all
+# available even when no REPL is running, which is exactly when a bootstrapping
+# agent needs them.
+USAGE_INSTRUCTIONS_DESC = (
+    "Read this FIRST before using the Julia REPL. Explains proper REPL workflow, "
+    "shared-REPL etiquette, and how to spawn/use a private REPL when none is "
+    "available. Works even with no REPL running.")
+
 ADAPTER_TOOLS = [
+    {"name": "usage_instructions",
+     "description": USAGE_INSTRUCTIONS_DESC,
+     "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_repls",
      "description": "List the running Julia REPLs the adapter has discovered — "
                     "their word-id, working directory, project, port, and which "
@@ -184,17 +245,53 @@ ADAPTER_TOOLS = [
                          "type": "string",
                          "description": "word-id of the REPL to use (e.g. 'otter')"}},
                      "required": ["repl"]}},
+    {"name": "spawn_repl",
+     "description": "Start your own PRIVATE Julia REPL (interactive, in a detached "
+                    "tmux session) when none is available — to reap warm-cache / "
+                    "no-startup-latency benefits and keep live state across calls. "
+                    "It is hidden from the shared pool and reachable only via the "
+                    "`repl` argument (returned here). Auto-killed when this session "
+                    "ends unless `persist` is set. Call `usage_instructions` first.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "project": {"type": "string",
+                                     "description": "Path to the Julia project "
+                                     "(a directory or a Project.toml) to activate "
+                                     "with --project."},
+                         "julia": {"type": "string",
+                                   "description": "julia binary to use (default 'julia')."},
+                         "persist": {"type": "boolean",
+                                     "description": "Keep the REPL alive after this "
+                                     "session exits (default false)."}},
+                     "required": ["project"]}},
+    {"name": "kill_repl",
+     "description": "Kill a PRIVATE Julia REPL you spawned with `spawn_repl`, by "
+                    "its word-id. Only private REPLs can be killed this way; the "
+                    "user's shared REPLs are never touched.",
+     "inputSchema": {"type": "object",
+                     "properties": {"repl": {
+                         "type": "string",
+                         "description": "word-id of the private REPL to kill"}},
+                     "required": ["repl"]}},
 ]
 
 
 def inject_adapter_tools(reply):
-    """Append the adapter-local tools to a forwarded tools/list result."""
+    """Append the adapter-local tools to a forwarded tools/list result.
+
+    `usage_instructions` may also be advertised by a Julia REPL, but the adapter
+    intercepts and answers the call itself, so override the listed description to
+    match the adapter's version (keeping listing and behavior consistent).
+    """
     try:
         tools = reply.setdefault("result", {}).setdefault("tools", [])
-        have = {t.get("name") for t in tools}
+        by_name = {t.get("name"): t for t in tools}
         for t in ADAPTER_TOOLS:
-            if t["name"] not in have:
+            existing = by_name.get(t["name"])
+            if existing is None:
                 tools.append(t)
+            elif t["name"] == "usage_instructions":
+                existing["description"] = t["description"]
     except Exception:
         pass
     return reply
@@ -277,7 +374,10 @@ class Router:
         if rescan is None:
             return self.selected, None  # fast path: keep current selection
 
-        repls = rescan
+        # Private REPLs never take part in automatic routing/discovery: they are
+        # excluded from the pool and only reachable via an explicit `repl=` word.
+        repls_all = rescan
+        repls = [r for r in repls_all if not is_private(r)]
         # Track which REPLs are new since we last looked, so a freshly-started
         # REPL can trigger a re-prompt. A restart keeps its (deterministic)
         # word-id, so it is NOT counted as new -> silent rebind.
@@ -285,19 +385,22 @@ class Router:
         newly_appeared = live_words - self.known_words
         self.known_words = live_words
 
+        if override:
+            # An explicit word may target a private REPL (which is excluded from
+            # the pool), so search the full set — and before the empty-pool check,
+            # so a private REPL is reachable even when it is the only one running.
+            match = self.find_by_word(repls_all, override)
+            if match:
+                self.selected = self.as_selection(match)
+                return self.selected, None
+            # else fall through to normal resolution / prompt
+
         if not repls:
             self.selected = None
             return None, error_result(
                 request_id,
                 "No Julia REPL registered. Start one with: "
                 "julia --project -e 'using MCPRepl; MCPRepl.start!()'")
-
-        if override:
-            match = self.find_by_word(repls, override)
-            if match:
-                self.selected = self.as_selection(match)
-                return self.selected, None
-            # else fall through to normal resolution / prompt
 
         # Currently-selected REPL still present?
         current = None
@@ -428,7 +531,8 @@ class Router:
 
 def _handle_list_repls(router, request):
     request_id = request.get("id")
-    repls = read_registry()
+    # Private REPLs are hidden from the pool; don't list them.
+    repls = [r for r in read_registry() if not is_private(r)]
     if not repls:
         emit(tool_text_result(request_id, "No Julia REPLs are currently running."))
         return
@@ -468,6 +572,185 @@ def _handle_select_repl(router, request):
             match.get("active_project", "") or "no project")))
 
 
+def _handle_spawn_repl(router, request):
+    """Start a private, agent-owned Julia REPL in a detached tmux session."""
+    request_id = request.get("id")
+    args = request.get("params", {}).get("arguments", {}) or {}
+    project = args.get("project", "")
+    julia = args.get("julia") or "julia"
+    persist = bool(args.get("persist", False))
+
+    if not project:
+        emit(tool_text_result(request_id, "Error: 'project' is required."))
+        return
+    proj_path = os.path.realpath(os.path.expanduser(project))
+    if not os.path.exists(proj_path):
+        emit(tool_text_result(
+            request_id, "Error: project path does not exist: %s" % project))
+        return
+    if shutil.which("tmux") is None:
+        emit(tool_text_result(
+            request_id,
+            "Error: tmux is required to spawn a private REPL but was not found on "
+            "PATH. Install tmux (private REPLs currently support tmux only)."))
+        return
+
+    token = secrets.token_hex(8)
+    session = session_name(token)
+    owner = "0" if persist else str(os.getpid())
+
+    # tmux joins a multi-arg command with spaces and re-parses it through the
+    # shell, so we hand it a SINGLE, shell-quoted command string to keep the `-e`
+    # code (which contains spaces and a semicolon) intact. The `env VAR=... julia`
+    # prefix guarantees our variables reach Julia regardless of the (possibly
+    # long-lived) tmux server's own environment.
+    env_pairs = {"MCPREPL_SPAWN_TOKEN": token, "MCPREPL_OWNER_PID": owner}
+    reg = os.environ.get("MCPREPL_REGISTRY_DIR")
+    if reg:
+        env_pairs["MCPREPL_REGISTRY_DIR"] = reg
+    # `--startup-file=no`: don't run the user's startup.jl, which commonly calls a
+    # (non-private) MCPRepl.start!() and would race/clobber our private one. We
+    # control this REPL fully; load Revise best-effort so hot-reload still works.
+    julia_argv = [julia, "--startup-file=no", "--project=" + proj_path, "-i", "-e",
+                  "try; using Revise; catch; end; "
+                  "using MCPRepl; MCPRepl.start!(private=true)"]
+    command = "env " + " ".join(
+        "%s=%s" % (k, shlex.quote(v)) for k, v in env_pairs.items())
+    command += " " + " ".join(shlex.quote(a) for a in julia_argv)
+    tmux_args = ["new-session", "-d", "-s", session, command]
+
+    rc, out, err = run_tmux(tmux_args)
+    if rc != 0:
+        emit(tool_text_result(
+            request_id,
+            "Error: failed to launch tmux session: %s" % (err or out or rc)))
+        return
+
+    # Wait for the REPL to self-register (precompile of MCPRepl can be slow).
+    deadline = time.time() + SPAWN_TIMEOUT
+    record = None
+    while time.time() < deadline:
+        for r in read_registry():
+            if r.get("spawn_token") == token:
+                record = r
+                break
+        if record is not None:
+            break
+        time.sleep(SPAWN_POLL)
+
+    if record is None:
+        run_tmux(["kill-session", "-t", session])
+        emit(tool_text_result(
+            request_id,
+            "Error: the private REPL did not register within %ds; it may have "
+            "failed to start. Inspect it with `tmux attach -t %s`."
+            % (int(SPAWN_TIMEOUT), session)))
+        return
+
+    if not persist:
+        SPAWNED_SESSIONS.add(session)
+
+    word = record.get("word", "?")
+    persist_note = (" It is set to persist and will survive this session."
+                    if persist else
+                    " It will be auto-killed when this session ends.")
+    emit(tool_text_result(
+        request_id,
+        "Started private Julia REPL '%s' (port %s, project %s, tmux session %s).\n"
+        "Route calls to it by setting the `repl` argument to '%s' on exec_repl "
+        "(or run select_repl with repl='%s'). It is hidden from list_repls. "
+        "Kill it with kill_repl repl='%s'.%s"
+        % (word, record.get("port", "?"), proj_path, session,
+           word, word, word, persist_note)))
+
+
+def _handle_kill_repl(router, request):
+    """Kill a private, agent-spawned REPL by word-id. Never touches shared REPLs."""
+    request_id = request.get("id")
+    word = (request.get("params", {}).get("arguments", {}) or {}).get("repl", "")
+    repls = read_registry()
+    match = router.find_by_word(repls, word)
+    if match is None:
+        privs = ", ".join(r.get("word", "?") for r in repls if is_private(r)) \
+            or "(none)"
+        emit(tool_text_result(
+            request_id,
+            "No REPL with word-id '%s'. Private REPLs you can kill: %s"
+            % (word, privs)))
+        return
+    if not is_private(match):
+        emit(tool_text_result(
+            request_id,
+            "Refusing: '%s' is a shared REPL, which is user-managed. kill_repl "
+            "only kills private REPLs you spawned with spawn_repl." % word))
+        return
+    token = match.get("spawn_token", "")
+    session = session_name(token) if token else None
+    if session:
+        run_tmux(["kill-session", "-t", session])
+        SPAWNED_SESSIONS.discard(session)
+    emit(tool_text_result(
+        request_id,
+        "Killed private Julia REPL '%s'%s."
+        % (word, " (tmux session %s)" % session if session else "")))
+
+
+def reap_spawned_sessions():
+    """Kill every private REPL this adapter spawned. Runs on adapter shutdown."""
+    for session in list(SPAWNED_SESSIONS):
+        try:
+            run_tmux(["kill-session", "-t", session])
+        except Exception:
+            pass
+        SPAWNED_SESSIONS.discard(session)
+
+
+def reap_orphan_private_sessions():
+    """Kill private REPLs whose owning adapter has died (SIGKILL/crash backstop).
+
+    A private record's owner_pid is the pid of the adapter that spawned it. If
+    that process is gone the REPL is a true orphan and any adapter may reap it.
+    persist REPLs record owner_pid 0 and are never reaped.
+    """
+    for r in read_registry():
+        if not is_private(r):
+            continue
+        owner = r.get("owner_pid", 0)
+        if not isinstance(owner, int) or owner <= 0 or pid_alive(owner):
+            continue
+        token = r.get("spawn_token", "")
+        if token:
+            run_tmux(["kill-session", "-t", session_name(token)])
+
+
+def _read_prompt(name):
+    """Read a shipped prompt file next to the adapter; "" if unavailable."""
+    try:
+        with open(os.path.join(ADAPTER_DIR, "prompts", name), encoding="utf-8") as fh:
+            return fh.read()
+    except Exception:
+        return ""
+
+
+def _usage_instructions_text():
+    """Shared REPL etiquette + the adapter-only private-REPL guide.
+
+    Owned by the adapter so it works even with zero REPLs running — exactly when a
+    bootstrapping agent needs to learn it can spawn a private one. The base file
+    is the same one the legacy Julia HTTP tool serves.
+    """
+    parts = [p for p in (_read_prompt("julia_repl_workflow.md"),
+                         _read_prompt("private_repl_workflow.md")) if p]
+    if not parts:
+        return ("Julia REPL usage instructions are unavailable (prompt files not "
+                "found next to the adapter).")
+    return "\n\n".join(parts)
+
+
+def _handle_usage_instructions(request):
+    emit(tool_text_result(request.get("id"), _usage_instructions_text()))
+
+
 def _prompt_result(request_id, text):
     """A prompts/get result carrying a single confirmation message."""
     return {"jsonrpc": "2.0", "id": request_id, "result": {
@@ -488,7 +771,8 @@ def _handle_prompts_get(router, request):
     if name != "select-repl":
         emit(error_result(request_id, "Unknown prompt: %s" % name, code=-32602))
         return
-    repls = read_registry()
+    # Private REPLs are hidden from the pool; never offer them in the picker.
+    repls = [r for r in read_registry() if not is_private(r)]
     if not repls:
         emit(_prompt_result(request_id,
                             "No Julia REPLs are running; nothing to select."))
@@ -562,6 +846,8 @@ def handle_message(router, request):
             }}
         try:
             reply.setdefault("result", {}).setdefault("capabilities", {})["prompts"] = {}
+            # Teaser so the agent knows when to reach for the REPL, even with none up.
+            reply["result"]["instructions"] = ADAPTER_INSTRUCTIONS
         except Exception:
             pass
         emit(reply)
@@ -601,11 +887,20 @@ def handle_message(router, request):
 
     if method == "tools/call":
         tool_name = request.get("params", {}).get("name")
+        if tool_name == "usage_instructions":
+            _handle_usage_instructions(request)
+            return
         if tool_name == "list_repls":
             _handle_list_repls(router, request)
             return
         if tool_name == "select_repl":
             _handle_select_repl(router, request)
+            return
+        if tool_name == "spawn_repl":
+            _handle_spawn_repl(router, request)
+            return
+        if tool_name == "kill_repl":
+            _handle_kill_repl(router, request)
             return
         selection, alt = router.resolve(request)
         if selection is None and alt is not None:
@@ -666,23 +961,53 @@ def _cached_tools(request_id):
         return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": []}}
 
 
+def _install_shutdown_hooks():
+    """Ensure private REPLs this adapter spawned die when the adapter does.
+
+    The client (Claude Code) ends the session by closing our stdin (-> the read
+    loop's finally runs) or by sending a signal; either way we kill the sessions
+    we spawned. Only a SIGKILL escapes us, which the startup orphan-reap covers.
+    """
+    atexit.register(reap_spawned_sessions)
+
+    def _handler(signum, _frame):
+        reap_spawned_sessions()
+        # Re-raise default behavior so the process actually terminates.
+        sys.exit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):  # e.g. not in main thread
+            pass
+
+
 def main():
+    _install_shutdown_hooks()
+    # Backstop: clean up private REPLs orphaned by a previous adapter's hard-kill.
+    try:
+        reap_orphan_private_sessions()
+    except Exception:
+        pass
     router = Router()
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError as e:
-            emit({"jsonrpc": "2.0", "id": None,
-                  "error": {"code": -32700, "message": "Parse error: %s" % e}})
-            continue
-        try:
-            handle_message(router, request)
-        except Exception as e:
-            if "id" in request:
-                emit(error_result(request.get("id"), "Internal error: %s" % e))
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+            except json.JSONDecodeError as e:
+                emit({"jsonrpc": "2.0", "id": None,
+                      "error": {"code": -32700, "message": "Parse error: %s" % e}})
+                continue
+            try:
+                handle_message(router, request)
+            except Exception as e:
+                if "id" in request:
+                    emit(error_result(request.get("id"), "Internal error: %s" % e))
+    finally:
+        reap_spawned_sessions()
 
 
 if __name__ == "__main__":

@@ -296,9 +296,25 @@ using Sockets
         @test data["port"] == 65123
         @test data["word"] == "otter"
         @test haskey(data, "project_dir")
+        # A shared REPL is not private and carries default private-tracking fields.
+        @test data["private"] == false
+        @test haskey(data, "spawn_token")
+        @test data["owner_pid"] == 0
         MCPRepl.unregister_repl!()
         @test !isfile(f)
         @test MCPRepl._REGISTRY_FILE[] === nothing
+
+        # A private REPL records private=true plus the spawn_token/owner_pid the
+        # adapter passes via the environment, so the adapter can match and reap it.
+        withenv("MCPREPL_SPAWN_TOKEN" => "tok-123", "MCPREPL_OWNER_PID" => "4242") do
+            MCPRepl.register_repl!(65124, "beaver"; private = true)
+            f2 = MCPRepl._REGISTRY_FILE[]
+            data2 = JSON.parse(read(f2, String))
+            @test data2["private"] == true
+            @test data2["spawn_token"] == "tok-123"
+            @test data2["owner_pid"] == 4242
+            MCPRepl.unregister_repl!()
+        end
     end
 
     @testset "Adapter routing (python)" begin

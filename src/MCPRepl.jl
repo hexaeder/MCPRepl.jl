@@ -298,7 +298,7 @@ const _ATEXIT_INSTALLED = Ref(false)
 
 # Write this REPL's registry file. `word` is precomputed so the startup banner and
 # the file agree.
-function register_repl!(port::Int, word::AbstractString)
+function register_repl!(port::Int, word::AbstractString; private::Bool = false)
     dir = registry_dir()
     mkpath(dir)
     active = Base.active_project()
@@ -315,6 +315,12 @@ function register_repl!(port::Int, word::AbstractString)
         "git_root" => _git_root(pwd()),
         "julia_version" => string(VERSION),
         "started_at" => time(),
+        # Private REPLs are agent-spawned and hidden from the adapter's pool; the
+        # spawn_token lets the adapter match the record it just launched, and
+        # owner_pid (the adapter's pid) lets it reap orphans if that adapter dies.
+        "private" => private,
+        "spawn_token" => get(ENV, "MCPREPL_SPAWN_TOKEN", ""),
+        "owner_pid" => something(tryparse(Int, get(ENV, "MCPREPL_OWNER_PID", "")), 0),
     )
     path = joinpath(dir, "$(getpid()).json")
     write(path, JSON.json(data))
@@ -523,7 +529,7 @@ function repl_status_report()
     end
 end
 
-function start!(; verbose::Bool = true)
+function start!(; verbose::Bool = true, private::Bool = false)
     SERVER[] !== nothing && stop!() # Stop existing server if running
 
     suppress_install_prompts!() # `using MissingPkg` errors cleanly instead of hanging on a stdin prompt
@@ -655,7 +661,7 @@ function start!(; verbose::Bool = true)
     SERVER[] = start_mcp_server([usage_instructions_tool, repl_tool, whitespace_tool, investigate_tool], port; verbose=verbose, word=word)
 
     # Advertise this REPL to the shared registry so the adapter can route to it.
-    register_repl!(port, word)
+    register_repl!(port, word; private = private)
 
     if isdefined(Base, :active_repl)
         set_prefix!(Base.active_repl)

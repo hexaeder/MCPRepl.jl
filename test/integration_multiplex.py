@@ -23,6 +23,7 @@ Requires the MCPRepl package to be loadable (this file's repo).
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -76,7 +77,7 @@ def wait_for_registry(registry_dir, n, timeout=90):
     raise TimeoutError("registry did not reach %d entries" % n)
 
 
-def drive_adapter(registry_dir, tools_cache, cwd, messages, timeout=30):
+def drive_adapter(registry_dir, tools_cache, cwd, messages, timeout=30, env=None):
     """Run the real adapter as a subprocess in `cwd`, feed messages, collect output."""
     wrapper = os.path.join(registry_dir, "_run.py")
     with open(wrapper, "w") as fh:
@@ -89,10 +90,96 @@ def drive_adapter(registry_dir, tools_cache, cwd, messages, timeout=30):
         )
     inp = "\n".join(json.dumps(m) for m in messages) + "\n"
     p = subprocess.run([sys.executable, wrapper], input=inp,
-                       capture_output=True, text=True, timeout=timeout, cwd=cwd)
+                       capture_output=True, text=True, timeout=timeout, cwd=cwd,
+                       env=env)
     if p.stderr.strip():
         print("  adapter stderr:", p.stderr.strip())
     return [json.loads(l) for l in p.stdout.splitlines() if l.strip()]
+
+
+def private_repl_e2e(root, registry_dir, tools_cache):
+    """Spawn -> route -> kill a private REPL through the adapter, over real tmux.
+
+    Guarded: skips cleanly when tmux is unavailable. Uses an isolated tmux server
+    (TMUX_TMPDIR) so it never touches the user's sessions, and passes
+    JULIA_LOAD_PATH so the tmux-launched Julia finds MCPRepl from the repo (the
+    same trick start_repl uses).
+    """
+    if shutil.which("tmux") is None:
+        print("SKIP: tmux not found; private-REPL e2e skipped")
+        return
+
+    projC = os.path.join(root, "private_proj")
+    os.makedirs(projC, exist_ok=True)
+    with open(os.path.join(projC, "Project.toml"), "w") as fh:
+        fh.write("")
+    tmux_tmp = os.path.join(root, "tmux")
+    os.makedirs(tmux_tmp, exist_ok=True)
+
+    env = dict(os.environ)
+    env["MCPREPL_REGISTRY_DIR"] = registry_dir     # adapter forwards this to Julia
+    env["TMUX_TMPDIR"] = tmux_tmp                   # isolated tmux server
+    env["JULIA_LOAD_PATH"] = os.pathsep.join(["@", REPO, "@stdlib"])
+
+    def tmux(*args):
+        return subprocess.run(["tmux"] + list(args), env=env,
+                              capture_output=True, text=True)
+
+    try:
+        # Spawn (persist so it survives the adapter subprocess exiting between calls).
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "spawn_repl",
+                        "arguments": {"project": projC, "persist": True}}},
+        ], timeout=300, env=env)
+        r = [o for o in out if o.get("id") == 2][0]
+        txt = r["result"]["content"][0]["text"]
+        assert "Started private Julia REPL" in txt, txt
+        word = re.search(r"Started private Julia REPL '([^']+)'", txt).group(1)
+        print("  spawned private REPL:", word)
+
+        # Hidden from the pool.
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "list_repls", "arguments": {}}},
+        ], env=env)
+        lst = [o for o in out if o.get("id") == 2][0]["result"]["content"][0]["text"]
+        assert word not in lst, "private REPL must not appear in list_repls"
+
+        # Reachable by explicit word; live state persists across calls.
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "exec_repl",
+                        "arguments": {"expression": "ITEST_V = 41 + 1", "repl": word}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "exec_repl",
+                        "arguments": {"expression": "ITEST_V", "repl": word}}},
+        ], timeout=120, env=env)
+        r3 = [o for o in out if o.get("id") == 3][0]
+        assert "42" in r3["result"]["content"][0]["text"], r3
+        print("PASS: private REPL routed by word + live state persists")
+
+        # Kill it via the adapter; the tmux session must be gone.
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "kill_repl", "arguments": {"repl": word}}},
+        ], env=env)
+        rk = [o for o in out if o.get("id") == 2][0]["result"]["content"][0]["text"]
+        assert "Killed" in rk, rk
+        session = re.search(r"tmux session (mcprepl-\S+?)\)", rk).group(1)
+        time.sleep(0.5)
+        assert tmux("has-session", "-t", session).returncode != 0, "session survived kill"
+        print("PASS: private REPL killed (tmux session gone)")
+    finally:
+        tmux("kill-server")  # tear down the isolated tmux server, best-effort
 
 
 def main():
@@ -155,6 +242,9 @@ def main():
         emitted_elicit = any(o.get("method") == "elicitation/create" for o in out)
         assert not emitted_elicit, "unique nearest-ancestor B should NOT prompt"
         print("PASS: unique nearest-ancestor (B) routed silently, no prompt")
+
+        # --- private (agent-spawned) REPL: spawn -> route -> kill via adapter ---
+        private_repl_e2e(root, registry_dir, tools_cache)
 
         print("\nALL INTEGRATION CHECKS PASSED")
         return 0

@@ -59,6 +59,27 @@ The MCP server runs on `http://localhost:3000` and provides tools for Julia deve
 - Tests: `test/adapter_routing_test.py` (fast, run by `Pkg.test()`) and
   `test/integration_multiplex.py` (spawns real Julia servers; run manually).
 
+### Private (agent-spawned) REPLs
+- An agent with no REPL can spawn its own **private** REPL via the adapter's
+  `spawn_repl` tool: a real interactive Julia REPL running in a detached `tmux`
+  session (so `execute_repllike` needs no special headless path — it is a normal
+  interactive REPL) and killed via `kill_repl`. The user can `tmux attach` to it.
+- Privacy = hidden + explicit-id: the REPL's registry record carries
+  `private: true`, so it is excluded from the pool (auto-routing, `list_repls`,
+  the picker) and reachable only by passing its word-id as the `repl` argument.
+  See `is_private` and the `resolve`/`_handle_spawn_repl`/`_handle_kill_repl`
+  handlers in `mcp-julia-adapter`.
+- Lifecycle: private REPLs are auto-killed when the adapter (Claude Code session)
+  exits — tracked sessions are reaped on shutdown, with a startup orphan-reap
+  (`owner_pid` liveness) as a SIGKILL backstop. `spawn_repl persist=true` opts a
+  REPL out to survive for later `tmux attach`.
+- Launch uses `--startup-file=no` (so the user's `startup.jl` can't race/clobber
+  the private server) and `MCPRepl.start!(private=true)`. Julia fields
+  `private`/`spawn_token`/`owner_pid` are written by `register_repl!`.
+- The adapter also owns `usage_instructions` (sourced from
+  `prompts/julia_repl_workflow.md` + `prompts/private_repl_workflow.md`, so it
+  works even with zero REPLs) and advertises a teaser via `initialize.instructions`.
+
 ### Tool Capabilities
 
 #### `exec_repl` tool:
