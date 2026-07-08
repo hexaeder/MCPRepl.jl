@@ -1,4 +1,4 @@
-using JSON3
+using JSON
 
 # Run `cmd`, capturing stdout, but never block longer than `timeout` seconds.
 # Belt-and-suspenders backstop for the Claude CLI health-check (see below); on
@@ -65,7 +65,7 @@ function read_gemini_settings()
 
     try
         content = read(settings_path, String)
-        return JSON3.read(content, Dict)
+        return JSON.parse(content)
     catch
         return Dict()
     end
@@ -80,9 +80,7 @@ function write_gemini_settings(settings::Dict)
     end
 
     try
-        io = IOBuffer()
-        JSON3.pretty(io, settings)
-        content = String(take!(io))
+        content = JSON.json(settings; pretty = 4)
         write(settings_path, content)
         return true
     catch

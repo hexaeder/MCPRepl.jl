@@ -2,7 +2,7 @@ using Test
 using MCPRepl
 using MCPRepl: MCPTool
 using HTTP
-using JSON3
+using JSON
 using Dates
 
 @testset "MCPRepl Tests" begin
@@ -85,13 +85,13 @@ using Dates
 
                 # Parse response JSON
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
-                @test json_response.jsonrpc == "2.0"
-                @test json_response.error.code == -32600
-                @test occursin("Invalid Request", json_response.error.message)
-                @test occursin("empty body", json_response.error.message)
-                @test occursin("empty body", json_response.error.message)
+                @test json_response["jsonrpc"] == "2.0"
+                @test json_response["error"]["code"] == -32600
+                @test occursin("Invalid Request", json_response["error"]["message"])
+                @test occursin("empty body", json_response["error"]["message"])
+                @test occursin("empty body", json_response["error"]["message"])
 
             finally
                 # Always stop server
@@ -110,7 +110,7 @@ using Dates
 
             try
                 # Test tools/list request
-                request_body = JSON3.write(Dict(
+                request_body = JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => 1,
                     "method" => "tools/list"
@@ -126,15 +126,15 @@ using Dates
 
                 # Parse response
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
-                @test json_response.jsonrpc == "2.0"
-                @test json_response.id == 1
-                @test haskey(json_response.result, "tools")
-                @test length(json_response.result.tools) == 3
+                @test json_response["jsonrpc"] == "2.0"
+                @test json_response["id"] == 1
+                @test haskey(json_response["result"], "tools")
+                @test length(json_response["result"]["tools"]) == 3
 
                 # Check tool names
-                tool_names = [tool.name for tool in json_response.result.tools]
+                tool_names = [tool["name"] for tool in json_response["result"]["tools"]]
                 @test "get_time" in tool_names
                 @test "reverse_text" in tool_names
                 @test "calculate" in tool_names
@@ -156,7 +156,7 @@ using Dates
 
             try
                 # Test reverse_text tool
-                request_body = JSON3.write(Dict(
+                request_body = JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => 2,
                     "method" => "tools/call",
@@ -176,17 +176,17 @@ using Dates
 
                 # Parse response
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
-                @test json_response.jsonrpc == "2.0"
-                @test json_response.id == 2
-                @test haskey(json_response.result, "content")
-                @test length(json_response.result.content) == 1
-                @test json_response.result.content[1].type == "text"
-                @test json_response.result.content[1].text == "olleh"
+                @test json_response["jsonrpc"] == "2.0"
+                @test json_response["id"] == 2
+                @test haskey(json_response["result"], "content")
+                @test length(json_response["result"]["content"]) == 1
+                @test json_response["result"]["content"][1]["type"] == "text"
+                @test json_response["result"]["content"][1]["text"] == "olleh"
 
                 # Test calculate tool
-                request_body = JSON3.write(Dict(
+                request_body = JSON.json(Dict(
                     "jsonrpc" => "2.0",
                     "id" => 3,
                     "method" => "tools/call",
@@ -206,9 +206,9 @@ using Dates
 
                 # Parse response
                 body = String(response.body)
-                json_response = JSON3.read(body)
+                json_response = JSON.parse(body)
 
-                @test json_response.result.content[1].text == "14"
+                @test json_response["result"]["content"][1]["text"] == "14"
 
             finally
                 # Always stop server
