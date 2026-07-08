@@ -149,6 +149,69 @@ function remove_gemini_mcp_server()
     return true  # Already removed
 end
 
+# --- Claude configuration actions -------------------------------------------
+# `scope` is one of "local" (this project only) or "user" (all projects).
+function claude_add_cmd(transport::String, scope::String)
+    scope_flag = scope == "local" ? String[] : ["-s", scope]
+    if transport == "http"
+        return `claude mcp add $scope_flag julia-repl http://localhost:3000 --transport http`
+    else # "script"
+        return `claude mcp add $scope_flag julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`
+    end
+end
+
+function configure_claude(transport::String, scope::String)
+    scopelabel = scope == "user" ? "user — all projects" : "local — this project"
+    label = "$transport transport ($scopelabel)"
+    println("\n   Configuring Claude with $label ...")
+    # Best-effort remove of any existing entry in this scope so re-runs truly replace.
+    try
+        run(pipeline(`claude mcp remove julia-repl -s $scope`; stdout = devnull, stderr = devnull))
+    catch
+    end
+    try
+        run(claude_add_cmd(transport, scope))
+        println("   ✅ Successfully configured Claude $label")
+    catch e
+        println("   ❌ Failed to configure Claude $label: $e")
+    end
+end
+
+function remove_claude()
+    println("\n   Removing Claude MCP configuration...")
+    # Try both scopes so we clear it wherever it lives.
+    removed = false
+    for scope in ("local", "user")
+        try
+            run(pipeline(`claude mcp remove julia-repl -s $scope`; stdout = devnull, stderr = devnull))
+            removed = true
+        catch
+        end
+    end
+    println(removed ? "   ✅ Successfully removed Claude MCP configuration" :
+                      "   ❌ No Claude MCP configuration found to remove")
+end
+
+# --- Gemini configuration actions (settings.json is inherently user-wide) ----
+function configure_gemini(transport::String)
+    label = "$transport transport"
+    println("\n   Configuring Gemini with $label ...")
+    if add_gemini_mcp_server(transport)
+        println("   ✅ Successfully configured Gemini $label")
+    else
+        println("   ❌ Failed to configure Gemini $label")
+    end
+end
+
+function remove_gemini()
+    println("\n   Removing Gemini MCP configuration...")
+    if remove_gemini_mcp_server()
+        println("   ✅ Successfully removed Gemini MCP configuration")
+    else
+        println("   ❌ Failed to remove Gemini MCP configuration")
+    end
+end
+
 function setup()
     claude_status = check_claude_status()
     gemini_status = check_gemini_status()
@@ -184,132 +247,44 @@ function setup()
     end
     println()
 
-    # Show options
+    # Show options. Build a numbered action list dynamically so entries can be
+    # added/removed (e.g. per scope, or depending on current config) without
+    # juggling hardcoded choice numbers.
     println("Available actions:")
+    actions = Function[]
+    offer(label, action) = (push!(actions, action); println("     [$(length(actions))] $label"))
 
-    # Claude options
     if claude_status != :claude_not_found
+        configured = claude_status in (:configured_http, :configured_script, :configured_unknown)
+        verb = configured ? "Add/Replace" : "Add"
         println("   Claude Code:")
-        if claude_status in [:configured_http, :configured_script, :configured_unknown]
-            println("     [1] Remove Claude MCP configuration")
-            println("     [2] Add/Replace Claude with HTTP transport")
-            println("     [3] Add/Replace Claude with script transport")
-        else
-            println("     [1] Add Claude HTTP transport")
-            println("     [2] Add Claude script transport")
-        end
+        configured && offer("Remove Claude MCP configuration", remove_claude)
+        offer("$verb HTTP transport   (local — this project)", () -> configure_claude("http", "local"))
+        offer("$verb script transport (local — this project)", () -> configure_claude("script", "local"))
+        offer("$verb HTTP transport   (user — ALL projects)", () -> configure_claude("http", "user"))
+        offer("$verb script transport (user — ALL projects)", () -> configure_claude("script", "user"))
     end
 
-    # Gemini options
     if gemini_status != :gemini_not_found
-        println("   Gemini CLI:")
-        if gemini_status in [:configured_http, :configured_script, :configured_unknown]
-            println("     [4] Remove Gemini MCP configuration")
-            println("     [5] Add/Replace Gemini with HTTP transport")
-            println("     [6] Add/Replace Gemini with script transport")
-        else
-            println("     [4] Add Gemini HTTP transport")
-            println("     [5] Add Gemini script transport")
-        end
+        configured = gemini_status in (:configured_http, :configured_script, :configured_unknown)
+        verb = configured ? "Add/Replace" : "Add"
+        println("   Gemini CLI (settings.json is user-wide):")
+        configured && offer("Remove Gemini MCP configuration", remove_gemini)
+        offer("$verb HTTP transport", () -> configure_gemini("http"))
+        offer("$verb script transport", () -> configure_gemini("script"))
     end
 
     println()
     print("   Enter choice: ")
 
-    choice = readline()
-
-    # Handle choice
-    if choice == "1"
-        if claude_status in [:configured_http, :configured_script, :configured_unknown]
-            println("\n   Removing Claude MCP configuration...")
-            try
-                run(`claude mcp remove julia-repl`)
-                println("   ✅ Successfully removed Claude MCP configuration")
-            catch e
-                println("   ❌ Failed to remove Claude MCP configuration: $e")
-            end
-        elseif claude_status != :claude_not_found
-            println("\n   Adding Claude HTTP transport...")
-            try
-                run(`claude mcp add julia-repl http://localhost:3000 --transport http`)
-                println("   ✅ Successfully configured Claude HTTP transport")
-            catch e
-                println("   ❌ Failed to configure Claude HTTP transport: $e")
-            end
-        end
-    elseif choice == "2"
-        if claude_status in [:configured_http, :configured_script, :configured_unknown]
-            println("\n   Adding/Replacing Claude with HTTP transport...")
-            try
-                run(`claude mcp add julia-repl http://localhost:3000 --transport http`)
-                println("   ✅ Successfully configured Claude HTTP transport")
-            catch e
-                println("   ❌ Failed to configure Claude HTTP transport: $e")
-            end
-        elseif claude_status != :claude_not_found
-            println("\n   Adding Claude script transport...")
-            try
-                run(`claude mcp add julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`)
-                println("   ✅ Successfully configured Claude script transport")
-            catch e
-                println("   ❌ Failed to configure Claude script transport: $e")
-            end
-        end
-    elseif choice == "3"
-        if claude_status in [:configured_http, :configured_script, :configured_unknown]
-            println("\n   Adding/Replacing Claude with script transport...")
-            try
-                run(`claude mcp add julia-repl $(pkgdir(MCPRepl))/mcp-julia-adapter`)
-                println("   ✅ Successfully configured Claude script transport")
-            catch e
-                println("   ❌ Failed to configure Claude script transport: $e")
-            end
-        end
-    elseif choice == "4"
-        if gemini_status in [:configured_http, :configured_script, :configured_unknown]
-            println("\n   Removing Gemini MCP configuration...")
-            if remove_gemini_mcp_server()
-                println("   ✅ Successfully removed Gemini MCP configuration")
-            else
-                println("   ❌ Failed to remove Gemini MCP configuration")
-            end
-        elseif gemini_status != :gemini_not_found
-            println("\n   Adding Gemini HTTP transport...")
-            if add_gemini_mcp_server("http")
-                println("   ✅ Successfully configured Gemini HTTP transport")
-            else
-                println("   ❌ Failed to configure Gemini HTTP transport")
-            end
-        end
-    elseif choice == "5"
-        if gemini_status in [:configured_http, :configured_script, :configured_unknown]
-            println("\n   Adding/Replacing Gemini with HTTP transport...")
-            if add_gemini_mcp_server("http")
-                println("   ✅ Successfully configured Gemini HTTP transport")
-            else
-                println("   ❌ Failed to configure Gemini HTTP transport")
-            end
-        elseif gemini_status != :gemini_not_found
-            println("\n   Adding Gemini script transport...")
-            if add_gemini_mcp_server("script")
-                println("   ✅ Successfully configured Gemini script transport")
-            else
-                println("   ❌ Failed to configure Gemini script transport")
-            end
-        end
-    elseif choice == "6"
-        if gemini_status in [:configured_http, :configured_script, :configured_unknown]
-            println("\n   Adding/Replacing Gemini with script transport...")
-            if add_gemini_mcp_server("script")
-                println("   ✅ Successfully configured Gemini script transport")
-            else
-                println("   ❌ Failed to configure Gemini script transport")
-            end
-        end
-    else
+    choice = tryparse(Int, strip(readline()))
+    if choice === nothing || choice < 1 || choice > length(actions)
         println("\n   Invalid choice. Please run MCPRepl.setup() again.")
         return
     end
+    actions[choice]()
 
+    println()
     println("   💡 HTTP for direct connection, script for agent compatibility")
+    println("   💡 'user' scope makes the server available in all your projects")
 end
