@@ -558,7 +558,22 @@ function start!(; verbose::Bool = true, private::Bool = false)
         MCPRepl.text_parameter("expression", "Julia expression to evaluate (e.g., '2 + 3 * 4' or `import Pkg; Pkg.status()`"),
         args -> begin
             try
-                maybe_truncate_output(execute_repllike(get(args, "expression", "")))
+                expr = get(args, "expression", nothing)
+                if !(expr isa AbstractString) || isempty(strip(expr))
+                    # No usable code under the declared `expression` key.
+                    # Historically we silently evaluated "" here, which printed an
+                    # empty `agent>` and returned no output — indistinguishable
+                    # from a lost message. Instead, tell the caller exactly what
+                    # was expected and what it actually sent, so it can retry with
+                    # the right argument.
+                    got = isempty(args) ? "no arguments were provided" :
+                          "the arguments provided were: " *
+                          join(sort!(collect(keys(args))), ", ")
+                    "ERROR: exec_repl requires the Julia code in an \"expression\" " *
+                    "argument, but $got. Retry with e.g. {\"expression\": \"1 + 1\"}."
+                else
+                    maybe_truncate_output(execute_repllike(expr))
+                end
             catch e
                 println("Error during execute_repllike", e)
                 "Apparently there was an **internal** error to the MCP server: $e"
