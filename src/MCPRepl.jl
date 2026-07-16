@@ -321,6 +321,10 @@ function register_repl!(port::Int, word::AbstractString; private::Bool = false)
         "private" => private,
         "spawn_token" => get(ENV, "MCPREPL_SPAWN_TOKEN", ""),
         "owner_pid" => something(tryparse(Int, get(ENV, "MCPREPL_OWNER_PID", "")), 0),
+        # The adapter picks the tmux session name (with an informative, project-based
+        # label) at spawn and passes it in; recording it lets kill/orphan-reap target
+        # the session by its real name instead of re-deriving it from the token.
+        "tmux_session" => get(ENV, "MCPREPL_TMUX_SESSION", ""),
     )
     path = joinpath(dir, "$(getpid()).json")
     write(path, JSON.json(data))

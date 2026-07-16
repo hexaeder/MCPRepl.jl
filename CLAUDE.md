@@ -75,6 +75,18 @@ supported transport.
   the picker) and reachable only by passing its word-id as the `repl` argument.
   See `is_private` and the `resolve`/`_handle_spawn_repl`/`_handle_kill_repl`
   handlers in `mcp-julia-adapter`.
+- Session naming: the adapter names each private tmux session
+  `mcprepl-<project-label>-<token>` (the project label comes from the spawn's
+  project dir via `session_label`, folding a generic leaf like `test` into its
+  parent) so `tmux list-sessions` tells you which project each REPL is for. The
+  chosen name is passed to Julia via `MCPREPL_TMUX_SESSION` and stored in the
+  registry record as `tmux_session`; kill/orphan-reap target that recorded name
+  (`record_session`), falling back to the bare `mcprepl-<token>` for old records.
+- Kill scope: `kill_repl` can only ever `tmux kill-session` the session named by a
+  *registry record* (never a caller-supplied name, never a pid),
+  and it refuses both shared REPLs and private REPLs owned by another live adapter
+  (`owned_by_live_peer`). Killable: your own, `persist` ones (`owner_pid` 0), and
+  orphans whose owner died — the same set the orphan reap claims.
 - Lifecycle: private REPLs are auto-killed when the adapter (Claude Code session)
   exits — tracked sessions are reaped on shutdown, with a startup orphan-reap
   (`owner_pid` liveness) as a SIGKILL backstop. `spawn_repl persist=true` opts a
@@ -82,6 +94,11 @@ supported transport.
 - Launch uses `--startup-file=no` (so the user's `startup.jl` can't race/clobber
   the private server) and `MCPRepl.start!(private=true)`. Julia fields
   `private`/`spawn_token`/`owner_pid` are written by `register_repl!`.
+- The required `project` argument selects the environment (`--project=<realpath>`),
+  and the tmux session is started with `-c` in that same directory, so a REPL
+  spawned in a nested env (e.g. `NetworkDynamics/test`) gets both the test-env deps
+  and a `pwd()` inside `test/`. `using MCPRepl` still resolves in such an env
+  because the default `@v#.#` environment stays stacked in the `LOAD_PATH`.
 - The adapter also owns `usage_instructions` (sourced from
   `prompts/julia_repl_workflow.md` + `prompts/private_repl_workflow.md`, so it
   works even with zero REPLs) and advertises a teaser via `initialize.instructions`.

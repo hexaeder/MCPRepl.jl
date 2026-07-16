@@ -49,14 +49,14 @@ def load_adapter(registry_dir):
 
 
 def write_repl(registry_dir, pid, port, word, project_dir, git_root="", pwd=None,
-               private=False, spawn_token="", owner_pid=0):
+               private=False, spawn_token="", owner_pid=0, tmux_session=""):
     with open(os.path.join(registry_dir, "%d.json" % pid), "w") as fh:
         json.dump({"pid": pid, "port": port, "word": word,
                    "project_dir": project_dir, "pwd": pwd or project_dir,
                    "git_root": git_root,
                    "active_project": project_dir + "/Project.toml",
                    "private": private, "spawn_token": spawn_token,
-                   "owner_pid": owner_pid}, fh)
+                   "owner_pid": owner_pid, "tmux_session": tmux_session}, fh)
 
 
 def clear(registry_dir):
@@ -382,10 +382,14 @@ def _fake_tmux(reg, calls, word):
         calls.append(list(args))
         if args and args[0] == "new-session":
             # The launch command is a single shell-quoted string; dig the token out.
+            # The real REPL records the adapter-chosen session name (passed via
+            # MCPREPL_TMUX_SESSION / the -s arg); mirror that so kill/reap target it.
             m = re.search(r"MCPREPL_SPAWN_TOKEN=(\S+)", " ".join(args))
+            sess = args[args.index("-s") + 1] if "-s" in args else ""
             if m:
                 write_repl(reg, 90001, 6000, word, "/tmp/spawnP", private=True,
-                           spawn_token=m.group(1), owner_pid=os.getpid())
+                           spawn_token=m.group(1), owner_pid=os.getpid(),
+                           tmux_session=sess)
         return (0, "", "")
     return _run
 
@@ -411,6 +415,11 @@ def test_spawn_kill(ad, reg):
         new = [c for c in calls if c and c[0] == "new-session"]
         assert new and "MCPREPL_OWNER_PID=" in " ".join(new[0])
         assert any(s.startswith(ad.SESSION_PREFIX) for s in ad.SPAWNED_SESSIONS)
+        # The REPL activates the requested project AND starts in it, so relative
+        # paths resolve there rather than in the adapter's cwd.
+        real = os.path.realpath(reg)
+        assert "--project=" + real in " ".join(new[0]), new[0]
+        assert new[0][new[0].index("-c") + 1] == real, new[0]
 
         # kill_repl refuses a shared (non-private) REPL...
         write_repl(reg, 90002, 6001, "otter", "/tmp/shared")
@@ -421,6 +430,25 @@ def test_spawn_kill(ad, reg):
         finally:
             restore()
         assert "Refusing" in out[-1]["result"]["content"][0]["text"]
+
+        # ...and refuses another *live* adapter's private REPL (pid 1 is always
+        # alive and is not us), without leaking its word-id as a suggestion.
+        write_repl(reg, 90003, 6002, "lynx", "/tmp/peer", private=True,
+                   spawn_token="tok-lynx", owner_pid=1)
+        out, restore = _capture(ad)
+        try:
+            ad._handle_kill_repl(ad.Router(), {
+                "id": 5, "params": {"arguments": {"repl": "lynx"}}})
+        finally:
+            restore()
+        assert "another live session" in out[-1]["result"]["content"][0]["text"]
+        out, restore = _capture(ad)
+        try:
+            ad._handle_kill_repl(ad.Router(), {
+                "id": 6, "params": {"arguments": {"repl": "nosuch"}}})
+        finally:
+            restore()
+        assert "lynx" not in out[-1]["result"]["content"][0]["text"]
 
         # ...but kills the private one and untracks its session.
         calls.clear()
@@ -433,7 +461,22 @@ def test_spawn_kill(ad, reg):
         assert "Killed" in out[-1]["result"]["content"][0]["text"]
         assert any(c and c[0] == "kill-session" for c in calls)
         assert not any(s.startswith(ad.SESSION_PREFIX) for s in ad.SPAWNED_SESSIONS)
-        print("PASS spawn_repl / kill_repl (tracked, private-only kill)")
+
+        # Naming a Project.toml (not a directory) puts the REPL in its folder.
+        calls.clear()
+        toml = os.path.join(reg, "Project.toml")
+        open(toml, "w").close()
+        out, restore = _capture(ad)
+        try:
+            ad._handle_spawn_repl(ad.Router(), {
+                "id": 4, "params": {"name": "spawn_repl",
+                                    "arguments": {"project": toml}}})
+        finally:
+            restore()
+        os.remove(toml)
+        new = [c for c in calls if c and c[0] == "new-session"]
+        assert new and new[0][new[0].index("-c") + 1] == real, new[0]
+        print("PASS spawn_repl / kill_repl (tracked, private-only kill, cwd)")
     finally:
         (ad.run_tmux, ad.shutil.which, ad.SPAWN_TIMEOUT, ad.SPAWN_POLL) = saved
         ad.SPAWNED_SESSIONS.clear()

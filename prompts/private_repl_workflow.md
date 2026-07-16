@@ -27,7 +27,11 @@ hidden from the shared pool and reachable only by its word-id.
 ## How to use one
 
 1. **Spawn:** call `spawn_repl` with `project` set to the Julia project you want
-   (a directory or a `Project.toml`). It returns a **word-id**.
+   (a directory or a `Project.toml`, absolute or relative to your cwd). It returns
+   a **word-id**. Nested environments are a first-class case: pass the package root
+   to work in the main env, or `test/` to get the test env — that env's deps (test-
+   only packages included) are then available, and the REPL's `pwd()` is that
+   directory, so relative paths resolve the way `Pkg.test` would run them.
 2. **Route to it:** pass that word-id as the `repl` argument on `exec_repl`
    (or call `select_repl` once with `repl=<word>` to make it sticky). The private
    REPL does **not** appear in `list_repls`.

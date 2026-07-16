@@ -26,6 +26,7 @@ import atexit
 import glob
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -97,8 +98,50 @@ def is_private(repl):
     return bool(repl.get("private"))
 
 
-def session_name(token):
+# Subdir names that say nothing about *which* project a REPL belongs to; when a
+# project resolves to one of these we fold in the parent directory so the tmux
+# session reads e.g. `NetworkDynamics-test` rather than a bare `test`.
+_GENERIC_DIRS = {"test", "tests", "docs", "doc", "src", "examples", "example",
+                 "benchmark", "benchmarks", "dev"}
+
+
+def session_label(proj_dir):
+    """A tmux-safe, human-informative label for a project directory.
+
+    tmux session names can't contain '.' or ':' (target syntax), so we squash
+    everything outside [A-Za-z0-9_-] to '_'. Generic leaf names borrow their
+    parent for context.
+    """
+    proj_dir = proj_dir.rstrip(os.sep)
+    base = os.path.basename(proj_dir)
+    if base.lower() in _GENERIC_DIRS:
+        parent = os.path.basename(os.path.dirname(proj_dir))
+        if parent:
+            base = parent + "-" + base
+    return re.sub(r"[^A-Za-z0-9_-]", "_", base) or "repl"
+
+
+def session_name(token, label=None):
+    """tmux session name for a spawn token, optionally with a project label.
+
+    The labeled form (`mcprepl-<label>-<token>`) is what new spawns create and
+    record; the bare form (`mcprepl-<token>`) is the fallback for records that
+    predate the recorded `tmux_session` field."""
+    if label:
+        return SESSION_PREFIX + label + "-" + token
     return SESSION_PREFIX + token
+
+
+def record_session(repl):
+    """The tmux session name for a private REPL record.
+
+    Prefer the name the spawn recorded; fall back to re-deriving the bare form
+    from the token for older records that never stored one."""
+    recorded = repl.get("tmux_session")
+    if recorded:
+        return recorded
+    token = repl.get("spawn_token", "")
+    return session_name(token) if token else None
 
 
 def run_tmux(args):
@@ -275,9 +318,13 @@ ADAPTER_TOOLS = [
      "inputSchema": {"type": "object",
                      "properties": {
                          "project": {"type": "string",
-                                     "description": "Path to the Julia project "
-                                     "(a directory or a Project.toml) to activate "
-                                     "with --project."},
+                                     "description": "Path to the Julia project to "
+                                     "activate with --project: a directory or a "
+                                     "Project.toml, absolute or relative to the "
+                                     "current working directory. Point it at a "
+                                     "nested env to work there, e.g. '.' for the "
+                                     "main env or 'test' for the test env. The REPL "
+                                     "also starts with that directory as its pwd."},
                          "julia": {"type": "string",
                                    "description": "julia binary to use (default 'julia')."},
                          "persist": {"type": "boolean",
@@ -612,6 +659,10 @@ def _handle_spawn_repl(router, request):
         emit(tool_text_result(
             request_id, "Error: project path does not exist: %s" % project))
         return
+    # The REPL starts *in* its project (the dir holding the Project.toml), the way
+    # `Pkg.test` runs in `test/`. Otherwise it would inherit the adapter's cwd and
+    # relative paths (include, data files) would resolve somewhere else entirely.
+    proj_dir = proj_path if os.path.isdir(proj_path) else os.path.dirname(proj_path)
     if shutil.which("tmux") is None:
         emit(tool_text_result(
             request_id,
@@ -620,7 +671,7 @@ def _handle_spawn_repl(router, request):
         return
 
     token = secrets.token_hex(8)
-    session = session_name(token)
+    session = session_name(token, session_label(proj_dir))
     owner = "0" if persist else str(os.getpid())
 
     # tmux joins a multi-arg command with spaces and re-parses it through the
@@ -628,7 +679,8 @@ def _handle_spawn_repl(router, request):
     # code (which contains spaces and a semicolon) intact. The `env VAR=... julia`
     # prefix guarantees our variables reach Julia regardless of the (possibly
     # long-lived) tmux server's own environment.
-    env_pairs = {"MCPREPL_SPAWN_TOKEN": token, "MCPREPL_OWNER_PID": owner}
+    env_pairs = {"MCPREPL_SPAWN_TOKEN": token, "MCPREPL_OWNER_PID": owner,
+                 "MCPREPL_TMUX_SESSION": session}
     reg = os.environ.get("MCPREPL_REGISTRY_DIR")
     if reg:
         env_pairs["MCPREPL_REGISTRY_DIR"] = reg
@@ -641,7 +693,7 @@ def _handle_spawn_repl(router, request):
     command = "env " + " ".join(
         "%s=%s" % (k, shlex.quote(v)) for k, v in env_pairs.items())
     command += " " + " ".join(shlex.quote(a) for a in julia_argv)
-    tmux_args = ["new-session", "-d", "-s", session, command]
+    tmux_args = ["new-session", "-d", "-s", session, "-c", proj_dir, command]
 
     rc, out, err = run_tmux(tmux_args)
     if rc != 0:
@@ -695,8 +747,8 @@ def _handle_kill_repl(router, request):
     repls = read_registry()
     match = router.find_by_word(repls, word)
     if match is None:
-        privs = ", ".join(r.get("word", "?") for r in repls if is_private(r)) \
-            or "(none)"
+        privs = ", ".join(r.get("word", "?") for r in repls
+                          if is_private(r) and not owned_by_live_peer(r)) or "(none)"
         emit(tool_text_result(
             request_id,
             "No REPL with word-id '%s'. Private REPLs you can kill: %s"
@@ -708,8 +760,14 @@ def _handle_kill_repl(router, request):
             "Refusing: '%s' is a shared REPL, which is user-managed. kill_repl "
             "only kills private REPLs you spawned with spawn_repl." % word))
         return
-    token = match.get("spawn_token", "")
-    session = session_name(token) if token else None
+    if owned_by_live_peer(match):
+        emit(tool_text_result(
+            request_id,
+            "Refusing: '%s' is the private REPL of another live session (adapter "
+            "pid %s). kill_repl only kills your own private REPLs."
+            % (word, match.get("owner_pid"))))
+        return
+    session = record_session(match)
     if session:
         run_tmux(["kill-session", "-t", session])
         SPAWNED_SESSIONS.discard(session)
@@ -717,6 +775,18 @@ def _handle_kill_repl(router, request):
         request_id,
         "Killed private Julia REPL '%s'%s."
         % (word, " (tmux session %s)" % session if session else "")))
+
+
+def owned_by_live_peer(r):
+    """True if a private REPL belongs to a *different*, still-running adapter.
+
+    Such a REPL is another Claude Code session's working REPL: private to it, and
+    none of our business to kill. persist REPLs (owner_pid 0) and orphans (owner
+    dead) are fair game, matching reap_orphan_private_sessions.
+    """
+    owner = r.get("owner_pid", 0)
+    return (isinstance(owner, int) and owner > 0
+            and owner != os.getpid() and pid_alive(owner))
 
 
 def reap_spawned_sessions():
@@ -742,9 +812,9 @@ def reap_orphan_private_sessions():
         owner = r.get("owner_pid", 0)
         if not isinstance(owner, int) or owner <= 0 or pid_alive(owner):
             continue
-        token = r.get("spawn_token", "")
-        if token:
-            run_tmux(["kill-session", "-t", session_name(token)])
+        session = record_session(r)
+        if session:
+            run_tmux(["kill-session", "-t", session])
 
 
 def _read_prompt(name):
