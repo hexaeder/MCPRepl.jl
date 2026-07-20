@@ -339,15 +339,56 @@ def test_private_filtering(ad, reg):
     sel, alt = r3.resolve(call(3))
     assert alt is None and sel["word"] == "otter"
 
-    # list_repls hides private REPLs.
+    # A private REPL selected as the sticky target STAYS the target across a
+    # registry change, even when exec_repl is called without a `repl=` override
+    # (LLMs routinely drop it after the first call). Regression: the private word
+    # was pruned from the pool, so a rescan treated the selection as vanished and
+    # silently rerouted to a shared REPL.
+    clear(reg)
+    write_repl(reg, 800, 9500, "beaver", "/tmp/privP", private=True,
+               spawn_token="tok-beaver", owner_pid=os.getpid())
+    r4 = ad.Router(); r4.cwd = "/tmp/x"
+    # Select the private REPL explicitly once (as select_repl / repl= would).
+    sel, alt = r4.resolve(call(1, {"repl": "beaver"}))
+    assert alt is None and sel["word"] == "beaver"
+    # A shared REPL now appears (registry mtime changes -> forced rescan) and the
+    # next call carries NO override: routing must remain on the private REPL.
+    write_repl(reg, 801, 9501, "otter", "/tmp/x")
+    sel, alt = r4.resolve(call(2))
+    assert alt is None and sel["word"] == "beaver", (sel, alt)
+
+    # And when the private REPL is the ONLY one registered, a no-override call
+    # still routes to it rather than erroring "No Julia REPL".
+    clear(reg)
+    write_repl(reg, 802, 9502, "beaver", "/tmp/privP", private=True,
+               spawn_token="tok-beaver", owner_pid=os.getpid())
+    r5 = ad.Router(); r5.cwd = "/tmp/x"
+    sel, alt = r5.resolve(call(3, {"repl": "beaver"}))
+    assert alt is None and sel["word"] == "beaver"
+    # touch the registry to force a rescan, then call without an override
+    write_repl(reg, 802, 9502, "beaver", "/tmp/privP", private=True,
+               spawn_token="tok-beaver", owner_pid=os.getpid())
+    sel, alt = r5.resolve(call(4))
+    assert alt is None and sel and sel["word"] == "beaver", (sel, alt)
+
+    # list_repls shows this session's OWN private REPL (tagged), plus the shared
+    # pool, but hides private REPLs owned by *other* live adapters.
+    clear(reg)
+    write_repl(reg, 700, 9000, "beaver", "/tmp/privP", private=True,
+               spawn_token="tok-beaver", owner_pid=os.getpid())   # mine
+    write_repl(reg, 701, 9001, "otter", "/tmp/x")                 # shared
+    write_repl(reg, 1, 9002, "lynx", "/tmp/peer", private=True,
+               spawn_token="tok-lynx", owner_pid=1)               # another live adapter
     out, restore = _capture(ad)
     try:
         ad._handle_list_repls(ad.Router(), {"id": 9, "params": {}})
     finally:
         restore()
     txt = out[-1]["result"]["content"][0]["text"]
-    assert "otter" in txt and "beaver" not in txt
-    print("PASS private REPL filtering (hidden from pool, reachable by word)")
+    assert "otter" in txt, txt
+    assert "beaver" in txt and "(private, yours)" in txt, txt
+    assert "lynx" not in txt, txt
+    print("PASS private REPL filtering (own private discoverable, peers' hidden)")
 
 
 def test_usage_instructions(ad, reg):

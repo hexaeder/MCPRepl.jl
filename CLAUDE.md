@@ -70,11 +70,25 @@ supported transport.
   `spawn_repl` tool: a real interactive Julia REPL running in a detached `tmux`
   session (so `execute_repllike` needs no special headless path — it is a normal
   interactive REPL) and killed via `kill_repl`. The user can `tmux attach` to it.
-- Privacy = hidden + explicit-id: the REPL's registry record carries
-  `private: true`, so it is excluded from the pool (auto-routing, `list_repls`,
-  the picker) and reachable only by passing its word-id as the `repl` argument.
-  See `is_private` and the `resolve`/`_handle_spawn_repl`/`_handle_kill_repl`
-  handlers in `mcp-julia-adapter`.
+- Privacy = out-of-pool + owner-discoverable: the REPL's registry record carries
+  `private: true`, so it is excluded from the *auto-routing pool* (proximity
+  routing, the ambiguity picker) — it never hijacks the user's shared workflow
+  and is never auto-selected. It is reached only by passing its word-id as the
+  `repl` argument. But discovery and routing are decoupled: `list_repls` DOES
+  show a private REPL that *this* adapter spawned (tagged `(private, yours)`, via
+  `owned_by_me`, i.e. `owner_pid == getpid()`), so an agent can find and
+  re-select its own REPL after a context reset; private REPLs owned by *other*
+  live adapters stay hidden. See `is_private`, `owned_by_me`, and the
+  `resolve`/`_handle_list_repls`/`_handle_spawn_repl`/`_handle_kill_repl` handlers
+  in `mcp-julia-adapter`.
+- Discoverability (`list_repls`) and selection-stickiness are complementary, not
+  redundant: `resolve` runs automatically on every `exec_repl`, and because the
+  pool prunes private REPLs, a selected private REPL would otherwise be treated as
+  "vanished" and silently rerouted to a shared REPL on any registry change. The
+  sticky special-case in `resolve` (keep routing to a still-registered private
+  selection) guards that automatic path; `list_repls` only powers *deliberate*
+  re-selection. An agent isn't calling `list_repls` before each `exec_repl`, so
+  discoverability alone can't replace stickiness.
 - Session naming: the adapter names each private tmux session
   `mcprepl-<project-label>-<token>` (the project label comes from the spawn's
   project dir via `session_label`, folding a generic leaf like `test` into its

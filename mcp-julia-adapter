@@ -98,6 +98,17 @@ def is_private(repl):
     return bool(repl.get("private"))
 
 
+def owned_by_me(repl):
+    """True if this record is a private REPL *this* adapter spawned and still owns.
+
+    Private REPLs are excluded from the auto-routing pool, but their owner should
+    still be able to *discover* them (see them in list_repls, re-select them after
+    a context reset) — hence this liveness-scoped ownership check. A persist REPL
+    (owner_pid 0) or one owned by another session is not "mine" for listing.
+    """
+    return is_private(repl) and repl.get("owner_pid") == os.getpid()
+
+
 # Subdir names that say nothing about *which* project a REPL belongs to; when a
 # project resolves to one of these we fold in the parent directory so the tmux
 # session reads e.g. `NetworkDynamics-test` rather than a bare `test`.
@@ -296,8 +307,10 @@ ADAPTER_TOOLS = [
     {"name": "list_repls",
      "description": "List the running Julia REPLs the adapter has discovered — "
                     "their word-id, working directory, project, port, and which "
-                    "one this session is routed to. Use it to see your options, "
-                    "then `select_repl` to choose.",
+                    "one this session is routed to. Includes any PRIVATE REPL you "
+                    "spawned yourself (tagged '(private, yours)'), so you can find "
+                    "and re-select it. Use it to see your options, then "
+                    "`select_repl` to choose.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "select_repl",
      "description": "Route this session's Julia calls to a specific REPL, chosen "
@@ -466,6 +479,20 @@ class Router:
                 return self.selected, None
             # else fall through to normal resolution / prompt
 
+        # A private selection (an agent's own spawned REPL) is sticky and never
+        # subject to auto-rerouting or rival re-prompts: it lives OUTSIDE the
+        # shared pool, so we look it up in the full set and keep routing to it as
+        # long as it is still registered. Without this, any registry change would
+        # rescan, fail to find the private word in the pruned `repls`, and treat
+        # the selection as vanished — silently rerouting exec_repl to a shared
+        # REPL (or erroring "No Julia REPL" when the private one is the only one).
+        # It stays selected until it dies or the agent explicitly re-selects.
+        if self.selected is not None:
+            sel = self.find_by_word(repls_all, self.selected["word"])
+            if sel is not None and is_private(sel):
+                self.selected = self.as_selection(sel)
+                return self.selected, None
+
         if not repls:
             self.selected = None
             return None, error_result(
@@ -602,19 +629,29 @@ class Router:
 
 def _handle_list_repls(router, request):
     request_id = request.get("id")
-    # Private REPLs are hidden from the pool; don't list them.
-    repls = [r for r in read_registry() if not is_private(r)]
+    # The shared pool excludes every private REPL; but a private REPL *this*
+    # adapter spawned is shown too, tagged distinctly, so an agent can discover
+    # and re-select its own REPL. Other sessions' private REPLs stay hidden.
+    all_repls = read_registry()
+    shared = [r for r in all_repls if not is_private(r)]
+    mine = [r for r in all_repls if owned_by_me(r)]
+    repls = shared + mine
     if not repls:
         emit(tool_text_result(request_id, "No Julia REPLs are currently running."))
         return
     sel_word = router.selected["word"] if router.selected else None
     lines = ["Discovered Julia REPLs (this session's cwd: %s):" % router.cwd, ""]
-    for r in sorted(repls, key=router.repl_rank):
+    for r in sorted(shared, key=router.repl_rank):
         mark = "→ " if r.get("word") == sel_word else "  "
         note = "  (same git project)" if router.repl_rank(r) == 0 else ""
         lines.append("%s%s — %s  [%s]  port %s%s" % (
             mark, r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
             r.get("active_project", "") or "no project", r.get("port", "?"), note))
+    for r in sorted(mine, key=router.repl_rank):
+        mark = "→ " if r.get("word") == sel_word else "  "
+        lines.append("%s%s — %s  [%s]  port %s  (private, yours)" % (
+            mark, r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+            r.get("active_project", "") or "no project", r.get("port", "?")))
     if sel_word:
         lines += ["", "Currently routed to: %s" % sel_word]
     else:

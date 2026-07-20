@@ -11,7 +11,9 @@ shared REPL).
 
 A private REPL is a real interactive Julia session running in a detached tmux
 session. From Julia's side it behaves exactly like a shared REPL; it is simply
-hidden from the shared pool and reachable only by its word-id.
+kept out of automatic routing (never auto-selected, never surfaced to the user in
+a picker) and reachable only by its word-id. It is still **yours to discover**:
+`list_repls` shows the private REPLs *you* spawned, tagged `(private, yours)`.
 
 ## When to use one
 
@@ -33,12 +35,17 @@ hidden from the shared pool and reachable only by its word-id.
    only packages included) are then available, and the REPL's `pwd()` is that
    directory, so relative paths resolve the way `Pkg.test` would run them.
 2. **Route to it:** pass that word-id as the `repl` argument on `exec_repl`
-   (or call `select_repl` once with `repl=<word>` to make it sticky). The private
-   REPL does **not** appear in `list_repls`.
-3. **Kill it:** call `kill_repl` with the word-id when you're done. It is also
+   (or call `select_repl` once with `repl=<word>` to make it sticky). Once
+   selected it **stays** selected — it won't be silently rerouted to a shared REPL
+   when the set of running REPLs changes.
+3. **Lost the word-id?** (e.g. after a long task or a context reset) call
+   `list_repls` — your own private REPLs are listed there, tagged
+   `(private, yours)`. Re-select one with `select_repl repl=<word>` instead of
+   spawning a duplicate.
+4. **Kill it:** call `kill_repl` with the word-id when you're done. It is also
    **auto-killed when your session ends** (unless you spawned it with
    `persist: true`), so you won't leak background processes.
-4. The user can `tmux attach` to the session at any time to watch or take over.
+5. The user can `tmux attach` to the session at any time to watch or take over.
 
 ## Environment rules (same as a shared REPL)
 
