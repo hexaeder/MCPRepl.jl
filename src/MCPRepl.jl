@@ -116,7 +116,9 @@ function execute_repllike(str)
     disp = IOBufferDisplay()
 
     # generate printout, err goes to disp.err, val goes to "specialdisplay" disp
-    if VERSION >= v"1.11"
+    # The `backend` positional arg was only added to print_response in Julia 1.12;
+    # on 1.10/1.11 the signature is (io, response, show_value, have_color, specialdisplay).
+    if VERSION >= v"1.12"
         REPL.print_response(disp.io, response, backend, !REPL.ends_with_semicolon(str), false, disp)
     else
         REPL.print_response(disp.io, response, !REPL.ends_with_semicolon(str), false, disp)
@@ -244,8 +246,48 @@ function _git_root(startdir::AbstractString)
     end
 end
 
-# Words currently claimed by *any* registry file (live or not — cheap best-effort
-# read used only to avoid handing out a duplicate word at start time).
+# True if a process with `pid` currently exists. Uses kill(pid, 0), which sends
+# no signal — it just asks the kernel whether the pid is signalable. Cheap (one
+# syscall, no spawn). A live process owned by another user returns EPERM, which
+# still means "alive"; only ESRCH ("no such process") counts as dead.
+function _pid_alive(pid::Integer)
+    pid > 0 || return false
+    ret = ccall(:kill, Cint, (Cint, Cint), pid, 0)
+    ret == 0 && return true
+    return Libc.errno() == Libc.EPERM
+end
+
+# Delete registry files whose owning REPL process is gone. Runs once at the top
+# of `start!`, before name-picking, so `_claimed_words` reads an already-pruned
+# directory and can stay a plain read (no per-word liveness checks). Only files
+# that parse cleanly AND name a dead pid are removed — a partial/unparseable file
+# (a REPL mid-registration) is left alone, and a starting REPL's own file is
+# never at risk since its pid is alive by definition. The rm is best-effort: two
+# REPLs starting at once may race to unlink the same corpse.
+function reap_stale_registry!()
+    dir = registry_dir()
+    isdir(dir) || return nothing
+    for f in readdir(dir; join = true)
+        endswith(f, ".json") || continue
+        pid = try
+            get(JSON.parse(read(f, String)), "pid", nothing)
+        catch
+            continue  # unparseable/partial — leave it (may be mid-write)
+        end
+        pid isa Integer || continue
+        _pid_alive(pid) && continue
+        try
+            rm(f; force = true)
+        catch
+            # Best-effort: another starting REPL may have unlinked it first.
+        end
+    end
+    return nothing
+end
+
+# Words currently claimed by registry files. A plain read: `reap_stale_registry!`
+# is expected to have already pruned dead REPLs, so every word here belongs to a
+# live REPL. Best-effort — unreadable/partial files are skipped.
 function _claimed_words()
     dir = registry_dir()
     words = String[]
@@ -264,6 +306,9 @@ function _claimed_words()
 end
 
 # Deterministic word for a project dir, advancing past any word already taken.
+# With the registry pruned of dead REPLs, "taken" means a live REPL holds it, so
+# exhausting the list is a genuine "48 live REPLs" condition — a loud error beats
+# silently handing out a duplicate word-id.
 function wordid_for(project_dir::AbstractString, taken = _claimed_words())
     n = length(WORDLIST)
     base = 1 + (hash(_realpath_safe(project_dir)) % n)
@@ -271,7 +316,8 @@ function wordid_for(project_dir::AbstractString, taken = _claimed_words())
         w = WORDLIST[1 + (base - 1 + i) % n]
         w in taken || return w
     end
-    return WORDLIST[base]  # every word taken (>48 live REPLs) — reuse deterministic pick
+    error("All $n REPL word-ids are in use by live REPLs; cannot assign a unique " *
+          "word-id. Stop an unused REPL and try again.")
 end
 
 # Prefer the historic default port 3000 for the first REPL; if it is already bound
@@ -656,6 +702,9 @@ function start!(; verbose::Bool = true, private::Bool = false)
     port = choose_port(3000)
     active = Base.active_project()
     project_dir = active === nothing ? pwd() : dirname(active)
+    # Prune registry files left by dead REPLs before name-picking, so a directory
+    # full of corpses can't saturate the wordlist and force duplicate word-ids.
+    reap_stale_registry!()
     word = wordid_for(project_dir)
 
     # Create and start server

@@ -763,6 +763,12 @@ def _handle_spawn_repl(router, request):
     if not persist:
         SPAWNED_SESSIONS.add(session)
 
+    # Auto-select the freshly-spawned REPL: "spawn" implies "I want to talk to
+    # this one now". Without this, the next exec_repl (with no repl= override)
+    # would resolve to the shared pool and silently miss the private REPL, which
+    # is out of the auto-routing pool. Stickiness (see resolve) then keeps us here.
+    router.selected = router.as_selection(record)
+
     word = record.get("word", "?")
     persist_note = (" It is set to persist and will survive this session."
                     if persist else
@@ -770,11 +776,11 @@ def _handle_spawn_repl(router, request):
     emit(tool_text_result(
         request_id,
         "Started private Julia REPL '%s' (port %s, project %s, tmux session %s).\n"
-        "Route calls to it by setting the `repl` argument to '%s' on exec_repl "
-        "(or run select_repl with repl='%s'). It is hidden from list_repls. "
-        "Kill it with kill_repl repl='%s'.%s"
+        "It is now selected: exec_repl calls route here automatically until you "
+        "select another REPL. To be explicit (or after re-selecting elsewhere) "
+        "pass `repl`='%s'. Kill it with kill_repl repl='%s'.%s"
         % (word, record.get("port", "?"), proj_path, session,
-           word, word, word, persist_note)))
+           word, word, persist_note)))
 
 
 def _handle_kill_repl(router, request):

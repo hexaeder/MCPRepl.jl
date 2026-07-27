@@ -123,6 +123,39 @@ names(PackageName)     # what a package exports
 methods(sort)
 ```
 
+### Iterating on a non-trivial snippet — use a scratch file
+
+For a small, one-off expression, send it inline with `exec_repl`. But when you
+find yourself re-sending a substantial block (roughly >20 lines) and tweaking a
+few lines each time, write it to a scratch file in your **session scratchpad**,
+edit it surgically with your file tools, and re-run with
+`include(".../scratch.jl")`.
+
+Re-`include`ing is usually cheap: after the first run the code is compiled, which
+is exactly the warm-REPL (TTFX) win — the first pass can easily take 10× a later
+one. Only genuinely per-run-expensive work (loading a large dataset, a long
+simulation) is worth keeping as REPL state you run once, rather than re-running it
+inside the script. (This is unrelated to the rule against `include`-ing a
+package's `src/`/`ext/` files — a throwaway scratch script is fine.)
+
+### Large or noisy output — redirect to a file
+
+When a call prints a lot (a test suite, a simulation), redirect it to a file in
+your scratchpad instead of pulling the whole dump into context, then inspect it
+with **your own Read/Grep tools**:
+
+```julia
+open(".../out.txt", "w") do io
+    redirect_stdout(io) do
+        include(".../scratch.jl")
+    end
+end
+```
+
+Only bother when output is genuinely large — for a few lines, let it return
+inline. Don't shell out through the REPL (`run(`grep …`)`) to search it; that's
+what your own tools are for.
+
 ## Environment management
 
 Call the **`investigate_environment`** tool at the start of REPL work: it reports

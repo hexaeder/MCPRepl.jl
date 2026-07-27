@@ -299,6 +299,48 @@ using Sockets
         w3 = MCPRepl.wordid_for("/some/project/foo", [w1])
         @test w3 != w1
         @test w3 in MCPRepl.WORDLIST
+
+        # Exhaustion: when every word is taken by a live REPL, error loudly rather
+        # than silently hand out a duplicate word-id.
+        @test_throws ErrorException MCPRepl.wordid_for("/some/project/foo",
+                                                       copy(MCPRepl.WORDLIST))
+    end
+
+    @testset "Registry reaping" begin
+        # A live pid (our own) is alive; a bogus/never-used pid is dead.
+        @test MCPRepl._pid_alive(getpid())
+        @test !MCPRepl._pid_alive(2_000_000_000)  # unused, out of typical pid range
+        @test !MCPRepl._pid_alive(0)
+        @test !MCPRepl._pid_alive(-1)
+
+        # reap_stale_registry! deletes dead-pid records, keeps live ones, and
+        # leaves unparseable files untouched.
+        mktempdir() do dir
+            withenv("MCPREPL_REGISTRY_DIR" => dir) do
+                @test MCPRepl.registry_dir() == dir
+                write(joinpath(dir, "live.json"),
+                      JSON.json(Dict("pid" => getpid(), "word" => "otter")))
+                write(joinpath(dir, "dead.json"),
+                      JSON.json(Dict("pid" => 2_000_000_000, "word" => "badger")))
+                write(joinpath(dir, "partial.json"), "{not valid json")
+                write(joinpath(dir, "nopid.json"),
+                      JSON.json(Dict("word" => "heron")))
+
+                MCPRepl.reap_stale_registry!()
+
+                @test isfile(joinpath(dir, "live.json"))      # live pid kept
+                @test !isfile(joinpath(dir, "dead.json"))     # dead pid pruned
+                @test isfile(joinpath(dir, "partial.json"))   # unparseable left alone
+                @test isfile(joinpath(dir, "nopid.json"))     # no pid -> left alone
+
+                # After reaping, the dead REPL's word is gone; the live one and
+                # the (untouched) no-pid record's word remain.
+                claimed = Set(MCPRepl._claimed_words())
+                @test "otter" in claimed        # live pid
+                @test "heron" in claimed        # no-pid record left in place
+                @test !("badger" in claimed)    # dead pid reaped
+            end
+        end
     end
 
     @testset "Port selection" begin
