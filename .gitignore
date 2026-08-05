@@ -1,3 +1,6 @@
 # Python bytecode from the adapter and its tests
 __pycache__/
 *.pyc
+
+# Resolved environments are local (incl. per-version Manifest-v1.x.toml)
+Manifest*.toml
