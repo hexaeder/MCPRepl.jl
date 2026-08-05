@@ -202,11 +202,11 @@ end
 # daemon: each REPL binds its own port and drops a small JSON file into a shared
 # registry directory. The per-project stdio adapter (`mcp-julia-adapter`) reads
 # that directory to discover REPLs and route each call to the right one. See the
-# adapter for the routing/elicitation logic.
+# adapter for the routing logic.
 
-# Short, human-recognizable handles so a REPL can be named in the adapter's
-# picker ("otter — /path/to/foo"). Derived deterministically from the project
-# directory so a REPL keeps its word across restarts.
+# Short, human-recognizable handles so a REPL can be named in an adapter listing
+# ("otter — /path/to/foo") and passed as `repl=<word>`. Derived deterministically
+# from the project directory so a REPL keeps its word across restarts.
 const WORDLIST = [
     "otter", "badger", "heron", "marten", "lynx", "ibis", "raven", "newt",
     "koi", "vole", "finch", "shrew", "egret", "stoat", "quail", "tapir",

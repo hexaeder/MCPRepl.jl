@@ -17,14 +17,24 @@ This means the REPL tools existing does **not** guarantee a REPL is running. You
 first move in a session is to find out what is actually there:
 
 1. Call **`list_repls`** to see the running REPLs — their word-id, working
-   directory, project, and which one this session is currently routed to.
-2. Sanity-check that the routed REPL's project/directory matches the code you are
-   about to work on. A REPL in the wrong project is worse than no REPL. If it does
-   not match, pick the right one with **`select_repl`** (by word-id), or pass
-   `repl=<word>` directly on an `exec_repl` call.
+   directory, project, and port. The one nearest your working directory is
+   flagged as a *suggestion*.
+2. Sanity-check that the REPL you intend to use has a project/directory matching
+   the code you are about to work on. A REPL in the wrong project is worse than no
+   REPL.
 
-If several REPLs could plausibly serve your task, the adapter asks the **user** to
-pick (you don't choose for them). If exactly one fits your cwd, it routes silently.
+**Routing is explicit and stateless — there is no sticky "current REPL".** You
+choose per call by passing **`repl=<word>`** on `exec_repl`, and you keep passing
+it. The only shortcut: if exactly **one** shared REPL is running, a call with no
+`repl=` uses it. With **two or more**, a call without `repl=` does *not* guess —
+it returns the list so you pick one; route the rest of your calls with that
+word-id. Because there is no hidden selection, the word you pass is always visible
+in your own transcript — that *is* the source of truth for which REPL you're on.
+
+If a `repl=<word>` no longer names a live REPL (it exited), the call **errors**
+rather than silently falling back to a different REPL — re-check `list_repls` and
+pick another. (Word-ids are derived from the project path and stable across a
+restart, so a restarted REPL keeps its word.)
 
 ## Do you even need the REPL?
 

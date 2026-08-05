@@ -57,25 +57,22 @@ to the right one automatically. There is **no central daemon**:
   small file in `~/.mcprepl/registry/`. Each REPL gets a short, stable
   **word-id** (e.g. `otter`) shown in its startup banner.
 - The **adapter** (`mcp-julia-adapter`) is the MCP server and the multiplexer. It
-  is launched per-project by the client, reads the registry, and routes each call:
-  - a single REPL, or a unique nearest-ancestor of the agent's working
-    directory, is used **silently**;
-  - if the choice is ambiguous — or a *nearer* REPL appears mid-session — it asks
-    **you** to pick, via an MCP elicitation dialog (Claude Code ≥ 2.1.76). The
-    LLM is never involved in routing.
-  - clients without elicitation get a text prompt listing the REPLs; retry the
-    call with an argument `"repl": "<word>"` (or set `MCPREPL_PROJECT=<word>`).
+  is launched per-project by the client, reads the registry, and routes each call.
+  Routing is **explicit and stateless** — there is no sticky "current REPL":
+  - an explicit `"repl": "<word>"` argument (or `MCPREPL_PROJECT=<word>`) is
+    always honored; a word that no longer names a live REPL is an **error**, not a
+    silent fall-back to a different one;
+  - with no `repl` argument, a **single** shared REPL is used silently; with **two
+    or more** the adapter returns a text listing (flagging the nearest one as a
+    suggestion) and the agent retries with `"repl": "<word>"`. It never guesses
+    among several, and the LLM/adapter never picks silently for you.
+  - the agent keeps passing that word-id on subsequent calls; because there's no
+    hidden state, which REPL it's using is always visible in its own transcript.
 - REPLs in the **same git project** as the agent's working directory (any
-  subfolder) are treated as the ideal target — even sibling subfolders.
-
-You can also switch REPLs explicitly:
-- **`select-repl` prompt** — an MCP prompt exposed as the slash command
-  `/mcp__julia-repl__select-repl` (also listed under `/mcp`). It pops the picker
-  on demand, decided by *you*, not the model. Requires a client that surfaces MCP
-  prompts and supports elicitation (Claude Code ≥ 2.1.76); reconnect the server
-  after upgrading so the prompt is registered.
-- **`list_repls` / `select_repl` tools** — the agent can enumerate REPLs and set
-  the active one by word-id without any dialog.
+  subfolder) rank as the nearest suggestion — even sibling subfolders.
+- **`list_repls` tool** — enumerate the running REPLs (word-id, dir, project,
+  port) with the nearest one flagged. There is no `select_repl` tool or picker
+  prompt: routing is done per call via the `repl` argument, not a stored selection.
 
 Set `MCPREPL_REGISTRY_DIR` to relocate/isolate the registry directory.
 

@@ -396,7 +396,7 @@ using Sockets
 
     @testset "Adapter routing (python)" begin
         # The multiplexing router lives in the Python adapter; exercise its logic
-        # (rank, resolution branches, elicitation round-trip) via its own fast,
+        # (rank, resolution branches, identity guard) via its own fast,
         # Julia-free test. Skip cleanly if python3 isn't on PATH.
         py = Sys.which("python3")
         if py === nothing

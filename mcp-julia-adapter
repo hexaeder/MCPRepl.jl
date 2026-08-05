@@ -8,15 +8,21 @@ directory set to the project the agent is working in.
 
 Multiple Julia REPLs can run at once, each on its own port, each advertising
 itself with a `<pid>.json` file in ~/.mcprepl/registry/. This adapter discovers
-those REPLs and routes every `tools/call` to the correct one:
+those REPLs and routes every `tools/call` — but it keeps NO sticky selection.
+Routing is decided fresh from the live registry on each call:
 
-  * exactly one REPL, or a unique nearest-ancestor of our cwd  -> route silently
-  * otherwise, or when a strictly-nearer REPL appears          -> ask the USER
-    which REPL to use, via MCP elicitation (no LLM involved)
-  * if the client does not support elicitation                 -> return a
-    "pick a REPL, retry with repl=<word>" message to the caller instead
+  * explicit `repl=<word>` (or MCPREPL_PROJECT)  -> route there, or ERROR if that
+    word is not a live REPL (never silently fall back to a different one)
+  * no target, exactly one shared REPL           -> use it
+  * no target, >=2 shared REPLs                   -> return a listing so the
+    caller retries with `repl=<word>` (we never silently guess among several)
+  * no target, no shared REPL                     -> ERROR
 
-Julia stays a plain HTTP request/response endpoint; all routing lives here.
+The agent carries the chosen word via `repl=` and keeps passing it; that keeps
+routing legible (visible in the agent's own transcript) instead of hidden in
+adapter state. Proximity to our cwd is only ever a *suggestion* in the listing,
+never an automatic pick among several. Julia stays a plain HTTP request/response
+endpoint; all routing lives here.
 
 The Julia REPL server(s) must be running first:
     julia --project -e "using MCPRepl; MCPRepl.start!()"
@@ -181,14 +187,6 @@ def pid_alive(pid):
     return True
 
 
-def registry_mtime():
-    """mtime of the registry dir (changes when files are added/removed)."""
-    try:
-        return os.stat(REGISTRY_DIR).st_mtime
-    except OSError:
-        return None
-
-
 def read_registry():
     """Return the list of live REPL records, pruning dead ones."""
     repls = []
@@ -227,6 +225,16 @@ def git_root(startdir):
         d = parent
 
 
+def safe_realpath(p):
+    """os.path.realpath that never raises and treats "" as "" (not cwd)."""
+    if not p:
+        return ""
+    try:
+        return os.path.realpath(p)
+    except Exception:
+        return p
+
+
 def dir_rank(project_dir, cwd):
     """Directory distance from cwd up to project_dir.
 
@@ -260,16 +268,6 @@ def post_to_repl(port, request, timeout=600):
     with urllib.request.urlopen(req, timeout=timeout) as response:
         body = response.read().decode("utf-8")
     return json.loads(body) if body.strip() else None
-
-
-def repl_reachable(port):
-    """Cheap liveness probe: a ping should return quickly."""
-    try:
-        post_to_repl(port, {"jsonrpc": "2.0", "id": "probe", "method": "ping"},
-                     timeout=3)
-        return True
-    except Exception:
-        return False
 
 
 # --- JSON-RPC framing helpers ------------------------------------------------
@@ -306,21 +304,12 @@ ADAPTER_TOOLS = [
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "list_repls",
      "description": "List the running Julia REPLs the adapter has discovered — "
-                    "their word-id, working directory, project, port, and which "
-                    "one this session is routed to. Includes any PRIVATE REPL you "
-                    "spawned yourself (tagged '(private, yours)'), so you can find "
-                    "and re-select it. Use it to see your options, then "
-                    "`select_repl` to choose.",
+                    "their word-id, working directory, project, and port, with the "
+                    "nearest-to-your-cwd one flagged as a suggestion. Includes any "
+                    "PRIVATE REPL you spawned yourself (tagged '(private, yours)'). "
+                    "There is no sticky selection: pick a word from this list and "
+                    "pass it as `repl` on exec_repl, and keep passing it.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "select_repl",
-     "description": "Route this session's Julia calls to a specific REPL, chosen "
-                    "by its word-id (see `list_repls`). The choice sticks until "
-                    "that REPL disappears or another is selected.",
-     "inputSchema": {"type": "object",
-                     "properties": {"repl": {
-                         "type": "string",
-                         "description": "word-id of the REPL to use (e.g. 'otter')"}},
-                     "required": ["repl"]}},
     {"name": "spawn_repl",
      "description": "Start your own PRIVATE Julia REPL (interactive, in a detached "
                     "tmux session) when none is available — to reap warm-cache / "
@@ -356,16 +345,52 @@ ADAPTER_TOOLS = [
 ]
 
 
+# Optional routing argument advertised on every REPL-bound tool. Routing is a
+# concern of THIS adapter, not of Julia (which just sees an extra ignored arg), so
+# we add it to the forwarded schema here rather than in the REPL's tool definition.
+# It must be a declared property or strict MCP clients would drop it, leaving an
+# agent unable to route once more than one REPL is running.
+ROUTE_ARG_NAME = "repl"
+ROUTE_ARG_SCHEMA = {
+    "type": "string",
+    "description": "word-id of the Julia REPL to run this call in (see list_repls). "
+                   "Optional when exactly one REPL is running; REQUIRED to pick one "
+                   "when several are (otherwise the call returns the list instead of "
+                   "running). Routing is stateless — pass it on every call.",
+}
+
+
+def _annotate_routable(tool):
+    """Add the optional `repl` routing arg to a forwarded REPL-bound tool's schema.
+
+    Left non-required so the single-REPL fast path still works with no argument.
+    Idempotent, and defensive against a tool that ships an odd/empty schema.
+    """
+    try:
+        schema = tool.setdefault("inputSchema", {"type": "object"})
+        props = schema.setdefault("properties", {})
+        props.setdefault(ROUTE_ARG_NAME, ROUTE_ARG_SCHEMA)
+    except Exception:
+        pass
+    return tool
+
+
 def inject_adapter_tools(reply):
-    """Append the adapter-local tools to a forwarded tools/list result.
+    """Finalize a forwarded tools/list result: advertise the `repl` routing arg on
+    the REPL-bound tools, and append the adapter-local tools.
 
     The Julia REPLs expose only exec_repl / investigate_environment /
-    remove-trailing-whitespace; every adapter-owned tool (usage_instructions,
-    list_repls, select_repl, spawn_repl, kill_repl) is added here so it is
+    remove-trailing-whitespace; each of those is routed by this adapter, so we add
+    the optional `repl` argument to its schema. Every adapter-owned tool
+    (usage_instructions, list_repls, spawn_repl, kill_repl) is added here so it is
     advertised even when no REPL is running.
     """
     try:
         tools = reply.setdefault("result", {}).setdefault("tools", [])
+        adapter_names = {t["name"] for t in ADAPTER_TOOLS}
+        for t in tools:
+            if t.get("name") not in adapter_names:
+                _annotate_routable(t)
         by_name = {t.get("name"): t for t in tools}
         for t in ADAPTER_TOOLS:
             if t["name"] not in by_name:
@@ -379,23 +404,14 @@ def inject_adapter_tools(reply):
 
 class Router:
     def __init__(self):
-        self.selected = None            # dict: {"project_dir","port","word"}
-        self.last_mtime = None
-        self.client_supports_elicitation = False
-        self.elicit_seq = 0
-        self.known_words = set()  # REPL word-ids seen at the last resolution
         self.cwd = os.path.realpath(os.getcwd())
         self.git_root = git_root(self.cwd)  # enclosing git project of our cwd, or ""
-
-    # -- discovery with an mtime + reachability fast path --------------------
-    def scan(self):
-        mtime = registry_mtime()
-        if (mtime is not None and mtime == self.last_mtime
-                and self.selected is not None
-                and repl_reachable(self.selected["port"])):
-            return None  # unchanged and current selection healthy -> no rescan
-        self.last_mtime = mtime
-        return read_registry()
+        # Detection-only identity memory: word-id -> the project_dir it named the
+        # FIRST time we routed to it this session. There is no sticky *selection*
+        # here (routing is stateless); this only lets us notice when a word-id has
+        # been recycled onto a DIFFERENT REPL and refuse to follow it silently.
+        # See _identity_guard.
+        self.instance_dir = {}
 
     def find_by_word(self, repls, word):
         for r in repls:
@@ -406,12 +422,6 @@ class Router:
     def as_selection(self, repl):
         return {"project_dir": repl.get("project_dir", ""),
                 "port": repl["port"], "word": repl.get("word", "?")}
-
-    def drop_selection(self):
-        """Forget the current selection so the next call re-resolves (a worker
-        thread calls this when its REPL died mid-call)."""
-        self.selected = None
-        self.last_mtime = None
 
     def repl_rank(self, repl):
         """Nearness of a REPL to this session (smaller = nearer).
@@ -441,188 +451,111 @@ class Router:
         contenders = [r for r in ranked if self.repl_rank(r) == best]
         return ranked[0] if len(contenders) == 1 else None
 
-    def resolve(self, request):
-        """Return (selection_dict, error_or_prompt_response).
+    def _identity_guard(self, match, request_id):
+        """Refuse to silently follow a word-id onto a DIFFERENT REPL than the one
+        it named earlier this session. Keyed on the REPL's project_dir, which is
+        stable across a restart (a project's word is derived from its path), so:
 
-        On success the first element is set and the request should be forwarded.
-        Otherwise the second element is a full JSON-RPC response to emit instead
-        (an error, or an elicitation-driven pick that already updated state).
+          * same-project restart  -> project_dir unchanged -> rebind silently
+          * word recycled onto another project (a hash collision, or you closed
+            one REPL and opened another that happens to claim the freed word)
+            -> project_dir changed -> one loud error, then adopt so a deliberate
+               retry proceeds.
+
+        This turns the dangerous *silent* case (talking to the wrong REPL without
+        noticing) into a visible one, without keeping any sticky routing state.
+        """
+        word = match.get("word", "?")
+        pdir = safe_realpath(match.get("project_dir", ""))
+        known = self.instance_dir.get(word)
+        self.instance_dir[word] = pdir
+        if known is not None and known != pdir:
+            return error_result(
+                request_id,
+                "Word-id '%s' now points to a DIFFERENT Julia REPL (project %s; "
+                "earlier this session it was %s) — the original was likely closed "
+                "and another opened. Retry to use the current one, or run "
+                "list_repls to choose deliberately."
+                % (word, pdir or "?", known or "?"))
+        return None
+
+    def resolve(self, request):
+        """Decide which REPL serves this call. Stateless: routing is recomputed
+        from the live registry every time — the adapter keeps no sticky selection.
+
+        Returns (selection_dict, None) to forward, or (None, response) to emit a
+        JSON-RPC error/listing instead.
         """
         request_id = request.get("id")
-
-        # Honor an explicit override (fallback path / power users).
         args = request.get("params", {}).get("arguments", {}) or {}
         override = args.get("repl") or os.environ.get("MCPREPL_PROJECT")
 
-        rescan = self.scan()
-        if rescan is None:
-            return self.selected, None  # fast path: keep current selection
-
-        # Private REPLs never take part in automatic routing/discovery: they are
-        # excluded from the pool and only reachable via an explicit `repl=` word.
-        repls_all = rescan
-        repls = [r for r in repls_all if not is_private(r)]
-        # Track which REPLs are new since we last looked, so a freshly-started
-        # REPL can trigger a re-prompt. A restart keeps its (deterministic)
-        # word-id, so it is NOT counted as new -> silent rebind.
-        live_words = {r.get("word") for r in repls}
-        newly_appeared = live_words - self.known_words
-        self.known_words = live_words
+        repls_all = read_registry()
 
         if override:
-            # An explicit word may target a private REPL (which is excluded from
-            # the pool), so search the full set — and before the empty-pool check,
-            # so a private REPL is reachable even when it is the only one running.
+            # An explicit word may target a private REPL (excluded from the shared
+            # pool), so search the full set. A word that no longer resolves is an
+            # ERROR — never a silent fall-back to some other REPL.
             match = self.find_by_word(repls_all, override)
-            if match:
-                self.selected = self.as_selection(match)
-                return self.selected, None
-            # else fall through to normal resolution / prompt
+            if match is None:
+                return None, error_result(
+                    request_id, self._unknown_word_message(override, repls_all))
+            guard = self._identity_guard(match, request_id)
+            if guard is not None:
+                return None, guard
+            return self.as_selection(match), None
 
-        # A private selection (an agent's own spawned REPL) is sticky and never
-        # subject to auto-rerouting or rival re-prompts: it lives OUTSIDE the
-        # shared pool, so we look it up in the full set and keep routing to it as
-        # long as it is still registered. Without this, any registry change would
-        # rescan, fail to find the private word in the pruned `repls`, and treat
-        # the selection as vanished — silently rerouting exec_repl to a shared
-        # REPL (or erroring "No Julia REPL" when the private one is the only one).
-        # It stays selected until it dies or the agent explicitly re-selects.
-        if self.selected is not None:
-            sel = self.find_by_word(repls_all, self.selected["word"])
-            if sel is not None and is_private(sel):
-                self.selected = self.as_selection(sel)
-                return self.selected, None
-
+        # No explicit target: only the shared pool takes part in default routing
+        # (private REPLs are reachable solely via an explicit repl= word).
+        repls = [r for r in repls_all if not is_private(r)]
         if not repls:
-            self.selected = None
-            return None, error_result(
-                request_id,
-                "No Julia REPL registered. Start one with: "
-                "julia --project -e 'using MCPRepl; MCPRepl.start!()'")
+            return None, error_result(request_id,
+                                      self._no_repl_message(repls_all))
+        if len(repls) == 1:
+            return self.as_selection(repls[0]), None
+        # >=2 shared REPLs and no target -> never guess; hand the caller the list.
+        return None, self.ambiguous_message(request_id, repls)
 
-        # Currently-selected REPL still present?
-        current = None
-        if self.selected is not None:
-            current = self.find_by_word(repls, self.selected["word"])
+    # -- messages for the caller ---------------------------------------------
+    def _unknown_word_message(self, word, repls_all):
+        avail = ", ".join(r.get("word", "?") for r in repls_all
+                          if not is_private(r) or owned_by_me(r)) or "(none running)"
+        return ("No live Julia REPL with word-id '%s' — it may have exited. Pick "
+                "another and pass it as repl=. Available: %s (see list_repls)."
+                % (word, avail))
 
-        if current is not None:
-            # Re-prompt when a *newly-appeared* REPL is at least as near as the
-            # current selection (a nearer one, or an equally-near one — e.g. a
-            # second REPL in the same git project). Farther newcomers, and
-            # restarts of existing REPLs, keep the current selection silently.
-            cur_rank = self.repl_rank(current)
-            rival = any(self.repl_rank(r) <= cur_rank
-                        for r in repls if r.get("word") in newly_appeared)
-            if not rival:
-                # Adopt any new port (covers a same-project restart) silently.
-                self.selected = self.as_selection(current)
-                return self.selected, None
-            # A rival newcomer appeared -> fall through to prompt.
-        else:
-            # Selection vanished, or first call.
-            if len(repls) == 1:
-                self.selected = self.as_selection(repls[0])
-                return self.selected, None
-            near = self.nearest(repls)
-            if near is not None and self.repl_rank(near) < INF:
-                self.selected = self.as_selection(near)
-                return self.selected, None
+    def _no_repl_message(self, repls_all):
+        mine = [r for r in repls_all if owned_by_me(r)]
+        if mine:
+            words = ", ".join(r.get("word", "?") for r in mine)
+            return ("No shared Julia REPL is registered, but you have a private "
+                    "one: %s. Address it with repl='<word>', or start a shared "
+                    "REPL with: julia --project -e 'using MCPRepl; "
+                    "MCPRepl.start!()'." % words)
+        return ("No Julia REPL registered. Start one with: julia --project -e "
+                "'using MCPRepl; MCPRepl.start!()' — or spawn your own private "
+                "one with spawn_repl.")
 
-        # Ambiguous -> ask the user.
-        return None, self.prompt_for_repl(request, repls)
-
-    # -- user-facing picker --------------------------------------------------
-    def prompt_for_repl(self, request, repls):
-        request_id = request.get("id")
-        default = self.nearest(repls) or repls[0]
-
-        if not self.client_supports_elicitation:
-            lines = ["Multiple Julia REPLs are available. Re-issue this call with "
-                     'an argument `"repl": "<word>"` to choose one:', ""]
-            for r in repls:
-                lines.append("  * %s — %s  [%s]" % (
-                    r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
-                    r.get("active_project", "") or "no project"))
-            lines.append("")
-            lines.append("Suggested (nearest to this session): %s" %
-                         default.get("word", "?"))
-            return tool_text_result(request_id, "\n".join(lines))
-
-        word = self.run_elicitation(repls)
-        if word is None:
-            return error_result(request_id,
-                                "REPL selection cancelled; no REPL chosen for this call.")
-        match = self.find_by_word(repls, word)
-        if match is None:
-            return error_result(request_id,
-                                "Selected REPL '%s' is no longer available." % word)
-        self.selected = self.as_selection(match)
-        return None  # signal: selection made, caller should forward
-
-    def run_elicitation(self, repls):
-        """Emit an elicitation picker over `repls`; return the chosen word or None.
-
-        The caller is responsible for having checked client_supports_elicitation.
-        """
-        self.elicit_seq += 1
-        elicit_id = "mcprepl-elicit-%d" % self.elicit_seq
-        default = self.nearest(repls) or repls[0]
-        enum = [r.get("word", "?") for r in repls]
-        enum_names = ["%s — %s  [%s]" % (
-            r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
-            r.get("active_project", "") or "no project") for r in repls]
-        # Also spell the options out in the message body so they are visible
-        # without expanding the (client-rendered) dropdown.
-        listing = "\n".join("  • " + n for n in enum_names)
-        message = "Pick the Julia REPL to route this session to:\n" + listing
-        emit({
-            "jsonrpc": "2.0",
-            "id": elicit_id,
-            "method": "elicitation/create",
-            "params": {
-                "message": message,
-                "requestedSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repl": {
-                            "type": "string",
-                            "title": "Julia REPL",
-                            "description": "Which REPL to route this session's calls to.",
-                            "enum": enum,
-                            "enumNames": enum_names,
-                            "default": default.get("word", enum[0]),
-                        }
-                    },
-                    "required": ["repl"],
-                },
-            },
-        })
-        return self.await_elicit_response(elicit_id)
-
-    def await_elicit_response(self, elicit_id):
-        """Block reading stdin until the elicitation reply arrives.
-
-        Any unrelated request that arrives meanwhile is handled inline so we do
-        not deadlock the session; its response is emitted before we resume.
-        """
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if msg.get("id") == elicit_id and ("result" in msg or "error" in msg):
-                if "error" in msg:
-                    return None
-                result = msg.get("result", {})
-                if result.get("action") != "accept":
-                    return None
-                return result.get("content", {}).get("repl")
-            # Unrelated traffic while we wait -> handle it now.
-            handle_message(self, msg)
-        return None  # stdin closed
+    def ambiguous_message(self, request_id, repls):
+        near = self.nearest(repls)
+        lines = ["Multiple Julia REPLs are running and this session keeps no "
+                 "default. Pass repl=\"<word>\" on exec_repl to choose one, and "
+                 "keep passing it on every call:", ""]
+        for r in sorted(repls, key=self.repl_rank):
+            if self.repl_rank(r) == 0:
+                tag = "  (same git project)"
+            elif near is not None and r.get("word") == near.get("word"):
+                tag = "  (nearest to your cwd)"
+            else:
+                tag = ""
+            lines.append("  * %s — %s  [%s]  port %s%s" % (
+                r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+                r.get("active_project", "") or "no project",
+                r.get("port", "?"), tag))
+        if near is not None:
+            lines += ["", "Suggested (nearest to this session): %s"
+                      % near.get("word", "?")]
+        return tool_text_result(request_id, "\n".join(lines))
 
 
 # --- Adapter-local tools -----------------------------------------------------
@@ -630,54 +563,33 @@ class Router:
 def _handle_list_repls(router, request):
     request_id = request.get("id")
     # The shared pool excludes every private REPL; but a private REPL *this*
-    # adapter spawned is shown too, tagged distinctly, so an agent can discover
-    # and re-select its own REPL. Other sessions' private REPLs stay hidden.
+    # adapter spawned is shown too, tagged distinctly, so an agent can rediscover
+    # its own REPL after a context reset. Other sessions' private REPLs stay hidden.
     all_repls = read_registry()
     shared = [r for r in all_repls if not is_private(r)]
     mine = [r for r in all_repls if owned_by_me(r)]
-    repls = shared + mine
-    if not repls:
+    if not shared and not mine:
         emit(tool_text_result(request_id, "No Julia REPLs are currently running."))
         return
-    sel_word = router.selected["word"] if router.selected else None
-    lines = ["Discovered Julia REPLs (this session's cwd: %s):" % router.cwd, ""]
+    near = router.nearest(shared) if shared else None
+    lines = ["Discovered Julia REPLs (this session's cwd: %s):" % router.cwd,
+             "No default is kept — pass repl='<word>' on exec_repl, and keep "
+             "passing it.", ""]
     for r in sorted(shared, key=router.repl_rank):
-        mark = "→ " if r.get("word") == sel_word else "  "
-        note = "  (same git project)" if router.repl_rank(r) == 0 else ""
-        lines.append("%s%s — %s  [%s]  port %s%s" % (
-            mark, r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
-            r.get("active_project", "") or "no project", r.get("port", "?"), note))
+        if router.repl_rank(r) == 0:
+            tag = "  (same git project)"
+        elif near is not None and r.get("word") == near.get("word"):
+            tag = "  (nearest to your cwd)"
+        else:
+            tag = ""
+        lines.append("  %s — %s  [%s]  port %s%s" % (
+            r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+            r.get("active_project", "") or "no project", r.get("port", "?"), tag))
     for r in sorted(mine, key=router.repl_rank):
-        mark = "→ " if r.get("word") == sel_word else "  "
-        lines.append("%s%s — %s  [%s]  port %s  (private, yours)" % (
-            mark, r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+        lines.append("  %s — %s  [%s]  port %s  (private, yours)" % (
+            r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
             r.get("active_project", "") or "no project", r.get("port", "?")))
-    if sel_word:
-        lines += ["", "Currently routed to: %s" % sel_word]
-    else:
-        lines += ["", "No REPL selected yet; use select_repl to choose one."]
     emit(tool_text_result(request_id, "\n".join(lines)))
-
-
-def _handle_select_repl(router, request):
-    request_id = request.get("id")
-    word = (request.get("params", {}).get("arguments", {}) or {}).get("repl", "")
-    repls = read_registry()
-    match = router.find_by_word(repls, word)
-    if match is None:
-        avail = ", ".join(r.get("word", "?") for r in repls) or "(none running)"
-        emit(tool_text_result(
-            request_id,
-            "No running REPL with word-id '%s'. Available: %s" % (word, avail)))
-        return
-    router.selected = router.as_selection(match)
-    router.last_mtime = registry_mtime()
-    router.known_words = {r.get("word") for r in repls}
-    emit(tool_text_result(
-        request_id,
-        "Routing this session to '%s' — %s [%s]." % (
-            match.get("word", "?"), match.get("pwd", match.get("project_dir", "?")),
-            match.get("active_project", "") or "no project")))
 
 
 def _handle_spawn_repl(router, request):
@@ -763,12 +675,6 @@ def _handle_spawn_repl(router, request):
     if not persist:
         SPAWNED_SESSIONS.add(session)
 
-    # Auto-select the freshly-spawned REPL: "spawn" implies "I want to talk to
-    # this one now". Without this, the next exec_repl (with no repl= override)
-    # would resolve to the shared pool and silently miss the private REPL, which
-    # is out of the auto-routing pool. Stickiness (see resolve) then keeps us here.
-    router.selected = router.as_selection(record)
-
     word = record.get("word", "?")
     persist_note = (" It is set to persist and will survive this session."
                     if persist else
@@ -776,9 +682,9 @@ def _handle_spawn_repl(router, request):
     emit(tool_text_result(
         request_id,
         "Started private Julia REPL '%s' (port %s, project %s, tmux session %s).\n"
-        "It is now selected: exec_repl calls route here automatically until you "
-        "select another REPL. To be explicit (or after re-selecting elsewhere) "
-        "pass `repl`='%s'. Kill it with kill_repl repl='%s'.%s"
+        "It is out of the shared pool, so reach it by passing `repl`='%s' on "
+        "EVERY exec_repl call (there is no sticky selection). Kill it with "
+        "kill_repl repl='%s'.%s"
         % (word, record.get("port", "?"), proj_path, session,
            word, word, persist_note)))
 
@@ -888,66 +794,6 @@ def _handle_usage_instructions(request):
     emit(tool_text_result(request.get("id"), _usage_instructions_text()))
 
 
-def _prompt_result(request_id, text):
-    """A prompts/get result carrying a single confirmation message."""
-    return {"jsonrpc": "2.0", "id": request_id, "result": {
-        "description": "Julia REPL selection",
-        "messages": [{"role": "user",
-                      "content": {"type": "text", "text": text}}],
-    }}
-
-
-def _handle_prompts_get(router, request):
-    """User-triggered REPL picker (the `select-repl` MCP prompt).
-
-    Shows the elicitation dialog directly — the user chooses, not the LLM — and
-    sets the sticky routing. Returns only a one-line confirmation message.
-    """
-    request_id = request.get("id")
-    name = request.get("params", {}).get("name")
-    if name != "select-repl":
-        emit(error_result(request_id, "Unknown prompt: %s" % name, code=-32602))
-        return
-    # Private REPLs are hidden from the pool; never offer them in the picker.
-    repls = [r for r in read_registry() if not is_private(r)]
-    if not repls:
-        emit(_prompt_result(request_id,
-                            "No Julia REPLs are running; nothing to select."))
-        return
-    if len(repls) == 1:
-        r = repls[0]
-        router.selected = router.as_selection(r)
-        router.last_mtime = registry_mtime()
-        router.known_words = {r.get("word") for r in repls}
-        emit(_prompt_result(request_id,
-             "Only one Julia REPL is running; routing this session to '%s' (%s)."
-             % (r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")))))
-        return
-    if not router.client_supports_elicitation:
-        avail = ", ".join(r.get("word", "?") for r in repls)
-        emit(_prompt_result(request_id,
-             "Multiple REPLs are running (%s). This client can't show a picker; "
-             "call the select_repl tool with the desired word-id." % avail))
-        return
-    word = router.run_elicitation(repls)
-    if word is None:
-        emit(_prompt_result(request_id,
-                            "REPL selection cancelled; routing unchanged."))
-        return
-    match = router.find_by_word(repls, word)
-    if match is None:
-        emit(_prompt_result(request_id,
-                            "Selected REPL '%s' is no longer available." % word))
-        return
-    router.selected = router.as_selection(match)
-    router.last_mtime = registry_mtime()
-    router.known_words = {r.get("word") for r in repls}
-    emit(_prompt_result(request_id,
-         "Julia REPL routing set to '%s' — %s [%s]." % (
-             match.get("word", "?"), match.get("pwd", match.get("project_dir", "?")),
-             match.get("active_project", "") or "no project")))
-
-
 # --- Top-level message handling ---------------------------------------------
 
 def handle_message(router, request):
@@ -967,32 +813,15 @@ def handle_message(router, request):
         return
 
     if method == "initialize":
-        caps = request.get("params", {}).get("capabilities", {}) or {}
-        router.client_supports_elicitation = "elicitation" in caps
-        # The adapter IS the MCP server: it owns the handshake, serverInfo, the
-        # `prompts` capability (the user-triggered REPL picker), and the teaser
-        # instructions — all answered here, regardless of whether any REPL is up.
+        # The adapter IS the MCP server: it owns the handshake, serverInfo, and the
+        # teaser instructions — answered here regardless of whether any REPL is up.
         # (The Julia REPLs are plain JSON-RPC endpoints and don't speak initialize.)
         emit({"jsonrpc": "2.0", "id": request_id, "result": {
             "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}, "prompts": {}},
+            "capabilities": {"tools": {}},
             "serverInfo": {"name": "julia-mcp-adapter", "version": "2.0.0"},
             "instructions": ADAPTER_INSTRUCTIONS,
         }})
-        return
-
-    if method == "prompts/list":
-        emit({"jsonrpc": "2.0", "id": request_id, "result": {"prompts": [{
-            "name": "select-repl",
-            "description": "Choose which running Julia REPL this session routes to "
-                           "(shows a picker; no effect on the conversation beyond a "
-                           "one-line confirmation).",
-            "arguments": [],
-        }]}})
-        return
-
-    if method == "prompts/get":
-        _handle_prompts_get(router, request)
         return
 
     if method == "ping":
@@ -1021,9 +850,6 @@ def handle_message(router, request):
         if tool_name == "list_repls":
             _handle_list_repls(router, request)
             return
-        if tool_name == "select_repl":
-            _handle_select_repl(router, request)
-            return
         if tool_name == "spawn_repl":
             _handle_spawn_repl(router, request)
             return
@@ -1031,15 +857,11 @@ def handle_message(router, request):
             _handle_kill_repl(router, request)
             return
         selection, alt = router.resolve(request)
-        if selection is None and alt is not None:
-            emit(alt)
-            return
         if selection is None:
-            # prompt_for_repl returned None -> selection was just made.
-            selection = router.selected
+            emit(alt)   # error or "pick a REPL" listing — nothing to forward
+            return
         # Forward on a worker thread so a long eval doesn't block the reader (and
-        # thus a cancellation). Resolution above stays on the reader thread, so
-        # router state is only mutated single-threaded.
+        # thus a cancellation). Resolution above stays on the reader thread.
         _dispatch_forward(router, selection, request)
         return
 
@@ -1102,12 +924,12 @@ def _forward_worker(router, selection, request):
             if reply is not None:
                 emit(reply)
         except urllib.error.URLError:
-            # The chosen REPL died mid-call: forget it (next call re-resolves).
-            router.drop_selection()
+            # The chosen REPL died mid-call. Routing is stateless, so there's
+            # nothing to forget; the next call re-reads the registry.
             emit(error_result(
                 request_id,
-                "Selected Julia REPL became unreachable (it may have exited). "
-                "Retry — the adapter will re-resolve to a live REPL."))
+                "Julia REPL '%s' became unreachable (it may have exited). Retry "
+                "with a live REPL (see list_repls)." % selection.get("word", "?")))
         except Exception as e:
             emit(error_result(request_id, "Internal error: %s" % e))
         finally:

@@ -279,23 +279,38 @@ def main():
         assert "exec_repl" in names, names
         print("PASS: tools/list forwarded from real REPL:", names)
 
-        # --- from cwd under B, with elicitation, ambiguity resolves to the pick ---
-        # Both A (unrelated, INF) and B (ancestor, rank>=1) are live. B is nearer,
-        # so a fresh session should pick B silently (unique nearest ancestor).
+        # --- stateless routing: >=2 REPLs and no repl= -> a listing, not a guess;
+        #     an explicit repl=<word> then routes to that exact server. ---
+        # Both A (unrelated, INF) and B (ancestor) are live. Without repl=, the
+        # adapter refuses to guess and returns the pick-a-REPL listing (naming both,
+        # suggesting the nearer B).
         out = drive_adapter(registry_dir, tools_cache, cwd_under_B, [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-             "params": {"capabilities": {"elicitation": {}}}},
+             "params": {"capabilities": {}}},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
              "params": {"name": "investigate_environment", "arguments": {}}},
+        ])
+        r2 = [o for o in out if o.get("id") == 2][0]
+        listing = r2["result"]["content"][0]["text"]
+        assert "repl=" in listing and recA["word"] in listing and recB["word"] in listing
+        assert "Suggested (nearest to this session): %s" % recB["word"] in listing
+        print("PASS: two REPLs + no repl= -> listing (suggests nearer B), no guess")
+
+        # Now name B explicitly: the call is forwarded to B's real server.
+        out = drive_adapter(registry_dir, tools_cache, cwd_under_B, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "investigate_environment",
+                        "arguments": {"repl": recB["word"]}}},
         ])
         r2 = [o for o in out if o.get("id") == 2][0]
         # investigate_environment runs on the REPL backend; headless it may error,
         # but a *routed* call returns a JSON-RPC result/error from that server, not
         # an adapter-level "no REPL" error. Assert we reached a server.
         assert "result" in r2 or "error" in r2
-        emitted_elicit = any(o.get("method") == "elicitation/create" for o in out)
-        assert not emitted_elicit, "unique nearest-ancestor B should NOT prompt"
-        print("PASS: unique nearest-ancestor (B) routed silently, no prompt")
+        assert not any(o.get("method") == "elicitation/create" for o in out)
+        print("PASS: explicit repl=%s routed to B's server" % recB["word"])
 
         # --- private (agent-spawned) REPL: spawn -> route -> kill via adapter,
         #     plus interrupting a running eval via notifications/cancelled (the

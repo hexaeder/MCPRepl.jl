@@ -42,9 +42,9 @@ The MCP server the client connects to is the stdio **`mcp-julia-adapter`**, not 
 Julia REPL. Each REPL runs a plain JSON-RPC-over-HTTP endpoint (first REPL on port
 3000, later ones on ephemeral ports) that only answers `tools/list`/`tools/call`/
 `ping`; the adapter owns the MCP handshake (`initialize`/`serverInfo`), the
-`usage_instructions`/`list_repls`/`select_repl`/`spawn_repl`/`kill_repl` tools, and
-all routing. There is no HTTP transport or OAuth anymore — the adapter is the only
-supported transport.
+`usage_instructions`/`list_repls`/`spawn_repl`/`kill_repl` tools, and all routing.
+There is no HTTP transport or OAuth anymore — the adapter is the only supported
+transport.
 
 ### Server Management
 - **MCPRepl.start!()**: Starts a server and registers it for discovery. Binds
@@ -58,10 +58,22 @@ supported transport.
 - Each REPL advertises itself in `~/.mcprepl/registry/<pid>.json` (override the
   directory with `MCPREPL_REGISTRY_DIR`). See `registry_dir`, `register_repl!`,
   `unregister_repl!`, `wordid_for`, and `choose_port` in `src/MCPRepl.jl`.
-- The `mcp-julia-adapter` (script transport) is the router: it discovers live
-  REPLs and routes each call, prompting the user via MCP elicitation only when
-  the target is genuinely ambiguous. Julia stays a plain HTTP endpoint; all
-  routing lives in the adapter.
+- The `mcp-julia-adapter` (script transport) is the router, and routing is
+  **stateless**: `resolve` recomputes the target from the live registry on every
+  `exec_repl`, keeping **no sticky selection**. An explicit `repl=<word>` (or
+  `MCPREPL_PROJECT`) is honored, and a word that no longer resolves is an *error*,
+  never a silent fall-back. With no `repl=`: exactly one shared REPL is used
+  silently; two or more return a text listing (with a proximity *suggestion*) so
+  the caller retries with `repl=<word>` — the adapter never guesses among several.
+  The agent carries the word via `repl=`, which keeps routing legible (visible in
+  its transcript) instead of hidden in adapter state. Proximity (`repl_rank`,
+  `nearest`) is only ever a suggestion in `list_repls`/the ambiguity listing.
+- `resolve` also runs a detection-only **identity guard** (`instance_dir`,
+  word-id → its first-seen `project_dir`): a same-project restart keeps its
+  word-id and rebinds silently, but a word-id recycled onto a *different* project
+  (a hash collision, or close-one/open-another) errors once before adopting — so a
+  reused word can't silently route to the wrong REPL. There is no `select_repl`
+  tool and no elicitation picker (both were part of the old sticky model).
 - Tests: `test/adapter_routing_test.py` (fast, run by `Pkg.test()`) and
   `test/integration_multiplex.py` (spawns real Julia servers; run manually).
 
@@ -71,24 +83,21 @@ supported transport.
   session (so `execute_repllike` needs no special headless path — it is a normal
   interactive REPL) and killed via `kill_repl`. The user can `tmux attach` to it.
 - Privacy = out-of-pool + owner-discoverable: the REPL's registry record carries
-  `private: true`, so it is excluded from the *auto-routing pool* (proximity
-  routing, the ambiguity picker) — it never hijacks the user's shared workflow
-  and is never auto-selected. It is reached only by passing its word-id as the
-  `repl` argument. But discovery and routing are decoupled: `list_repls` DOES
-  show a private REPL that *this* adapter spawned (tagged `(private, yours)`, via
-  `owned_by_me`, i.e. `owner_pid == getpid()`), so an agent can find and
-  re-select its own REPL after a context reset; private REPLs owned by *other*
-  live adapters stay hidden. See `is_private`, `owned_by_me`, and the
+  `private: true`, so it is excluded from the *default-routing pool* — a private
+  REPL never becomes the one-shared-REPL default and never appears in the
+  ambiguity listing, so it can't hijack the user's shared workflow. It is reached
+  **only** by explicitly passing its word-id as the `repl` argument, on every
+  call. But discovery and routing are decoupled: `list_repls` DOES show a private
+  REPL that *this* adapter spawned (tagged `(private, yours)`, via `owned_by_me`,
+  i.e. `owner_pid == getpid()`), so an agent can rediscover its own REPL's word-id
+  after a context reset; private REPLs owned by *other* live adapters stay hidden.
+  See `is_private`, `owned_by_me`, and the
   `resolve`/`_handle_list_repls`/`_handle_spawn_repl`/`_handle_kill_repl` handlers
   in `mcp-julia-adapter`.
-- Discoverability (`list_repls`) and selection-stickiness are complementary, not
-  redundant: `resolve` runs automatically on every `exec_repl`, and because the
-  pool prunes private REPLs, a selected private REPL would otherwise be treated as
-  "vanished" and silently rerouted to a shared REPL on any registry change. The
-  sticky special-case in `resolve` (keep routing to a still-registered private
-  selection) guards that automatic path; `list_repls` only powers *deliberate*
-  re-selection. An agent isn't calling `list_repls` before each `exec_repl`, so
-  discoverability alone can't replace stickiness.
+- Because routing is stateless, a private REPL needs no special sticky-case: the
+  agent addresses it by `repl=<word>` every call (the word is in its transcript),
+  and `list_repls` lets it recover the word-id if it lost it. There is no
+  auto-selection on spawn — `spawn_repl` tells the agent to pass `repl=<word>`.
 - Session naming: the adapter names each private tmux session
   `mcprepl-<project-label>-<token>` (the project label comes from the spawn's
   project dir via `session_label`, folding a generic leaf like `test` into its

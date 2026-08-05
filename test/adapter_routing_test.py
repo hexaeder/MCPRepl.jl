@@ -3,15 +3,17 @@
 Fast, Julia-free tests for the `mcp-julia-adapter` routing logic.
 
 Uses a synthetic registry directory and in-process fake HTTP REPLs, so it runs in
-well under a second and needs no Julia. Covers:
+well under a second and needs no Julia. Covers the STATELESS routing model (the
+adapter keeps no sticky selection):
 
   * rank() directory-distance semantics
-  * resolution: single REPL, nearest-ancestor, same-project restart (silent
-    rebind), a nearer REPL appearing (reprompt), ambiguous tie, no REPLs
-  * the elicitation round-trip (adapter emits elicitation/create, consumes the
-    user's pick from stdin, routes to the chosen REPL)
-  * the no-elicitation fallback (returns a "pick a REPL, retry with repl=<word>"
-    text result) and honoring an explicit `repl` argument
+  * resolution: single shared REPL used silently; >=2 REPLs never auto-picked
+    (caller gets a listing + suggestion); explicit repl= honored; an unknown
+    repl= errors instead of falling back; no REPLs errors
+  * the identity guard: a word-id recycled onto a different project errors once,
+    then adopts (a same-project restart rebinds silently)
+  * routing a call end-to-end through the real stdin/stdout loop via explicit
+    repl=, and the ambiguity listing when repl= is omitted
 
 For the heavier end-to-end test with real Julia servers see
 `integration_multiplex.py`.
@@ -44,7 +46,6 @@ def load_adapter(registry_dir):
     mod.REGISTRY_DIR = registry_dir
     mod.TOOLS_CACHE = os.path.join(registry_dir, "tools_cache.json")
     mod.pid_alive = lambda pid: True       # every synthetic REPL is "alive"
-    mod.repl_reachable = lambda port: False  # force a rescan each resolve()
     return mod
 
 
@@ -102,69 +103,68 @@ def test_resolution(ad, reg):
     clear(reg)
     write_repl(reg, 101, 5001, "otter", "/home/u/projA")
 
-    # single REPL, unrelated cwd -> silent
+    # single shared REPL, unrelated cwd -> used silently
     r = ad.Router(); r.cwd = "/home/u/projB"
     sel, alt = r.resolve(call())
     assert alt is None and sel["word"] == "otter"
 
-    # a nearer REPL appears -> reprompt (no elicitation cap -> fallback text)
-    r.client_supports_elicitation = False
+    # a second REPL appears -> NO default is kept: the caller gets a listing and
+    # must retry with repl= (we never silently guess among several).
     write_repl(reg, 102, 5002, "badger", "/home/u/projB")
     sel, alt = r.resolve(call(2))
     assert sel is None and alt is not None
     txt = alt["result"]["content"][0]["text"]
     assert "badger" in txt and "otter" in txt
+    assert "repl=" in txt
     assert "Suggested (nearest to this session): badger" in txt
 
-    # explicit override argument is honored
+    # explicit override is honored regardless of how many REPLs exist
     sel, alt = r.resolve(call(3, {"repl": "otter"}))
     assert alt is None and sel["word"] == "otter"
 
-    # a NEW equally-near REPL (same git project as cwd) appears while one is
-    # already selected -> reprompt (this is the sibling-subfolder case).
-    r5 = ad.Router(); r5.cwd = "/repo/frontend"; r5.git_root = "/repo"
-    r5.client_supports_elicitation = False
-    clear(reg)
-    write_repl(reg, 501, 7001, "otter", "/repo/a", git_root="/repo", pwd="/repo/a")
-    sel, alt = r5.resolve(call(7))          # first sight -> single, silent
-    assert alt is None and sel["word"] == "otter"
-    write_repl(reg, 502, 7002, "badger", "/repo/b", git_root="/repo", pwd="/repo/b")
-    sel, alt = r5.resolve(call(8))          # equally-near newcomer -> prompt
-    assert sel is None and alt is not None
+    # override to a word that is NOT live -> ERROR, never a silent fall-back
+    sel, alt = r.resolve(call(4, {"repl": "ghost"}))
+    assert sel is None and "error" in alt and "ghost" in alt["error"]["message"]
 
-    # same-project restart -> silent rebind to the new port (word already known,
-    # so the restart is not treated as a newcomer).
-    r2 = ad.Router(); r2.cwd = "/home/u/projA"
-    r2.selected = {"project_dir": "/home/u/projA", "port": 5001, "word": "otter"}
-    r2.known_words = {"otter"}
-    clear(reg); write_repl(reg, 201, 5999, "otter", "/home/u/projA")
-    sel, alt = r2.resolve(call(4))
-    assert alt is None and sel["port"] == 5999
-
-    # a farther newcomer does NOT disturb the current selection
-    r6 = ad.Router(); r6.cwd = "/home/u/projA"
-    r6.selected = {"project_dir": "/home/u/projA", "port": 8001, "word": "otter"}
-    r6.known_words = {"otter"}
-    clear(reg)
-    write_repl(reg, 601, 8001, "otter", "/home/u/projA")   # ancestor of cwd
-    write_repl(reg, 602, 8002, "badger", "/home/u/elsewhere")  # unrelated (INF)
-    sel, alt = r6.resolve(call(9))
-    assert alt is None and sel["word"] == "otter"
-
-    # ambiguous tie (two unrelated INF) -> prompt
-    r3 = ad.Router(); r3.cwd = "/home/u/projC"; r3.client_supports_elicitation = False
-    clear(reg)
-    write_repl(reg, 301, 6001, "otter", "/home/u/projA")
-    write_repl(reg, 302, 6002, "badger", "/home/u/projB")
-    sel, alt = r3.resolve(call(5))
-    assert sel is None and alt is not None
+    # even with a unique strict-nearest, no-override with >=2 REPLs still returns
+    # a listing (nearest is only a *suggestion*, never an automatic pick).
+    r2 = ad.Router(); r2.cwd = "/home/u/projA/sub"
+    sel, alt = r2.resolve(call(5))
+    assert sel is None
+    assert "Suggested (nearest to this session): otter" in \
+        alt["result"]["content"][0]["text"]
 
     # no REPLs -> clear error
     clear(reg)
-    r4 = ad.Router(); r4.last_mtime = None
-    sel, alt = r4.resolve(call(6))
+    r3 = ad.Router()
+    sel, alt = r3.resolve(call(6))
     assert sel is None and "error" in alt and "No Julia REPL" in alt["error"]["message"]
-    print("PASS resolution branches")
+    print("PASS resolution branches (stateless)")
+
+
+def test_identity_guard(ad, reg):
+    clear(reg)
+    write_repl(reg, 101, 5001, "otter", "/home/u/projA")
+    r = ad.Router(); r.cwd = "/tmp/x"
+
+    # first explicit use binds otter -> projA
+    sel, alt = r.resolve(call(1, {"repl": "otter"}))
+    assert alt is None and sel["word"] == "otter"
+
+    # same-project restart (new pid+port, SAME project_dir) -> silent rebind
+    clear(reg); write_repl(reg, 202, 5999, "otter", "/home/u/projA")
+    sel, alt = r.resolve(call(2, {"repl": "otter"}))
+    assert alt is None and sel["port"] == 5999
+
+    # otter recycled onto a DIFFERENT project -> one loud error (not a silent
+    # hijack)...
+    clear(reg); write_repl(reg, 303, 6001, "otter", "/home/u/projZ")
+    sel, alt = r.resolve(call(3, {"repl": "otter"}))
+    assert sel is None and "DIFFERENT" in alt["error"]["message"]
+    # ...then a deliberate retry proceeds (the guard has adopted the new REPL).
+    sel, alt = r.resolve(call(4, {"repl": "otter"}))
+    assert alt is None and sel["port"] == 6001
+    print("PASS identity guard (recycled word-id errors once, then adopts)")
 
 
 # --- elicitation round-trip (subprocess drives the real stdin/stdout loop) ---
@@ -196,7 +196,9 @@ def _fake_repl(word):
     return srv, srv.server_address[1]
 
 
-def test_elicitation_roundtrip(reg):
+def test_routing_subprocess(reg):
+    """Drive the real stdin/stdout loop: explicit repl= routes end-to-end to the
+    named fake REPL; omitting it with >=2 REPLs yields a listing, not a route."""
     sA, pA = _fake_repl("otter")
     sB, pB = _fake_repl("badger")
     try:
@@ -204,35 +206,26 @@ def test_elicitation_roundtrip(reg):
         write_repl(reg, 1, pA, "otter", "/tmp/projA")
         write_repl(reg, 2, pB, "badger", "/tmp/projB")
 
-        wrapper = os.path.join(reg, "_run.py")
-        with open(wrapper, "w") as fh:
-            fh.write(
-                "import importlib.util, importlib.machinery, os\n"
-                "l=importlib.machinery.SourceFileLoader('a', %r)\n"
-                "s=importlib.util.spec_from_loader('a', l); a=importlib.util.module_from_spec(s); l.exec_module(a)\n"
-                "a.REGISTRY_DIR=%r; a.TOOLS_CACHE=%r; a.pid_alive=lambda p: True; os.chdir('/tmp')\n"
-                "a.main()\n" % (ADAPTER, reg, os.path.join(reg, "tc.json")))
-
-        msgs = [
+        # explicit repl= -> the call is forwarded to badger and its reply returns
+        out = _drive(reg, "/tmp", [
             {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-             "params": {"capabilities": {"elicitation": {}}}},
-            call(2),
-            # The user's answer to the first elicitation (id is deterministic).
-            {"jsonrpc": "2.0", "id": "mcprepl-elicit-1",
-             "result": {"action": "accept", "content": {"repl": "badger"}}},
-        ]
-        inp = "\n".join(json.dumps(m) for m in msgs) + "\n"
-        p = subprocess.run([sys.executable, wrapper], input=inp,
-                           capture_output=True, text=True, timeout=30)
-        out = [json.loads(l) for l in p.stdout.splitlines() if l.strip()]
-
-        elicit = [o for o in out if o.get("method") == "elicitation/create"]
-        assert elicit, "adapter should emit elicitation/create"
-        enum = elicit[0]["params"]["requestedSchema"]["properties"]["repl"]["enum"]
-        assert set(enum) == {"otter", "badger"}
+             "params": {"capabilities": {}}},
+            call(2, {"repl": "badger"}),
+        ])
         result = [o for o in out if o.get("id") == 2 and "result" in o]
         assert result and "ran on badger" in result[0]["result"]["content"][0]["text"]
-        print("PASS elicitation round-trip")
+
+        # no repl= with two REPLs -> a listing telling the caller to pass repl=,
+        # NOT a silent route to either REPL.
+        out2 = _drive(reg, "/tmp", [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            call(2),
+        ])
+        r2 = [o for o in out2 if o.get("id") == 2 and "result" in o]
+        txt = r2[0]["result"]["content"][0]["text"]
+        assert "repl=" in txt and "ran on" not in txt
+        print("PASS routing via explicit repl= (subprocess) + ambiguity listing")
     finally:
         sA.shutdown()
         sB.shutdown()
@@ -254,57 +247,48 @@ def _drive(reg, cwd, messages):
     return [json.loads(l) for l in p.stdout.splitlines() if l.strip()]
 
 
+def test_route_arg_schema(ad):
+    """Every REPL-bound tool must advertise the optional `repl` routing arg, so a
+    strict MCP client won't drop it — else an agent can't route past one REPL."""
+    reply = {"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+        {"name": "exec_repl", "inputSchema": {"type": "object",
+            "properties": {"expression": {"type": "string"}}}},
+        {"name": "remove-trailing-whitespace", "inputSchema": {"type": "object",
+            "properties": {"file_path": {"type": "string"}}}},
+    ]}}
+    out = ad.inject_adapter_tools(reply)
+    tools = {t["name"]: t for t in out["result"]["tools"]}
+    for name in ("exec_repl", "remove-trailing-whitespace"):
+        props = tools[name]["inputSchema"]["properties"]
+        assert "repl" in props and props["repl"]["type"] == "string", name
+        # optional: NOT added to required (single-REPL fast path needs no arg)
+        assert "repl" not in tools[name]["inputSchema"].get("required", []), name
+    # adapter-owned tools are still appended, and are NOT given a spurious repl arg
+    assert "list_repls" in tools and "spawn_repl" in tools
+    assert "repl" not in tools["list_repls"]["inputSchema"].get("properties", {})
+    print("PASS routable tools advertise optional repl= arg")
+
+
 def test_manual_tools(reg):
     clear(reg)
     write_repl(reg, 1, 5001, "otter", "/tmp/projA")
     write_repl(reg, 2, 5002, "badger", "/tmp/projB")
 
-    # list_repls and select_repl are exposed and answered by the adapter itself.
+    # list_repls is exposed and answered by the adapter itself; select_repl is
+    # gone (routing is explicit via repl=, so there is nothing to "select").
     out = _drive(reg, "/tmp", [
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
          "params": {"name": "list_repls", "arguments": {}}},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-         "params": {"name": "select_repl", "arguments": {"repl": "badger"}}},
-        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
-         "params": {"name": "select_repl", "arguments": {"repl": "nope"}}},
     ])
     by_id = {o["id"]: o for o in out if "id" in o}
     names = [t["name"] for t in by_id[1].get("result", {}).get("tools", [])]
-    assert "list_repls" in names and "select_repl" in names, names
-    assert "otter" in by_id[2]["result"]["content"][0]["text"]
-    assert "badger" in by_id[2]["result"]["content"][0]["text"]
-    assert "Routing this session to 'badger'" in by_id[3]["result"]["content"][0]["text"]
-    assert "No running REPL with word-id 'nope'" in by_id[4]["result"]["content"][0]["text"]
-    print("PASS list_repls / select_repl tools")
-
-
-def test_prompt_picker(reg):
-    """The user-triggered `select-repl` prompt shows a picker and sets routing."""
-    clear(reg)
-    write_repl(reg, 1, 5001, "otter", "/tmp/projA")
-    write_repl(reg, 2, 5002, "badger", "/tmp/projB")
-
-    out = _drive(reg, "/tmp", [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-         "params": {"capabilities": {"elicitation": {}}}},
-        {"jsonrpc": "2.0", "id": 2, "method": "prompts/list"},
-        {"jsonrpc": "2.0", "id": 3, "method": "prompts/get",
-         "params": {"name": "select-repl"}},
-        # The user's answer to the picker (deterministic elicit id).
-        {"jsonrpc": "2.0", "id": "mcprepl-elicit-1",
-         "result": {"action": "accept", "content": {"repl": "badger"}}},
-    ])
-    by_id = {o["id"]: o for o in out if "id" in o}
-    # initialize advertises the prompts capability
-    assert "prompts" in by_id[1]["result"]["capabilities"]
-    # prompts/list exposes select-repl
-    assert by_id[2]["result"]["prompts"][0]["name"] == "select-repl"
-    # a picker was shown
-    assert any(o.get("method") == "elicitation/create" for o in out)
-    # prompts/get returns a confirmation naming the chosen REPL
-    assert "badger" in by_id[3]["result"]["messages"][0]["content"]["text"]
-    print("PASS select-repl prompt (user-triggered picker)")
+    assert "list_repls" in names, names
+    assert "select_repl" not in names, names
+    txt = by_id[2]["result"]["content"][0]["text"]
+    assert "otter" in txt and "badger" in txt
+    assert "repl=" in txt   # tells the caller how to route
+    print("PASS list_repls tool (explicit routing, no select_repl)")
 
 
 # --- private REPLs: filtering, discoverability, spawn/kill, auto-kill --------
@@ -322,54 +306,30 @@ def test_private_filtering(ad, reg):
     write_repl(reg, 700, 9000, "beaver", "/tmp/privP", private=True,
                spawn_token="tok-beaver", owner_pid=os.getpid())
 
-    # Only a private REPL exists: automatic resolution ignores it (empty pool).
+    # Only a private REPL exists: automatic (no-override) resolution ignores the
+    # pool and errors — but the message points the agent at its own private REPL.
     r = ad.Router(); r.cwd = "/tmp/x"
     sel, alt = r.resolve(call())
-    assert sel is None and alt is not None
-    assert "No Julia REPL" in alt["error"]["message"]
+    assert sel is None and "beaver" in alt["error"]["message"]
 
     # ...but an explicit override reaches the private REPL even as the only one.
     r2 = ad.Router(); r2.cwd = "/tmp/x"
     sel, alt = r2.resolve(call(2, {"repl": "beaver"}))
     assert alt is None and sel and sel["word"] == "beaver"
 
-    # A shared REPL alongside it: the private one is excluded from the pool.
+    # A shared REPL alongside it: a no-override call routes to the SHARED one; the
+    # private REPL is out of the pool and never becomes a silent default. This is
+    # the crux of the stateless model.
     write_repl(reg, 701, 9001, "otter", "/tmp/x")
     r3 = ad.Router(); r3.cwd = "/tmp/x"
     sel, alt = r3.resolve(call(3))
     assert alt is None and sel["word"] == "otter"
-
-    # A private REPL selected as the sticky target STAYS the target across a
-    # registry change, even when exec_repl is called without a `repl=` override
-    # (LLMs routinely drop it after the first call). Regression: the private word
-    # was pruned from the pool, so a rescan treated the selection as vanished and
-    # silently rerouted to a shared REPL.
-    clear(reg)
-    write_repl(reg, 800, 9500, "beaver", "/tmp/privP", private=True,
-               spawn_token="tok-beaver", owner_pid=os.getpid())
-    r4 = ad.Router(); r4.cwd = "/tmp/x"
-    # Select the private REPL explicitly once (as select_repl / repl= would).
-    sel, alt = r4.resolve(call(1, {"repl": "beaver"}))
+    # The private REPL is still reachable by naming it — on every call.
+    sel, alt = r3.resolve(call(4, {"repl": "beaver"}))
     assert alt is None and sel["word"] == "beaver"
-    # A shared REPL now appears (registry mtime changes -> forced rescan) and the
-    # next call carries NO override: routing must remain on the private REPL.
-    write_repl(reg, 801, 9501, "otter", "/tmp/x")
-    sel, alt = r4.resolve(call(2))
-    assert alt is None and sel["word"] == "beaver", (sel, alt)
-
-    # And when the private REPL is the ONLY one registered, a no-override call
-    # still routes to it rather than erroring "No Julia REPL".
-    clear(reg)
-    write_repl(reg, 802, 9502, "beaver", "/tmp/privP", private=True,
-               spawn_token="tok-beaver", owner_pid=os.getpid())
-    r5 = ad.Router(); r5.cwd = "/tmp/x"
-    sel, alt = r5.resolve(call(3, {"repl": "beaver"}))
-    assert alt is None and sel["word"] == "beaver"
-    # touch the registry to force a rescan, then call without an override
-    write_repl(reg, 802, 9502, "beaver", "/tmp/privP", private=True,
-               spawn_token="tok-beaver", owner_pid=os.getpid())
-    sel, alt = r5.resolve(call(4))
-    assert alt is None and sel and sel["word"] == "beaver", (sel, alt)
+    # Drop the override again -> back to the shared REPL (no stickiness).
+    sel, alt = r3.resolve(call(5))
+    assert alt is None and sel["word"] == "otter", (sel, alt)
 
     # list_repls shows this session's OWN private REPL (tagged), plus the shared
     # pool, but hides private REPLs owned by *other* live adapters.
@@ -626,9 +586,10 @@ def main():
         test_rank(ad)
         test_git_rank(ad)
         test_resolution(ad, reg)
+        test_identity_guard(ad, reg)
+        test_route_arg_schema(ad)
         test_manual_tools(reg)
-        test_prompt_picker(reg)
-        test_elicitation_roundtrip(reg)
+        test_routing_subprocess(reg)
         test_private_filtering(ad, reg)
         test_usage_instructions(ad, reg)
         test_initialize_instructions(ad, reg)
