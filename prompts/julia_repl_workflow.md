@@ -115,6 +115,27 @@ let x = 10, y = 20
 end
 ```
 
+### Name hygiene — don't prototype under the name you'll ship
+
+A definition you make in the REPL lands in `Main` and **shadows** the package's
+own binding of that name. So if you prototype `future_library_function` in the
+REPL and then add the real one to `Package/src/`, calling
+`future_library_function` still hits your REPL version — `using Package` will not
+overwrite an existing `Main` binding, and Revise can't fix it either. The name is
+now blocked for the rest of the session, and you can easily fool yourself into
+thinking you tested the implementation when you tested the prototype.
+
+Prototype under a throwaway name instead, and redefine that freely while you
+iterate:
+
+```julia
+future_library_function_mcp123(x) = ...   # scratch name, free to redefine
+```
+
+Once you're happy, write the real definition into `src/` under its final name and
+call it fully qualified (`Package.future_library_function`) to be sure you're
+exercising the package version.
+
 ### Testing — avoid `Pkg.test()` (too slow); target instead
 
 ```julia
