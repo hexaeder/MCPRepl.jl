@@ -776,7 +776,9 @@ const _ORIG_CTRLC = Base.IdDict{Any,Function}()
 # (remote cancellation via the adapter): both must behave identically, and both
 # run on a task *other* than the backend, so the exception actually lands.
 function request_interrupt!()
-    be = Base.active_repl_backend
+    # Before 1.12 the binding is only assigned once a REPL actually starts, so a
+    # non-interactive process has to be treated as "nothing running".
+    be = isdefined(Base, :active_repl_backend) ? Base.active_repl_backend : nothing
     if be !== nothing && getfield(be, :in_eval)
         schedule(getfield(be, :backend_task), InterruptException(); error = true)
         return true
