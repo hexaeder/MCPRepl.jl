@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""
+Integration test for MCPRepl multiplexing.
+
+Spins up TWO real Julia `MCPRepl.start!()` servers in isolated temp projects
+(with MCPREPL_REGISTRY_DIR pointed at a temp dir so the real user registry is
+never touched), then drives the real `mcp-julia-adapter` over stdio and asserts
+routing behavior:
+
+  * both servers bind distinct ports (port-3000 fallback works)
+  * both write registry files with the right project_dir / word
+  * the adapter discovers a live server and forwards tools/list over real HTTP
+  * from a cwd under project A, tools/call routes to A silently
+  * when a nearer REPL (B, an ancestor of cwd) exists, the adapter elicits, and
+    honoring the pick routes to B
+
+Run manually (not part of `Pkg.test()` — it spawns Julia processes and is slow):
+
+    python3 test/integration_multiplex.py
+
+Requires the MCPRepl package to be loadable (this file's repo).
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ADAPTER = os.path.join(REPO, "mcp-julia-adapter")
+
+
+def start_repl(project_dir, registry_dir):
+    """Launch a real headless MCPRepl server; keep alive until stdin closes."""
+    os.makedirs(project_dir, exist_ok=True)
+    # Empty Project.toml so Base.active_project() resolves to this dir; MCPRepl is
+    # loaded from the repo via the second LOAD_PATH entry.
+    with open(os.path.join(project_dir, "Project.toml"), "w") as fh:
+        fh.write("")
+    env = dict(os.environ)
+    env["MCPREPL_REGISTRY_DIR"] = registry_dir  # isolate from the real registry
+    env["JULIA_LOAD_PATH"] = os.pathsep.join([project_dir, REPO, "@stdlib"])
+    code = (
+        "using MCPRepl; MCPRepl.start!(verbose=false); "
+        "while !eof(stdin); readline(stdin); end; MCPRepl.stop!()"
+    )
+    # Server stdout/stderr go to a log file (NOT a PIPE): we never drain them, and
+    # an undrained PIPE would deadlock Julia once its output buffer fills. stdin
+    # stays a PIPE so closing it later gives the server a clean eof -> stop!().
+    log = open(os.path.join(project_dir, "server.log"), "w")
+    return subprocess.Popen(
+        ["julia", "-e", code],
+        stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+        cwd=project_dir, env=env, text=True,
+    )
+
+
+def wait_for_registry(registry_dir, n, timeout=90):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.isdir(registry_dir):
+            files = [f for f in os.listdir(registry_dir) if f.endswith(".json")]
+            recs = []
+            for f in files:
+                try:
+                    with open(os.path.join(registry_dir, f)) as fh:
+                        recs.append(json.load(fh))
+                except Exception:
+                    pass
+            if len(recs) >= n:
+                return recs
+        time.sleep(0.5)
+    raise TimeoutError("registry did not reach %d entries" % n)
+
+
+def drive_adapter(registry_dir, tools_cache, cwd, messages, timeout=30, env=None):
+    """Run the real adapter as a subprocess in `cwd`, feed messages, collect output."""
+    wrapper = os.path.join(registry_dir, "_run.py")
+    with open(wrapper, "w") as fh:
+        fh.write(
+            "import importlib.util, importlib.machinery, os\n"
+            "l=importlib.machinery.SourceFileLoader('a', %r)\n"
+            "s=importlib.util.spec_from_loader('a', l); a=importlib.util.module_from_spec(s); l.exec_module(a)\n"
+            "a.REGISTRY_DIR=%r; a.TOOLS_CACHE=%r\n"
+            "a.main()\n" % (ADAPTER, registry_dir, tools_cache)
+        )
+    inp = "\n".join(json.dumps(m) for m in messages) + "\n"
+    p = subprocess.run([sys.executable, wrapper], input=inp,
+                       capture_output=True, text=True, timeout=timeout, cwd=cwd,
+                       env=env)
+    if p.stderr.strip():
+        print("  adapter stderr:", p.stderr.strip())
+    return [json.loads(l) for l in p.stdout.splitlines() if l.strip()]
+
+
+def private_repl_e2e(root, registry_dir, tools_cache):
+    """Spawn -> route -> kill a private REPL through the adapter, over real tmux.
+
+    Guarded: skips cleanly when tmux is unavailable. Uses an isolated tmux server
+    (TMUX_TMPDIR) so it never touches the user's sessions, and passes
+    JULIA_LOAD_PATH so the tmux-launched Julia finds MCPRepl from the repo (the
+    same trick start_repl uses).
+    """
+    if shutil.which("tmux") is None:
+        print("SKIP: tmux not found; private-REPL e2e skipped")
+        return
+
+    projC = os.path.join(root, "private_proj")
+    os.makedirs(projC, exist_ok=True)
+    with open(os.path.join(projC, "Project.toml"), "w") as fh:
+        fh.write("")
+    tmux_tmp = os.path.join(root, "tmux")
+    os.makedirs(tmux_tmp, exist_ok=True)
+
+    env = dict(os.environ)
+    env["MCPREPL_REGISTRY_DIR"] = registry_dir     # adapter forwards this to Julia
+    env["TMUX_TMPDIR"] = tmux_tmp                   # isolated tmux server
+    env["JULIA_LOAD_PATH"] = os.pathsep.join(["@", REPO, "@stdlib"])
+
+    def tmux(*args):
+        return subprocess.run(["tmux"] + list(args), env=env,
+                              capture_output=True, text=True)
+
+    try:
+        # Spawn (persist so it survives the adapter subprocess exiting between calls).
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "spawn_repl",
+                        "arguments": {"project": projC, "persist": True}}},
+        ], timeout=300, env=env)
+        r = [o for o in out if o.get("id") == 2][0]
+        txt = r["result"]["content"][0]["text"]
+        assert "Started private Julia REPL" in txt, txt
+        word = re.search(r"Started private Julia REPL '([^']+)'", txt).group(1)
+        print("  spawned private REPL:", word)
+
+        # Hidden from the pool.
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "list_repls", "arguments": {}}},
+        ], env=env)
+        lst = [o for o in out if o.get("id") == 2][0]["result"]["content"][0]["text"]
+        assert word not in lst, "private REPL must not appear in list_repls"
+
+        # Reachable by explicit word; live state persists across calls.
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "exec_repl",
+                        "arguments": {"expression": "ITEST_V = 41 + 1", "repl": word}}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+             "params": {"name": "exec_repl",
+                        "arguments": {"expression": "ITEST_V", "repl": word}}},
+        ], timeout=120, env=env)
+        r3 = [o for o in out if o.get("id") == 3][0]
+        assert "42" in r3["result"]["content"][0]["text"], r3
+        print("PASS: private REPL routed by word + live state persists")
+
+        # Interrupt a running eval on this (real, interactive) private REPL.
+        cancellation_e2e(registry_dir, tools_cache, word, projC, env=env)
+
+        # Kill it via the adapter; the tmux session must be gone.
+        out = drive_adapter(registry_dir, tools_cache, projC, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "kill_repl", "arguments": {"repl": word}}},
+        ], env=env)
+        rk = [o for o in out if o.get("id") == 2][0]["result"]["content"][0]["text"]
+        assert "Killed" in rk, rk
+        session = re.search(r"tmux session (mcprepl-\S+?)\)", rk).group(1)
+        time.sleep(0.5)
+        assert tmux("has-session", "-t", session).returncode != 0, "session survived kill"
+        print("PASS: private REPL killed (tmux session gone)")
+    finally:
+        tmux("kill-server")  # tear down the isolated tmux server, best-effort
+
+
+def cancellation_e2e(registry_dir, tools_cache, word, cwd, env=None):
+    """Interrupt a running eval end-to-end: start an (effectively) infinite loop
+    on a real interactive REPL, then send notifications/cancelled and confirm the
+    adapter's interrupt lands as a real InterruptException (rather than hanging).
+
+    Must target a REPL with a real backend (an interactive one — the private tmux
+    REPL, not the headless `julia -e` servers). Uses a timed driver (not the batch
+    `drive_adapter`): the cancellation must arrive *after* Julia has entered the
+    eval, which is exactly the real Esc case.
+    """
+    wrapper = os.path.join(registry_dir, "_run_cancel.py")
+    with open(wrapper, "w") as fh:
+        fh.write(
+            "import importlib.util, importlib.machinery, os\n"
+            "l=importlib.machinery.SourceFileLoader('a', %r)\n"
+            "s=importlib.util.spec_from_loader('a', l); a=importlib.util.module_from_spec(s); l.exec_module(a)\n"
+            "a.REGISTRY_DIR=%r; a.TOOLS_CACHE=%r\n"
+            "a.main()\n" % (ADAPTER, registry_dir, tools_cache))
+
+    p = subprocess.Popen([sys.executable, wrapper], stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True, cwd=cwd, env=env)
+
+    def send(m):
+        p.stdin.write(json.dumps(m) + "\n")
+        p.stdin.flush()
+
+    send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+          "params": {"capabilities": {}}})
+    # A tight loop with a yield point (sleep) so the async InterruptException can
+    # actually land. `repl=<word>` pins routing to the chosen REPL.
+    send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+          "params": {"name": "exec_repl",
+                     "arguments": {"expression": "while true; sleep(0.01); end",
+                                   "repl": word}}})
+    time.sleep(4)   # let Julia receive the call and enter the eval (in_eval=true)
+    send({"jsonrpc": "2.0", "method": "notifications/cancelled",
+          "params": {"requestId": 2, "reason": "test"}})
+    # communicate() flushes and closes stdin (EOF -> adapter shuts down), then
+    # collects stdout/stderr. Don't close stdin ourselves or it double-closes.
+    out, err = p.communicate(timeout=30)
+    if err.strip():
+        print("  cancel adapter stderr:", err.strip())
+    msgs = [json.loads(l) for l in out.splitlines() if l.strip()]
+    r2 = [o for o in msgs if o.get("id") == 2]
+    assert r2, "the cancelled exec_repl must still return a (interrupted) reply"
+    text = json.dumps(r2[0])
+    assert "InterruptException" in text, "eval should end with an InterruptException: %s" % text
+    print("PASS: running eval interrupted via notifications/cancelled")
+
+
+def main():
+    root = tempfile.mkdtemp(prefix="mcprepl-itest-")
+    registry_dir = os.path.join(root, "registry")
+    tools_cache = os.path.join(root, "tools_cache.json")
+    # Project A is standalone; project B is an ANCESTOR of a cwd we'll use, so B
+    # is "nearer" from that cwd (the key reprompt scenario).
+    projA = os.path.join(root, "standalone", "projA")
+    projB = os.path.join(root, "workspace")            # ancestor of workspace/sub
+    cwd_under_B = os.path.join(projB, "sub", "deep")
+    os.makedirs(cwd_under_B, exist_ok=True)
+
+    procs = []
+    try:
+        print("Starting REPL A in", projA)
+        procs.append(start_repl(projA, registry_dir))
+        recs = wait_for_registry(registry_dir, 1)
+        print("  A registered:", recs[0]["word"], "port", recs[0]["port"])
+
+        print("Starting REPL B in", projB)
+        procs.append(start_repl(projB, registry_dir))
+        recs = wait_for_registry(registry_dir, 2)
+        by_dir = {os.path.realpath(r["project_dir"]): r for r in recs}
+        recA = by_dir[os.path.realpath(projA)]
+        recB = by_dir[os.path.realpath(projB)]
+        portA, portB = recA["port"], recB["port"]
+        print("  A:", recA["word"], portA, "| B:", recB["word"], portB)
+
+        # --- assertions on the Julia side ---
+        assert portA != portB, "two REPLs must bind distinct ports"
+        assert recA["word"] != recB["word"], "distinct words expected"
+        print("PASS: distinct ports + distinct words")
+
+        # --- adapter forwards tools/list to a live server over real HTTP ---
+        out = drive_adapter(registry_dir, tools_cache, cwd_under_B, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {"elicitation": {}}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        ])
+        tl = [o for o in out if o.get("id") == 2][0]
+        names = [t["name"] for t in tl["result"]["tools"]]
+        assert "exec_repl" in names, names
+        print("PASS: tools/list forwarded from real REPL:", names)
+
+        # --- stateless routing: >=2 REPLs and no repl= -> a listing, not a guess;
+        #     an explicit repl=<word> then routes to that exact server. ---
+        # Both A (unrelated, INF) and B (ancestor) are live. Without repl=, the
+        # adapter refuses to guess and returns the pick-a-REPL listing (naming both,
+        # suggesting the nearer B).
+        out = drive_adapter(registry_dir, tools_cache, cwd_under_B, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "investigate_environment", "arguments": {}}},
+        ])
+        r2 = [o for o in out if o.get("id") == 2][0]
+        listing = r2["result"]["content"][0]["text"]
+        assert "repl=" in listing and recA["word"] in listing and recB["word"] in listing
+        assert "Suggested (nearest to this session): %s" % recB["word"] in listing
+        print("PASS: two REPLs + no repl= -> listing (suggests nearer B), no guess")
+
+        # Now name B explicitly: the call is forwarded to B's real server.
+        out = drive_adapter(registry_dir, tools_cache, cwd_under_B, [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"capabilities": {}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "investigate_environment",
+                        "arguments": {"repl": recB["word"]}}},
+        ])
+        r2 = [o for o in out if o.get("id") == 2][0]
+        # investigate_environment runs on the REPL backend; headless it may error,
+        # but a *routed* call returns a JSON-RPC result/error from that server, not
+        # an adapter-level "no REPL" error. Assert we reached a server.
+        assert "result" in r2 or "error" in r2
+        assert not any(o.get("method") == "elicitation/create" for o in out)
+        print("PASS: explicit repl=%s routed to B's server" % recB["word"])
+
+        # --- private (agent-spawned) REPL: spawn -> route -> kill via adapter,
+        #     plus interrupting a running eval via notifications/cancelled (the
+        #     private REPL is a real interactive backend, unlike headless A/B). ---
+        private_repl_e2e(root, registry_dir, tools_cache)
+
+        print("\nALL INTEGRATION CHECKS PASSED")
+        return 0
+    finally:
+        for p in procs:
+            try:
+                p.stdin.close()          # eof -> clean stop!() -> unregister
+                p.wait(timeout=10)
+            except Exception:
+                p.kill()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

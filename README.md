@@ -34,12 +34,63 @@ Within Julia, call
 ``` julia-repl
 julia> using MCPRepl; MCPRepl.start!()
 ```
-to open the HTTP endpoints.
+to make the REPL discoverable by the adapter.
 
-For Claude Code, you can run the following command to make it aware of the MCP server
+The MCP server your client connects to is the bundled `mcp-julia-adapter` (a small
+stdio script). It discovers running REPLs, routes calls to the right one, and can
+even spawn private REPLs for an agent when none is running. Register it once with
+Claude Code:
 ```sh
-claude mcp add julia-repl http://localhost:3000 --transport http
+claude mcp add julia-repl /path/to/MCPRepl/mcp-julia-adapter
 ```
+
+The easiest way is `MCPRepl.setup()`, an interactive helper that configures Claude
+Code / Gemini with the adapter (choose local or user scope).
+
+## Multiple REPLs (multiplexing)
+
+You can run several REPLs at once — e.g. one per project — and agents will route
+to the right one automatically. There is **no central daemon**:
+
+- Each `MCPRepl.start!()` binds its own port (the first keeps the historic
+  `3000`; later ones take an OS-assigned free port) and advertises itself with a
+  small file in `~/.mcprepl/registry/`. Each REPL gets a short, stable
+  **word-id** (e.g. `otter`) shown in its startup banner.
+- The **adapter** (`mcp-julia-adapter`) is the MCP server and the multiplexer. It
+  is launched per-project by the client, reads the registry, and routes each call.
+  Routing is **explicit and stateless** — there is no sticky "current REPL":
+  - an explicit `"repl": "<word>"` argument (or `MCPREPL_PROJECT=<word>`) is
+    always honored; a word that no longer names a live REPL is an **error**, not a
+    silent fall-back to a different one;
+  - with no `repl` argument, a **single** shared REPL is used silently; with **two
+    or more** the adapter returns a text listing (flagging the nearest one as a
+    suggestion) and the agent retries with `"repl": "<word>"`. It never guesses
+    among several, and the LLM/adapter never picks silently for you.
+  - the agent keeps passing that word-id on subsequent calls; because there's no
+    hidden state, which REPL it's using is always visible in its own transcript.
+- REPLs in the **same git project** as the agent's working directory (any
+  subfolder) rank as the nearest suggestion — even sibling subfolders.
+- **`list_repls` tool** — enumerate the running REPLs (word-id, dir, project,
+  port) with the nearest one flagged. There is no `select_repl` tool or picker
+  prompt: routing is done per call via the `repl` argument, not a stored selection.
+
+Set `MCPREPL_REGISTRY_DIR` to relocate/isolate the registry directory.
+
+### Private (agent-spawned) REPLs
+
+When no suitable REPL is running, an agent can start its own **private** REPL via
+the adapter's `spawn_repl` tool: a real interactive Julia session in a detached
+`tmux` session (so you can `tmux attach` to watch or take over). It is hidden from
+the shared pool, reachable only by its word-id, and auto-killed when the client
+session ends (`persist: true` opts out). Kill it explicitly with `kill_repl`.
+
+### Cancelling a running eval
+
+The adapter honors MCP cancellation (e.g. pressing Esc in Claude Code): it
+interrupts the running Julia eval — scheduling an `InterruptException` onto the
+backend, just like Ctrl-C — instead of leaving it to run to completion. The REPL
+survives and is ready for the next call. (Interrupts land at Julia safepoints, so
+a tight loop with no allocation/`sleep`/I/O may not be interruptible.)
 
 ## Disclaimer and Security Warning
 

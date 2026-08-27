@@ -1,101 +1,1032 @@
 #!/usr/bin/env python3
 """
-MCP Julia REPL Adapter
+MCP Julia REPL Adapter (multiplexing router)
 
-This adapter bridges stdin/stdout MCP clients to the HTTP-based Julia MCP server.
-It reads JSON-RPC messages from stdin and forwards them to http://localhost:3000,
-then returns responses to stdout.
+This adapter is the MCP server as far as the client (Claude Code, Gemini, ...) is
+concerned. It is launched once per project session over stdio, with its working
+directory set to the project the agent is working in.
 
-Usage:
-    ./mcp-julia-adapter
+Multiple Julia REPLs can run at once, each on its own port, each advertising
+itself with a `<pid>.json` file in ~/.mcprepl/registry/. This adapter discovers
+those REPLs and routes every `tools/call` — but it keeps NO sticky selection.
+Routing is decided fresh from the live registry on each call:
 
-The Julia MCP server must be running first:
+  * explicit `repl=<word>` (or MCPREPL_PROJECT)  -> route there, or ERROR if that
+    word is not a live REPL (never silently fall back to a different one)
+  * no target, exactly one shared REPL           -> use it
+  * no target, >=2 shared REPLs                   -> return a listing so the
+    caller retries with `repl=<word>` (we never silently guess among several)
+  * no target, no shared REPL                     -> ERROR
+
+The agent carries the chosen word via `repl=` and keeps passing it; that keeps
+routing legible (visible in the agent's own transcript) instead of hidden in
+adapter state. Proximity to our cwd is only ever a *suggestion* in the listing,
+never an automatic pick among several. Julia stays a plain HTTP request/response
+endpoint; all routing lives here.
+
+The Julia REPL server(s) must be running first:
     julia --project -e "using MCPRepl; MCPRepl.start!()"
 """
 
+import atexit
+import glob
 import json
+import os
+import re
+import secrets
+import shlex
+import shutil
+import signal
+import subprocess
 import sys
+import threading
+import time
 import urllib.request
 import urllib.error
-import time
+
+
+# Registry location. Honors MCPREPL_REGISTRY_DIR (same variable the Julia side
+# reads) so the registry can be relocated or isolated; defaults under ~/.mcprepl.
+REGISTRY_DIR = os.environ.get(
+    "MCPREPL_REGISTRY_DIR",
+    os.path.join(os.path.expanduser("~"), ".mcprepl", "registry"))
+TOOLS_CACHE = os.path.join(os.path.dirname(REGISTRY_DIR.rstrip(os.sep)),
+                           "tools_cache.json")
+INF = float("inf")
+
+# Directory holding this script, used to locate the shipped prompt files.
+ADAPTER_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- Private (agent-spawned) REPLs -------------------------------------------
+# An agent with no REPL can spawn its own *private* one via the `spawn_repl`
+# tool: a real interactive Julia REPL running inside a detached tmux session, so
+# it behaves exactly like a shared REPL from Julia's side but is hidden from the
+# routing pool and reachable only by explicit word-id. Sessions are named
+# `mcprepl-<token>`; we remember the ones we spawned so we can kill them when
+# this adapter (i.e. the client session) exits.
+SESSION_PREFIX = "mcprepl-"
+SPAWNED_SESSIONS = set()     # tmux session names spawned by *this* adapter
+SPAWN_TIMEOUT = 180.0        # seconds to wait for a spawned REPL to register
+SPAWN_POLL = 0.5             # poll interval while waiting
+
+# --- Concurrency: keep the stdin reader responsive during a long eval ---------
+# A routed tools/call (exec_repl) blocks on Julia's HTTP response for as long as
+# the code runs. If we did that on the reader thread, the client's
+# notifications/cancelled (Esc) would sit unread in our stdin pipe until the eval
+# finished — never interrupting it. So we forward routed calls on worker threads
+# and keep reading stdin. `_EMIT_LOCK` serializes stdout writes across threads;
+# `_INFLIGHT` maps a request id to the REPL port handling it, so a cancellation
+# can post an `interrupt` to that REPL; `_PORT_LOCKS` serializes evals per REPL
+# (one backend, one global stdout redirect) so concurrent calls can't interleave.
+_EMIT_LOCK = threading.Lock()
+_INFLIGHT = {}               # request id -> port currently serving it
+_INFLIGHT_LOCK = threading.Lock()
+_PORT_LOCKS = {}             # port -> Lock serializing that REPL's evals
+_PORT_LOCKS_GUARD = threading.Lock()
+_WORKERS = set()             # live forward-worker threads, for graceful drain
+_WORKERS_GUARD = threading.Lock()
+DRAIN_TIMEOUT = 10.0         # seconds to let in-flight replies finish on shutdown
+
+# Server-level teaser returned from `initialize`, so an agent knows when to reach
+# for the Julia REPL even before any REPL exists.
+ADAPTER_INSTRUCTIONS = (
+    "This server bridges to a warm, persistent Julia REPL. Prefer it over running "
+    "`julia` in bash: you skip precompile/startup latency (TTFX) and keep live "
+    "state — variables, loaded packages, Revise hot-reload — across calls. Use "
+    "`exec_repl` to evaluate Julia code. If no REPL is running you can start your "
+    "own private one with `spawn_repl` (ideal for longer simulations you want to "
+    "inspect interactively if they fail, instead of re-running a cold script). "
+    "Call `usage_instructions` before first use.")
+
+
+def is_private(repl):
+    """True if a registry record is a private (agent-spawned, pool-hidden) REPL."""
+    return bool(repl.get("private"))
+
+
+def owned_by_me(repl):
+    """True if this record is a private REPL *this* adapter spawned and still owns.
+
+    Private REPLs are excluded from the auto-routing pool, but their owner should
+    still be able to *discover* them (see them in list_repls, re-select them after
+    a context reset) — hence this liveness-scoped ownership check. A persist REPL
+    (owner_pid 0) or one owned by another session is not "mine" for listing.
+    """
+    return is_private(repl) and repl.get("owner_pid") == os.getpid()
+
+
+# Subdir names that say nothing about *which* project a REPL belongs to; when a
+# project resolves to one of these we fold in the parent directory so the tmux
+# session reads e.g. `NetworkDynamics-test` rather than a bare `test`.
+_GENERIC_DIRS = {"test", "tests", "docs", "doc", "src", "examples", "example",
+                 "benchmark", "benchmarks", "dev"}
+
+
+def session_label(proj_dir):
+    """A tmux-safe, human-informative label for a project directory.
+
+    tmux session names can't contain '.' or ':' (target syntax), so we squash
+    everything outside [A-Za-z0-9_-] to '_'. Generic leaf names borrow their
+    parent for context.
+    """
+    proj_dir = proj_dir.rstrip(os.sep)
+    base = os.path.basename(proj_dir)
+    if base.lower() in _GENERIC_DIRS:
+        parent = os.path.basename(os.path.dirname(proj_dir))
+        if parent:
+            base = parent + "-" + base
+    return re.sub(r"[^A-Za-z0-9_-]", "_", base) or "repl"
+
+
+def session_name(token, label=None):
+    """tmux session name for a spawn token, optionally with a project label.
+
+    The labeled form (`mcprepl-<label>-<token>`) is what new spawns create and
+    record; the bare form (`mcprepl-<token>`) is the fallback for records that
+    predate the recorded `tmux_session` field."""
+    if label:
+        return SESSION_PREFIX + label + "-" + token
+    return SESSION_PREFIX + token
+
+
+def record_session(repl):
+    """The tmux session name for a private REPL record.
+
+    Prefer the name the spawn recorded; fall back to re-deriving the bare form
+    from the token for older records that never stored one."""
+    recorded = repl.get("tmux_session")
+    if recorded:
+        return recorded
+    token = repl.get("spawn_token", "")
+    return session_name(token) if token else None
+
+
+def run_tmux(args):
+    """Run `tmux <args>`; return (rc, stdout, stderr). Isolated for testing."""
+    try:
+        p = subprocess.run(["tmux"] + list(args), capture_output=True, text=True)
+        return p.returncode, p.stdout, p.stderr
+    except FileNotFoundError:
+        return 127, "", "tmux not found"
+    except Exception as e:  # pragma: no cover - defensive
+        return 1, "", str(e)
+
+
+# --- Registry discovery ------------------------------------------------------
+
+def pid_alive(pid):
+    """True if a process with this pid exists (best-effort, POSIX)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists but not ours
+    except Exception:
+        return False
+    return True
+
+
+def read_registry():
+    """Return the list of live REPL records, pruning dead ones."""
+    repls = []
+    for path in glob.glob(os.path.join(REGISTRY_DIR, "*.json")):
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+        except Exception:
+            continue
+        pid = data.get("pid")
+        if not isinstance(pid, int) or not pid_alive(pid):
+            continue
+        repls.append(data)
+    return repls
+
+
+def git_root(startdir):
+    """Nearest enclosing git project of startdir, stopping *before* ~.
+
+    Returns the directory containing `.git`, or "" if none is found below the
+    home directory. Mirrors `_git_root` on the Julia side.
+    """
+    try:
+        d = os.path.realpath(startdir)
+        home = os.path.realpath(os.path.expanduser("~"))
+    except Exception:
+        return ""
+    while True:
+        if d == home:
+            return ""
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return ""
+        d = parent
+
+
+def safe_realpath(p):
+    """os.path.realpath that never raises and treats "" as "" (not cwd)."""
+    if not p:
+        return ""
+    try:
+        return os.path.realpath(p)
+    except Exception:
+        return p
+
+
+def dir_rank(project_dir, cwd):
+    """Directory distance from cwd up to project_dir.
+
+    0  -> same directory
+    k  -> project_dir is the k-th ancestor of cwd (nearer = smaller)
+    INF -> project_dir is not an ancestor of cwd (fallback-only candidate)
+    """
+    try:
+        project_dir = os.path.realpath(project_dir)
+        cwd = os.path.realpath(cwd)
+    except Exception:
+        return INF
+    if project_dir == cwd:
+        return 0
+    prefix = project_dir.rstrip(os.sep) + os.sep
+    if not cwd.startswith(prefix):
+        return INF
+    return cwd[len(prefix):].count(os.sep) + 1
+
+
+# --- Talking to a REPL -------------------------------------------------------
+
+def post_to_repl(port, request, timeout=600):
+    """Forward a JSON-RPC request to a REPL's HTTP server; return parsed reply."""
+    data = json.dumps(request).encode("utf-8")
+    req = urllib.request.Request(
+        "http://127.0.0.1:%d" % port,
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        body = response.read().decode("utf-8")
+    return json.loads(body) if body.strip() else None
+
+
+# --- JSON-RPC framing helpers ------------------------------------------------
+
+def emit(obj):
+    """Write one JSON-RPC message to stdout (thread-safe)."""
+    with _EMIT_LOCK:
+        print(json.dumps(obj), flush=True)
+
+
+def error_result(request_id, message, code=-32603):
+    return {"jsonrpc": "2.0", "id": request_id,
+            "error": {"code": code, "message": message}}
+
+
+def tool_text_result(request_id, text):
+    """A successful tools/call result carrying a plain-text body."""
+    return {"jsonrpc": "2.0", "id": request_id,
+            "result": {"content": [{"type": "text", "text": text}]}}
+
+
+# Tools the adapter answers itself (never routed to a REPL): manual REPL
+# selection, the private-REPL lifecycle (spawn/kill), and the usage guide — all
+# available even when no REPL is running, which is exactly when a bootstrapping
+# agent needs them.
+USAGE_INSTRUCTIONS_DESC = (
+    "Read this FIRST before using the Julia REPL. Explains proper REPL workflow, "
+    "shared-REPL etiquette, and how to spawn/use a private REPL when none is "
+    "available. Works even with no REPL running.")
+
+ADAPTER_TOOLS = [
+    {"name": "usage_instructions",
+     "description": USAGE_INSTRUCTIONS_DESC,
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "list_repls",
+     "description": "List the running Julia REPLs the adapter has discovered — "
+                    "their word-id, working directory, project, and port, with the "
+                    "nearest-to-your-cwd one flagged as a suggestion. Includes any "
+                    "PRIVATE REPL you spawned yourself (tagged '(private, yours)'). "
+                    "There is no sticky selection: pick a word from this list and "
+                    "pass it as `repl` on exec_repl, and keep passing it.",
+     "inputSchema": {"type": "object", "properties": {}}},
+    {"name": "spawn_repl",
+     "description": "Start your own PRIVATE Julia REPL (interactive, in a detached "
+                    "tmux session) when none is available — to reap warm-cache / "
+                    "no-startup-latency benefits and keep live state across calls. "
+                    "It is hidden from the shared pool and reachable only via the "
+                    "`repl` argument (returned here). Auto-killed when this session "
+                    "ends unless `persist` is set. Call `usage_instructions` first.",
+     "inputSchema": {"type": "object",
+                     "properties": {
+                         "project": {"type": "string",
+                                     "description": "Path to the Julia project to "
+                                     "activate with --project: a directory or a "
+                                     "Project.toml, absolute or relative to the "
+                                     "current working directory. Point it at a "
+                                     "nested env to work there, e.g. '.' for the "
+                                     "main env or 'test' for the test env. The REPL "
+                                     "also starts with that directory as its pwd."},
+                         "julia": {"type": "string",
+                                   "description": "julia binary to use (default 'julia')."},
+                         "persist": {"type": "boolean",
+                                     "description": "Keep the REPL alive after this "
+                                     "session exits (default false)."}},
+                     "required": ["project"]}},
+    {"name": "kill_repl",
+     "description": "Kill a PRIVATE Julia REPL you spawned with `spawn_repl`, by "
+                    "its word-id. Only private REPLs can be killed this way; the "
+                    "user's shared REPLs are never touched.",
+     "inputSchema": {"type": "object",
+                     "properties": {"repl": {
+                         "type": "string",
+                         "description": "word-id of the private REPL to kill"}},
+                     "required": ["repl"]}},
+]
+
+
+# Optional routing argument advertised on every REPL-bound tool. Routing is a
+# concern of THIS adapter, not of Julia (which just sees an extra ignored arg), so
+# we add it to the forwarded schema here rather than in the REPL's tool definition.
+# It must be a declared property or strict MCP clients would drop it, leaving an
+# agent unable to route once more than one REPL is running.
+ROUTE_ARG_NAME = "repl"
+ROUTE_ARG_SCHEMA = {
+    "type": "string",
+    "description": "word-id of the Julia REPL to run this call in (see list_repls). "
+                   "Optional when exactly one REPL is running; REQUIRED to pick one "
+                   "when several are (otherwise the call returns the list instead of "
+                   "running). Routing is stateless — pass it on every call.",
+}
+
+
+def _annotate_routable(tool):
+    """Add the optional `repl` routing arg to a forwarded REPL-bound tool's schema.
+
+    Left non-required so the single-REPL fast path still works with no argument.
+    Idempotent, and defensive against a tool that ships an odd/empty schema.
+    """
+    try:
+        schema = tool.setdefault("inputSchema", {"type": "object"})
+        props = schema.setdefault("properties", {})
+        props.setdefault(ROUTE_ARG_NAME, ROUTE_ARG_SCHEMA)
+    except Exception:
+        pass
+    return tool
+
+
+def inject_adapter_tools(reply):
+    """Finalize a forwarded tools/list result: advertise the `repl` routing arg on
+    the REPL-bound tools, and append the adapter-local tools.
+
+    The Julia REPLs expose only exec_repl / investigate_environment /
+    remove-trailing-whitespace; each of those is routed by this adapter, so we add
+    the optional `repl` argument to its schema. Every adapter-owned tool
+    (usage_instructions, list_repls, spawn_repl, kill_repl) is added here so it is
+    advertised even when no REPL is running.
+    """
+    try:
+        tools = reply.setdefault("result", {}).setdefault("tools", [])
+        adapter_names = {t["name"] for t in ADAPTER_TOOLS}
+        for t in tools:
+            if t.get("name") not in adapter_names:
+                _annotate_routable(t)
+        by_name = {t.get("name"): t for t in tools}
+        for t in ADAPTER_TOOLS:
+            if t["name"] not in by_name:
+                tools.append(t)
+    except Exception:
+        pass
+    return reply
+
+
+# --- The router --------------------------------------------------------------
+
+class Router:
+    def __init__(self):
+        self.cwd = os.path.realpath(os.getcwd())
+        self.git_root = git_root(self.cwd)  # enclosing git project of our cwd, or ""
+        # Detection-only identity memory: word-id -> the project_dir it named the
+        # FIRST time we routed to it this session. There is no sticky *selection*
+        # here (routing is stateless); this only lets us notice when a word-id has
+        # been recycled onto a DIFFERENT REPL and refuse to follow it silently.
+        # See _identity_guard.
+        self.instance_dir = {}
+
+    def find_by_word(self, repls, word):
+        for r in repls:
+            if r.get("word") == word:
+                return r
+        return None
+
+    def as_selection(self, repl):
+        return {"project_dir": repl.get("project_dir", ""),
+                "port": repl["port"], "word": repl.get("word", "?")}
+
+    def repl_rank(self, repl):
+        """Nearness of a REPL to this session (smaller = nearer).
+
+        0    -> the REPL lives in the same git project as our cwd (any subfolder;
+                the ideal target). git projects are matched by their root, so a
+                sibling-subfolder REPL still scores 0.
+        k>=1 -> no shared git project, but the REPL's active project (or its pwd)
+                is the (k-1)-th ancestor of our cwd.
+        INF  -> unrelated (fallback-only candidate).
+        """
+        rg = repl.get("git_root", "")
+        if self.git_root and rg and os.path.realpath(rg) == self.git_root:
+            return 0
+        d = dir_rank(repl.get("project_dir", ""), self.cwd)
+        if d != INF:
+            return d + 1
+        d = dir_rank(repl.get("pwd", ""), self.cwd)
+        if d != INF:
+            return d + 1
+        return INF
+
+    def nearest(self, repls):
+        """The single strictly-nearest REPL, or None if there's a tie."""
+        ranked = sorted(repls, key=self.repl_rank)
+        best = self.repl_rank(ranked[0])
+        contenders = [r for r in ranked if self.repl_rank(r) == best]
+        return ranked[0] if len(contenders) == 1 else None
+
+    def _identity_guard(self, match, request_id):
+        """Refuse to silently follow a word-id onto a DIFFERENT REPL than the one
+        it named earlier this session. Keyed on the REPL's project_dir, which is
+        stable across a restart (a project's word is derived from its path), so:
+
+          * same-project restart  -> project_dir unchanged -> rebind silently
+          * word recycled onto another project (a hash collision, or you closed
+            one REPL and opened another that happens to claim the freed word)
+            -> project_dir changed -> one loud error, then adopt so a deliberate
+               retry proceeds.
+
+        This turns the dangerous *silent* case (talking to the wrong REPL without
+        noticing) into a visible one, without keeping any sticky routing state.
+        """
+        word = match.get("word", "?")
+        pdir = safe_realpath(match.get("project_dir", ""))
+        known = self.instance_dir.get(word)
+        self.instance_dir[word] = pdir
+        if known is not None and known != pdir:
+            return error_result(
+                request_id,
+                "Word-id '%s' now points to a DIFFERENT Julia REPL (project %s; "
+                "earlier this session it was %s) — the original was likely closed "
+                "and another opened. Retry to use the current one, or run "
+                "list_repls to choose deliberately."
+                % (word, pdir or "?", known or "?"))
+        return None
+
+    def resolve(self, request):
+        """Decide which REPL serves this call. Stateless: routing is recomputed
+        from the live registry every time — the adapter keeps no sticky selection.
+
+        Returns (selection_dict, None) to forward, or (None, response) to emit a
+        JSON-RPC error/listing instead.
+        """
+        request_id = request.get("id")
+        args = request.get("params", {}).get("arguments", {}) or {}
+        override = args.get("repl") or os.environ.get("MCPREPL_PROJECT")
+
+        repls_all = read_registry()
+
+        if override:
+            # An explicit word may target a private REPL (excluded from the shared
+            # pool), so search the full set. A word that no longer resolves is an
+            # ERROR — never a silent fall-back to some other REPL.
+            match = self.find_by_word(repls_all, override)
+            if match is None:
+                return None, error_result(
+                    request_id, self._unknown_word_message(override, repls_all))
+            guard = self._identity_guard(match, request_id)
+            if guard is not None:
+                return None, guard
+            return self.as_selection(match), None
+
+        # No explicit target: only the shared pool takes part in default routing
+        # (private REPLs are reachable solely via an explicit repl= word).
+        repls = [r for r in repls_all if not is_private(r)]
+        if not repls:
+            return None, error_result(request_id,
+                                      self._no_repl_message(repls_all))
+        if len(repls) == 1:
+            return self.as_selection(repls[0]), None
+        # >=2 shared REPLs and no target -> never guess; hand the caller the list.
+        return None, self.ambiguous_message(request_id, repls)
+
+    # -- messages for the caller ---------------------------------------------
+    def _unknown_word_message(self, word, repls_all):
+        avail = ", ".join(r.get("word", "?") for r in repls_all
+                          if not is_private(r) or owned_by_me(r)) or "(none running)"
+        return ("No live Julia REPL with word-id '%s' — it may have exited. Pick "
+                "another and pass it as repl=. Available: %s (see list_repls)."
+                % (word, avail))
+
+    def _no_repl_message(self, repls_all):
+        mine = [r for r in repls_all if owned_by_me(r)]
+        if mine:
+            words = ", ".join(r.get("word", "?") for r in mine)
+            return ("No shared Julia REPL is registered, but you have a private "
+                    "one: %s. Address it with repl='<word>', or start a shared "
+                    "REPL with: julia --project -e 'using MCPRepl; "
+                    "MCPRepl.start!()'." % words)
+        return ("No Julia REPL registered. Start one with: julia --project -e "
+                "'using MCPRepl; MCPRepl.start!()' — or spawn your own private "
+                "one with spawn_repl.")
+
+    def ambiguous_message(self, request_id, repls):
+        near = self.nearest(repls)
+        lines = ["Multiple Julia REPLs are running and this session keeps no "
+                 "default. Pass repl=\"<word>\" on exec_repl to choose one, and "
+                 "keep passing it on every call:", ""]
+        for r in sorted(repls, key=self.repl_rank):
+            if self.repl_rank(r) == 0:
+                tag = "  (same git project)"
+            elif near is not None and r.get("word") == near.get("word"):
+                tag = "  (nearest to your cwd)"
+            else:
+                tag = ""
+            lines.append("  * %s — %s  [%s]  port %s%s" % (
+                r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+                r.get("active_project", "") or "no project",
+                r.get("port", "?"), tag))
+        if near is not None:
+            lines += ["", "Suggested (nearest to this session): %s"
+                      % near.get("word", "?")]
+        return tool_text_result(request_id, "\n".join(lines))
+
+
+# --- Adapter-local tools -----------------------------------------------------
+
+def _handle_list_repls(router, request):
+    request_id = request.get("id")
+    # The shared pool excludes every private REPL; but a private REPL *this*
+    # adapter spawned is shown too, tagged distinctly, so an agent can rediscover
+    # its own REPL after a context reset. Other sessions' private REPLs stay hidden.
+    all_repls = read_registry()
+    shared = [r for r in all_repls if not is_private(r)]
+    mine = [r for r in all_repls if owned_by_me(r)]
+    if not shared and not mine:
+        emit(tool_text_result(request_id, "No Julia REPLs are currently running."))
+        return
+    near = router.nearest(shared) if shared else None
+    lines = ["Discovered Julia REPLs (this session's cwd: %s):" % router.cwd,
+             "No default is kept — pass repl='<word>' on exec_repl, and keep "
+             "passing it.", ""]
+    for r in sorted(shared, key=router.repl_rank):
+        if router.repl_rank(r) == 0:
+            tag = "  (same git project)"
+        elif near is not None and r.get("word") == near.get("word"):
+            tag = "  (nearest to your cwd)"
+        else:
+            tag = ""
+        lines.append("  %s — %s  [%s]  port %s%s" % (
+            r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+            r.get("active_project", "") or "no project", r.get("port", "?"), tag))
+    for r in sorted(mine, key=router.repl_rank):
+        lines.append("  %s — %s  [%s]  port %s  (private, yours)" % (
+            r.get("word", "?"), r.get("pwd", r.get("project_dir", "?")),
+            r.get("active_project", "") or "no project", r.get("port", "?")))
+    emit(tool_text_result(request_id, "\n".join(lines)))
+
+
+def _handle_spawn_repl(router, request):
+    """Start a private, agent-owned Julia REPL in a detached tmux session."""
+    request_id = request.get("id")
+    args = request.get("params", {}).get("arguments", {}) or {}
+    project = args.get("project", "")
+    julia = args.get("julia") or "julia"
+    persist = bool(args.get("persist", False))
+
+    if not project:
+        emit(tool_text_result(request_id, "Error: 'project' is required."))
+        return
+    proj_path = os.path.realpath(os.path.expanduser(project))
+    if not os.path.exists(proj_path):
+        emit(tool_text_result(
+            request_id, "Error: project path does not exist: %s" % project))
+        return
+    # The REPL starts *in* its project (the dir holding the Project.toml), the way
+    # `Pkg.test` runs in `test/`. Otherwise it would inherit the adapter's cwd and
+    # relative paths (include, data files) would resolve somewhere else entirely.
+    proj_dir = proj_path if os.path.isdir(proj_path) else os.path.dirname(proj_path)
+    if shutil.which("tmux") is None:
+        emit(tool_text_result(
+            request_id,
+            "Error: tmux is required to spawn a private REPL but was not found on "
+            "PATH. Install tmux (private REPLs currently support tmux only)."))
+        return
+
+    token = secrets.token_hex(8)
+    session = session_name(token, session_label(proj_dir))
+    owner = "0" if persist else str(os.getpid())
+
+    # tmux joins a multi-arg command with spaces and re-parses it through the
+    # shell, so we hand it a SINGLE, shell-quoted command string to keep the `-e`
+    # code (which contains spaces and a semicolon) intact. The `env VAR=... julia`
+    # prefix guarantees our variables reach Julia regardless of the (possibly
+    # long-lived) tmux server's own environment.
+    env_pairs = {"MCPREPL_SPAWN_TOKEN": token, "MCPREPL_OWNER_PID": owner,
+                 "MCPREPL_TMUX_SESSION": session}
+    reg = os.environ.get("MCPREPL_REGISTRY_DIR")
+    if reg:
+        env_pairs["MCPREPL_REGISTRY_DIR"] = reg
+    # `--startup-file=no`: don't run the user's startup.jl, which commonly calls a
+    # (non-private) MCPRepl.start!() and would race/clobber our private one. We
+    # control this REPL fully; load Revise best-effort so hot-reload still works.
+    julia_argv = [julia, "--startup-file=no", "--project=" + proj_path, "-i", "-e",
+                  "try; using Revise; catch; end; "
+                  "using MCPRepl; MCPRepl.start!(private=true)"]
+    command = "env " + " ".join(
+        "%s=%s" % (k, shlex.quote(v)) for k, v in env_pairs.items())
+    command += " " + " ".join(shlex.quote(a) for a in julia_argv)
+    tmux_args = ["new-session", "-d", "-s", session, "-c", proj_dir, command]
+
+    rc, out, err = run_tmux(tmux_args)
+    if rc != 0:
+        emit(tool_text_result(
+            request_id,
+            "Error: failed to launch tmux session: %s" % (err or out or rc)))
+        return
+
+    # Wait for the REPL to self-register (precompile of MCPRepl can be slow).
+    deadline = time.time() + SPAWN_TIMEOUT
+    record = None
+    while time.time() < deadline:
+        for r in read_registry():
+            if r.get("spawn_token") == token:
+                record = r
+                break
+        if record is not None:
+            break
+        time.sleep(SPAWN_POLL)
+
+    if record is None:
+        run_tmux(["kill-session", "-t", session])
+        emit(tool_text_result(
+            request_id,
+            "Error: the private REPL did not register within %ds; it may have "
+            "failed to start. Inspect it with `tmux attach -t %s`."
+            % (int(SPAWN_TIMEOUT), session)))
+        return
+
+    if not persist:
+        SPAWNED_SESSIONS.add(session)
+
+    word = record.get("word", "?")
+    persist_note = (" It is set to persist and will survive this session."
+                    if persist else
+                    " It will be auto-killed when this session ends.")
+    emit(tool_text_result(
+        request_id,
+        "Started private Julia REPL '%s' (port %s, project %s, tmux session %s).\n"
+        "It is out of the shared pool, so reach it by passing `repl`='%s' on "
+        "EVERY exec_repl call (there is no sticky selection). Kill it with "
+        "kill_repl repl='%s'.%s"
+        % (word, record.get("port", "?"), proj_path, session,
+           word, word, persist_note)))
+
+
+def _handle_kill_repl(router, request):
+    """Kill a private, agent-spawned REPL by word-id. Never touches shared REPLs."""
+    request_id = request.get("id")
+    word = (request.get("params", {}).get("arguments", {}) or {}).get("repl", "")
+    repls = read_registry()
+    match = router.find_by_word(repls, word)
+    if match is None:
+        privs = ", ".join(r.get("word", "?") for r in repls
+                          if is_private(r) and not owned_by_live_peer(r)) or "(none)"
+        emit(tool_text_result(
+            request_id,
+            "No REPL with word-id '%s'. Private REPLs you can kill: %s"
+            % (word, privs)))
+        return
+    if not is_private(match):
+        emit(tool_text_result(
+            request_id,
+            "Refusing: '%s' is a shared REPL, which is user-managed. kill_repl "
+            "only kills private REPLs you spawned with spawn_repl." % word))
+        return
+    if owned_by_live_peer(match):
+        emit(tool_text_result(
+            request_id,
+            "Refusing: '%s' is the private REPL of another live session (adapter "
+            "pid %s). kill_repl only kills your own private REPLs."
+            % (word, match.get("owner_pid"))))
+        return
+    session = record_session(match)
+    if session:
+        run_tmux(["kill-session", "-t", session])
+        SPAWNED_SESSIONS.discard(session)
+    emit(tool_text_result(
+        request_id,
+        "Killed private Julia REPL '%s'%s."
+        % (word, " (tmux session %s)" % session if session else "")))
+
+
+def owned_by_live_peer(r):
+    """True if a private REPL belongs to a *different*, still-running adapter.
+
+    Such a REPL is another Claude Code session's working REPL: private to it, and
+    none of our business to kill. persist REPLs (owner_pid 0) and orphans (owner
+    dead) are fair game, matching reap_orphan_private_sessions.
+    """
+    owner = r.get("owner_pid", 0)
+    return (isinstance(owner, int) and owner > 0
+            and owner != os.getpid() and pid_alive(owner))
+
+
+def reap_spawned_sessions():
+    """Kill every private REPL this adapter spawned. Runs on adapter shutdown."""
+    for session in list(SPAWNED_SESSIONS):
+        try:
+            run_tmux(["kill-session", "-t", session])
+        except Exception:
+            pass
+        SPAWNED_SESSIONS.discard(session)
+
+
+def reap_orphan_private_sessions():
+    """Kill private REPLs whose owning adapter has died (SIGKILL/crash backstop).
+
+    A private record's owner_pid is the pid of the adapter that spawned it. If
+    that process is gone the REPL is a true orphan and any adapter may reap it.
+    persist REPLs record owner_pid 0 and are never reaped.
+    """
+    for r in read_registry():
+        if not is_private(r):
+            continue
+        owner = r.get("owner_pid", 0)
+        if not isinstance(owner, int) or owner <= 0 or pid_alive(owner):
+            continue
+        session = record_session(r)
+        if session:
+            run_tmux(["kill-session", "-t", session])
+
+
+def _read_prompt(name):
+    """Read a shipped prompt file next to the adapter; "" if unavailable."""
+    try:
+        with open(os.path.join(ADAPTER_DIR, "prompts", name), encoding="utf-8") as fh:
+            return fh.read()
+    except Exception:
+        return ""
+
+
+def _usage_instructions_text():
+    """Shared REPL etiquette + the adapter-only private-REPL guide.
+
+    Owned by the adapter so it works even with zero REPLs running — exactly when a
+    bootstrapping agent needs to learn it can spawn a private one. The base file
+    is the same one the legacy Julia HTTP tool serves.
+    """
+    parts = [p for p in (_read_prompt("julia_repl_workflow.md"),
+                         _read_prompt("private_repl_workflow.md")) if p]
+    if not parts:
+        return ("Julia REPL usage instructions are unavailable (prompt files not "
+                "found next to the adapter).")
+    return "\n\n".join(parts)
+
+
+def _handle_usage_instructions(request):
+    emit(tool_text_result(request.get("id"), _usage_instructions_text()))
+
+
+# --- Top-level message handling ---------------------------------------------
+
+def handle_message(router, request):
+    """Handle one inbound JSON-RPC message from the client."""
+    method = request.get("method")
+    is_notification = "id" not in request
+    request_id = request.get("id")
+
+    # Cancellation (a notification): the client asks us to abort an in-flight
+    # request. Interrupt the eval on whichever REPL is serving it.
+    if method == "notifications/cancelled":
+        _handle_cancelled(request)
+        return
+
+    # Other notifications: forward-and-forget semantics, but nothing needs a REPL.
+    if is_notification:
+        return
+
+    if method == "initialize":
+        # The adapter IS the MCP server: it owns the handshake, serverInfo, and the
+        # teaser instructions — answered here regardless of whether any REPL is up.
+        # (The Julia REPLs are plain JSON-RPC endpoints and don't speak initialize.)
+        emit({"jsonrpc": "2.0", "id": request_id, "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "julia-mcp-adapter", "version": "2.0.0"},
+            "instructions": ADAPTER_INSTRUCTIONS,
+        }})
+        return
+
+    if method == "ping":
+        emit({"jsonrpc": "2.0", "id": request_id, "result": {}})
+        return
+
+    if method == "tools/list":
+        repls = read_registry()
+        for r in repls:
+            try:
+                reply = post_to_repl(r["port"], request, timeout=10)
+                if reply is not None:
+                    _cache_tools(reply)
+                    emit(inject_adapter_tools(reply))
+                    return
+            except Exception:
+                continue
+        emit(inject_adapter_tools(_cached_tools(request_id)))
+        return
+
+    if method == "tools/call":
+        tool_name = request.get("params", {}).get("name")
+        if tool_name == "usage_instructions":
+            _handle_usage_instructions(request)
+            return
+        if tool_name == "list_repls":
+            _handle_list_repls(router, request)
+            return
+        if tool_name == "spawn_repl":
+            _handle_spawn_repl(router, request)
+            return
+        if tool_name == "kill_repl":
+            _handle_kill_repl(router, request)
+            return
+        selection, alt = router.resolve(request)
+        if selection is None:
+            emit(alt)   # error or "pick a REPL" listing — nothing to forward
+            return
+        # Forward on a worker thread so a long eval doesn't block the reader (and
+        # thus a cancellation). Resolution above stays on the reader thread.
+        _dispatch_forward(router, selection, request)
+        return
+
+    # Anything else: try the selected/any REPL, else method-not-found.
+    emit(error_result(request_id, "Method not found: %s" % method, code=-32601))
+
+
+def _port_lock(port):
+    with _PORT_LOCKS_GUARD:
+        lock = _PORT_LOCKS.get(port)
+        if lock is None:
+            lock = _PORT_LOCKS[port] = threading.Lock()
+        return lock
+
+
+def _dispatch_forward(router, selection, request):
+    """Forward a routed call on a worker thread so the reader stays responsive.
+
+    The in-flight id->port mapping is recorded HERE, on the reader thread, before
+    the worker starts — so a cancellation that arrives on the very next line
+    always finds the port (no race with the worker spinning up).
+    """
+    request_id = request.get("id")
+    port = selection["port"]
+    with _INFLIGHT_LOCK:
+        _INFLIGHT[request_id] = port
+    t = threading.Thread(target=_forward_worker, args=(router, selection, request),
+                         daemon=True)
+    with _WORKERS_GUARD:
+        _WORKERS.add(t)
+    t.start()
+
+
+def drain_workers(timeout=DRAIN_TIMEOUT):
+    """Wait (bounded) for in-flight forward workers to emit their replies.
+
+    Called on shutdown so a reply whose eval was just finishing (or was cancelled)
+    still reaches the client. A genuinely stuck eval can't hold us past `timeout`.
+    """
+    deadline = time.time() + timeout
+    with _WORKERS_GUARD:
+        pending = list(_WORKERS)
+    for t in pending:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        t.join(timeout=remaining)
+
+
+def _forward_worker(router, selection, request):
+    request_id = request.get("id")
+    port = selection["port"]
+    # Serialize evals per REPL: one backend task + one global stdout redirect on
+    # the Julia side means two concurrent execute_repllike calls would corrupt
+    # each other's captured output. A cancellation still reaches the reader thread
+    # (which never takes this lock), so a blocked-on-lock call is still cancellable.
+    with _port_lock(port):
+        try:
+            reply = post_to_repl(port, request)
+            if reply is not None:
+                emit(reply)
+        except urllib.error.URLError:
+            # The chosen REPL died mid-call. Routing is stateless, so there's
+            # nothing to forget; the next call re-reads the registry.
+            emit(error_result(
+                request_id,
+                "Julia REPL '%s' became unreachable (it may have exited). Retry "
+                "with a live REPL (see list_repls)." % selection.get("word", "?")))
+        except Exception as e:
+            emit(error_result(request_id, "Internal error: %s" % e))
+        finally:
+            with _INFLIGHT_LOCK:
+                _INFLIGHT.pop(request_id, None)
+            with _WORKERS_GUARD:
+                _WORKERS.discard(threading.current_thread())
+
+
+def _handle_cancelled(request):
+    """Honor an MCP `notifications/cancelled`: interrupt the eval in flight.
+
+    We look up the port serving the cancelled request id and post an `interrupt`
+    to that REPL, which schedules an InterruptException onto its backend task
+    (identical to a local Ctrl-C). Best-effort and per-spec: if the id isn't in
+    flight (already finished, or was never a routed call) we simply do nothing,
+    and any late response the worker still emits is the client's to ignore.
+    """
+    params = request.get("params", {}) or {}
+    rid = params.get("requestId")
+    with _INFLIGHT_LOCK:
+        port = _INFLIGHT.get(rid)
+    if port is None:
+        return
+    try:
+        post_to_repl(port, {"jsonrpc": "2.0", "id": "mcprepl-interrupt-%s" % rid,
+                            "method": "interrupt"}, timeout=5)
+    except Exception:
+        pass
+
+
+def _cache_tools(reply):
+    try:
+        os.makedirs(os.path.dirname(TOOLS_CACHE), exist_ok=True)
+        with open(TOOLS_CACHE, "w") as fh:
+            json.dump(reply.get("result", {}), fh)
+    except Exception:
+        pass
+
+
+def _cached_tools(request_id):
+    try:
+        with open(TOOLS_CACHE) as fh:
+            result = json.load(fh)
+        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+    except Exception:
+        return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": []}}
+
+
+def _install_shutdown_hooks():
+    """Ensure private REPLs this adapter spawned die when the adapter does.
+
+    The client (Claude Code) ends the session by closing our stdin (-> the read
+    loop's finally runs) or by sending a signal; either way we kill the sessions
+    we spawned. Only a SIGKILL escapes us, which the startup orphan-reap covers.
+    """
+    atexit.register(reap_spawned_sessions)
+
+    def _handler(signum, _frame):
+        reap_spawned_sessions()
+        # Re-raise default behavior so the process actually terminates.
+        sys.exit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        try:
+            signal.signal(sig, _handler)
+        except (ValueError, OSError):  # e.g. not in main thread
+            pass
 
 
 def main():
-    """Main adapter loop - reads stdin, forwards to HTTP server, writes to stdout"""
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-
-        try:
-            # Parse JSON-RPC request from stdin
-            request = json.loads(line)
-
-            # Notifications have no "id" — forward but never emit a response
-            is_notification = "id" not in request
-
-            # Forward to HTTP server with timeout
-            data = json.dumps(request).encode('utf-8')
-            req = urllib.request.Request('http://localhost:3000',
-                                       data=data,
-                                       headers={'Content-Type': 'application/json'})
-
-            with urllib.request.urlopen(req, timeout=600) as response:
-                body = response.read().decode('utf-8')
-                if not is_notification and body.strip():
-                    print(body, flush=True)
-
-        except json.JSONDecodeError as e:
-            # Invalid JSON from stdin
-            error_response = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {
-                    "code": -32700,
-                    "message": f"Parse error: {str(e)}"
-                }
-            }
-            print(json.dumps(error_response), flush=True)
-
-        except urllib.error.URLError as e:
-            # Connection failed to HTTP server - try to recover
-            request_id = request.get("id") if 'request' in locals() else None
-
-            # For connection errors, try a brief retry
-            if "Connection refused" in str(e):
-                try:
-                    time.sleep(0.1)  # Brief delay
-                    with urllib.request.urlopen(req, timeout=600) as response:
-                        body = response.read().decode('utf-8')
-                        if not is_notification and body.strip():
-                            print(body, flush=True)
-                        continue
-                except:
-                    pass  # Fall through to error response
-
-            if not is_notification:
-                error_response = {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "error": {
-                        "code": -32603,
-                        "message": f"Connection failed: {str(e)}. Is the Julia MCP server running?"
-                    }
-                }
-                print(json.dumps(error_response), flush=True)
-
-        except Exception as e:
-            # Other errors - ensure proper ID handling
-            request_id = request.get("id") if 'request' in locals() else None
-            error_response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32603,
-                    "message": f"Internal error: {str(e)}"
-                }
-            }
-            print(json.dumps(error_response), flush=True)
+    _install_shutdown_hooks()
+    # Backstop: clean up private REPLs orphaned by a previous adapter's hard-kill.
+    try:
+        reap_orphan_private_sessions()
+    except Exception:
+        pass
+    router = Router()
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+            except json.JSONDecodeError as e:
+                emit({"jsonrpc": "2.0", "id": None,
+                      "error": {"code": -32700, "message": "Parse error: %s" % e}})
+                continue
+            try:
+                handle_message(router, request)
+            except Exception as e:
+                if "id" in request:
+                    emit(error_result(request.get("id"), "Internal error: %s" % e))
+    finally:
+        drain_workers()          # let in-flight replies finish (bounded)
+        reap_spawned_sessions()
 
 
 if __name__ == "__main__":
