@@ -16,6 +16,12 @@ Base.displayable(::IOBufferDisplay, _) = true
 Base.display(d::IOBufferDisplay, x) = show(d.io, MIME("text/plain"), x)
 Base.display(d::IOBufferDisplay, mime, x) = show(d.io, mime, x)
 
+# Which REPL.print_response signature this Julia has: newer ones take the backend
+# as a third positional argument. Probed by method, not by VERSION, because the
+# change was backported into the 1.11 patch series.
+const PRINT_RESPONSE_TAKES_BACKEND =
+    hasmethod(REPL.print_response, Tuple{IO,Any,REPL.REPLBackendRef,Bool,Bool})
+
 function execute_repllike(str)
     # Hard block: Pkg.activate — no override allowed
     if contains(str, "Pkg.activate(")
@@ -100,8 +106,10 @@ function execute_repllike(str)
 
     response = redirect_stdout(captured_output) do
         redirect_stderr(captured_output) do
-            # Julia 1.12+ renamed eval_with_backend to eval_on_backend
-            if VERSION >= v"1.12"
+            # eval_with_backend was renamed to eval_on_backend. The rename landed
+            # in a 1.11 patch release, so ask REPL what it has rather than
+            # comparing version numbers.
+            if isdefined(REPL, :eval_on_backend)
                 REPL.eval_on_backend(expr, backend)
             else
                 REPL.eval_with_backend(expr, backend)
@@ -116,9 +124,10 @@ function execute_repllike(str)
     disp = IOBufferDisplay()
 
     # generate printout, err goes to disp.err, val goes to "specialdisplay" disp
-    # The `backend` positional arg was only added to print_response in Julia 1.12;
-    # on 1.10/1.11 the signature is (io, response, show_value, have_color, specialdisplay).
-    if VERSION >= v"1.12"
+    # The `backend` positional arg was added to print_response at some point during
+    # the 1.11 series; before that the signature is
+    # (io, response, show_value, have_color, specialdisplay). Detect it by method.
+    if PRINT_RESPONSE_TAKES_BACKEND
         REPL.print_response(disp.io, response, backend, !REPL.ends_with_semicolon(str), false, disp)
     else
         REPL.print_response(disp.io, response, !REPL.ends_with_semicolon(str), false, disp)
