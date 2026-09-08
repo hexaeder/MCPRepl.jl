@@ -45,7 +45,34 @@ claude mcp add julia-repl /path/to/MCPRepl/mcp-julia-adapter
 ```
 
 The easiest way is `MCPRepl.setup()`, an interactive helper that configures Claude
-Code / Gemini with the adapter (choose local or user scope).
+Code / Gemini / Codex with the adapter (choose the scope in the menu).
+
+### Codex
+
+Use `MCPRepl.setup()` or configure Codex directly from Julia:
+
+```julia
+MCPRepl.configure_codex("user")     # All projects
+MCPRepl.configure_codex("project")  # Current directory
+# Or choose a project explicitly:
+MCPRepl.configure_codex("project"; project_dir="/path/to/project")
+```
+
+User scope writes `~/.codex/config.toml` (or `$CODEX_HOME/config.toml` when set).
+Project scope writes `.codex/config.toml` inside the chosen directory. Run setup
+from the project root to make it available throughout that project. Codex loads
+project configuration only for trusted projects; see the
+[Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
+The configuration is shared by Codex CLI and IDE clients, and setup does not
+require the Codex executable to be installed.
+
+Existing settings and other MCP servers are preserved. Reinstalling replaces
+the `julia-repl` entry in the selected scope. Modified files are backed up to
+`config.toml.bak`; TOML formatting and comments are not retained in the rewritten
+file. Invalid TOML is reported without overwriting the file.
+
+To remove the adapter from one scope, call `MCPRepl.remove_codex("user")` or
+`MCPRepl.remove_codex("project"; project_dir="/path/to/project")`.
 
 ## Multiple REPLs (multiplexing)
 

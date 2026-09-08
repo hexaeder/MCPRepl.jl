@@ -6,6 +6,8 @@ using JSON
 using Dates
 using Sockets
 
+include("setup_codex.jl")
+
 @testset "MCPRepl Tests" begin
     @testset "MCP Server Tests" begin
         # Create test tools

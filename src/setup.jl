@@ -1,4 +1,77 @@
 using JSON
+using TOML
+
+# --- Codex configuration (shared by CLI and IDE clients) ---------------------
+function codex_settings_path(scope::String; project_dir::AbstractString = pwd(),
+                             codex_home::AbstractString = get(ENV, "CODEX_HOME", joinpath(homedir(), ".codex")))
+    scope == "user" && return joinpath(abspath(expanduser(codex_home)), "config.toml")
+    scope == "project" && return joinpath(abspath(expanduser(project_dir)), ".codex", "config.toml")
+    throw(ArgumentError("Codex scope must be \"user\" or \"project\""))
+end
+
+function check_codex_status(scope::String; kwargs...)
+    path = codex_settings_path(scope; kwargs...)
+    isfile(path) || return :not_configured
+    try
+        settings = TOML.parsefile(path)
+        servers = get(settings, "mcp_servers", Dict())
+        haskey(servers, "julia-repl") || return :not_configured
+        server = servers["julia-repl"]
+        get(server, "enabled", true) === false && return :disabled
+        return get(server, "command", nothing) == joinpath(pkgdir(MCPRepl), "mcp-julia-adapter") ?
+               :configured_script : :configured_unknown
+    catch
+        return :invalid_config
+    end
+end
+
+# Parse and serialize before touching the file. Invalid configuration must never
+# be treated as empty. Keep a backup because TOML.print normalizes formatting
+# and drops comments, though it preserves all unrelated configuration values.
+function update_codex_settings(path::AbstractString; remove::Bool = false)
+    settings = isfile(path) ? TOML.parsefile(path) : Dict{String,Any}()
+    servers = get!(settings, "mcp_servers", Dict{String,Any}())
+    servers isa AbstractDict || throw(ArgumentError("mcp_servers must be a TOML table"))
+    if remove
+        haskey(servers, "julia-repl") || return path
+        delete!(servers, "julia-repl")
+    else
+        servers["julia-repl"] = Dict("command" => joinpath(pkgdir(MCPRepl), "mcp-julia-adapter"))
+    end
+    content = sprint(io -> TOML.print(io, settings; sorted = true))
+    mkpath(dirname(path))
+    isfile(path) && cp(path, path * ".bak"; force = true)
+    write(path, content)
+    return path
+end
+
+"""
+    configure_codex(scope::String; project_dir=pwd(), codex_home=get(ENV, "CODEX_HOME", "~/.codex"))
+
+Register the Julia REPL adapter in Codex's `"user"` or `"project"` scope.
+Project scope writes `project_dir/.codex/config.toml`; user scope writes
+`codex_home/config.toml`. Existing settings are preserved and the previous file
+is backed up as `config.toml.bak`. TOML formatting and comments are not retained.
+Codex only loads project configuration for trusted projects. Returns the path.
+"""
+function configure_codex(scope::String; kwargs...)
+    path = update_codex_settings(codex_settings_path(scope; kwargs...))
+    println("   ✅ Configured Codex ($scope): $path")
+    scope == "project" && println("   💡 Codex loads project configuration only for trusted projects.")
+    return path
+end
+
+"""
+    remove_codex(scope::String; project_dir=pwd(), codex_home=get(ENV, "CODEX_HOME", "~/.codex"))
+
+Remove only the `julia-repl` server from the selected Codex scope, preserving
+other settings and backing up any changed file. Returns the configuration path.
+"""
+function remove_codex(scope::String; kwargs...)
+    path = update_codex_settings(codex_settings_path(scope; kwargs...); remove = true)
+    println("   ✅ Removed Codex MCP configuration ($scope): $path")
+    return path
+end
 
 # Run `cmd`, capturing stdout, but never block longer than `timeout` seconds.
 # Belt-and-suspenders backstop for the Claude CLI health-check (see below); on
@@ -196,6 +269,7 @@ end
 function setup()
     claude_status = check_claude_status()
     gemini_status = check_gemini_status()
+    codex_status = Dict(scope => check_codex_status(scope) for scope in ("project", "user"))
 
     # Show current status
     println("🔧 MCPRepl Setup")
@@ -217,6 +291,15 @@ function setup()
         println("📊 Gemini status: ✅ Julia REPL adapter configured")
     else
         println("📊 Gemini status: ❌ Julia REPL adapter not configured")
+    end
+    for scope in ("project", "user")
+        status = codex_status[scope]
+        label = status == :configured_script ? "✅ Julia REPL adapter configured" :
+                status == :configured_unknown ? "⚠️ Existing julia-repl entry" :
+                status == :disabled ? "⚠️ Julia REPL adapter disabled" :
+                status == :invalid_config ? "❌ Invalid or unreadable configuration" :
+                "❌ Julia REPL adapter not configured"
+        println("📊 Codex status ($scope): $label")
     end
     println()
 
@@ -242,6 +325,16 @@ function setup()
         println("   Gemini CLI (settings.json is user-wide):")
         configured && offer("Remove Gemini MCP configuration", remove_gemini)
         offer("$verb adapter", configure_gemini)
+    end
+
+    # Configuration also works for IDE/app users without a `codex` executable.
+    println("   Codex:")
+    for scope in ("project", "user")
+        label = scope == "project" ? "project — this directory" : "user — ALL projects"
+        if codex_status[scope] in (:configured_script, :configured_unknown, :disabled)
+            offer("Remove Codex MCP configuration ($label)", () -> remove_codex(scope))
+        end
+        offer("Add/Replace adapter ($label)", () -> configure_codex(scope))
     end
 
     println()

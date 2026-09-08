@@ -8,6 +8,7 @@ HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [compat]
 Dates = "1.10"
@@ -15,6 +16,7 @@ HTTP = "1.9, 1.10"
 JSON = "1"
 REPL = "1.10"
 Sockets = "1.10"
+TOML = "1"
 Test = "1.10"
 
 [extras]
