@@ -601,6 +601,24 @@ def _handle_list_repls(router, request):
     emit(tool_text_result(request_id, "\n".join(lines)))
 
 
+SPAWN_TAIL_LINES = 40         # pane lines shown when a spawn fails
+
+
+def _pane_dead(session):
+    rc, out, _ = run_tmux(["list-panes", "-t", session, "-F", "#{pane_dead}"])
+    return rc == 0 and out.strip() == "1"
+
+
+def _pane_tail(session):
+    """Last non-empty lines of a session's pane, e.g. Julia's load error."""
+    rc, out, _ = run_tmux(["capture-pane", "-p", "-t", session,
+                           "-S", "-%d" % (4 * SPAWN_TAIL_LINES)])
+    if rc != 0:
+        return ""
+    lines = [l.rstrip() for l in out.splitlines() if l.strip()]
+    return "\n".join(lines[-SPAWN_TAIL_LINES:])
+
+
 def _handle_spawn_repl(router, request):
     """Start a private, agent-owned Julia REPL in a detached tmux session."""
     request_id = request.get("id")
@@ -651,7 +669,10 @@ def _handle_spawn_repl(router, request):
     command = "env " + " ".join(
         "%s=%s" % (k, shlex.quote(v)) for k, v in env_pairs.items())
     command += " " + " ".join(shlex.quote(a) for a in julia_argv)
-    tmux_args = ["new-session", "-d", "-s", session, "-c", proj_dir, command]
+    # `remain-on-exit` keeps the pane around if Julia dies during startup, so we
+    # can still show its output. It is switched off again once the REPL is up.
+    tmux_args = ["new-session", "-d", "-s", session, "-c", proj_dir, command,
+                 ";", "set-option", "-w", "-t", session, "remain-on-exit", "on"]
 
     rc, out, err = run_tmux(tmux_args)
     if rc != 0:
@@ -668,18 +689,20 @@ def _handle_spawn_repl(router, request):
             if r.get("spawn_token") == token:
                 record = r
                 break
-        if record is not None:
+        if record is not None or _pane_dead(session):
             break
         time.sleep(SPAWN_POLL)
 
     if record is None:
+        tail = _pane_tail(session)
         run_tmux(["kill-session", "-t", session])
         emit(tool_text_result(
             request_id,
-            "Error: the private REPL did not register within %ds; it may have "
-            "failed to start. Inspect it with `tmux attach -t %s`."
-            % (int(SPAWN_TIMEOUT), session)))
+            "Error: the private REPL did not come up. Last output of its tmux "
+            "session:\n\n%s" % (tail or "(no output)")))
         return
+
+    run_tmux(["set-option", "-w", "-t", session, "remain-on-exit", "off"])
 
     if not persist:
         SPAWNED_SESSIONS.add(session)

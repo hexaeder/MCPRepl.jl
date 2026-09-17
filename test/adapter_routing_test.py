@@ -483,6 +483,39 @@ def test_spawn_kill(ad, reg):
         ad.SPAWNED_SESSIONS.clear()
 
 
+def test_spawn_failure_output(ad, reg):
+    # Julia dies while loading MCPRepl: the error names the pane's last output,
+    # returns without waiting out SPAWN_TIMEOUT, and cleans up the session.
+    clear(reg)
+    calls = []
+
+    def _run(args):
+        calls.append(list(args))
+        if args[0] == "list-panes":
+            return (0, "1\n", "")
+        if args[0] == "capture-pane":
+            return (0, "ERROR: Package MCPRepl not found\n\n", "")
+        return (0, "", "")
+
+    saved = (ad.run_tmux, ad.shutil.which, ad.SPAWN_TIMEOUT)
+    ad.run_tmux = _run
+    ad.shutil.which = lambda name: "/usr/bin/tmux"
+    ad.SPAWN_TIMEOUT = 30.0
+    out, restore = _capture(ad)
+    try:
+        t0 = time.time()
+        ad._handle_spawn_repl(ad.Router(), {
+            "id": 1, "params": {"arguments": {"project": reg}}})
+        assert time.time() - t0 < 5, "a dead pane must end the wait early"
+        txt = out[-1]["result"]["content"][0]["text"]
+        assert "Package MCPRepl not found" in txt, txt
+        assert any(c[0] == "kill-session" for c in calls)
+        print("PASS spawn_repl failure shows the REPL's output")
+    finally:
+        restore()
+        (ad.run_tmux, ad.shutil.which, ad.SPAWN_TIMEOUT) = saved
+
+
 def test_autokill_and_reap(ad, reg):
     calls = []
     saved = (ad.run_tmux, ad.pid_alive)
@@ -646,6 +679,7 @@ def main():
         test_usage_instructions(ad, reg)
         test_initialize_instructions(ad, reg)
         test_spawn_kill(ad, reg)
+        test_spawn_failure_output(ad, reg)
         test_autokill_and_reap(ad, reg)
         test_cancellation(reg)
         test_progress_heartbeat(ad)
