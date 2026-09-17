@@ -579,6 +579,58 @@ def test_cancellation(reg):
         srv.shutdown()
 
 
+# --- progress heartbeat while a routed call is open --------------------------
+
+class _SlowHandler(http.server.BaseHTTPRequestHandler):
+    """A fake REPL whose `tools/call` takes `server.delay` seconds."""
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", 0))
+        req = json.loads(self.rfile.read(n))
+        time.sleep(self.server.delay)
+        res = {"jsonrpc": "2.0", "id": req.get("id"),
+               "result": {"content": [{"type": "text", "text": "done"}]}}
+        body = json.dumps(res).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def test_progress_heartbeat(ad):
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SlowHandler)
+    srv.delay = 0.6
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    saved_interval = ad.PROGRESS_INTERVAL
+    ad.PROGRESS_INTERVAL = 0.1
+    out, restore = _capture(ad)
+    try:
+        sel = {"port": srv.server_address[1], "word": "otter"}
+        req = call(7)
+        req["params"]["_meta"] = {"progressToken": "tok"}
+        ad._forward_worker(None, sel, req)
+        time.sleep(0.3)   # a stopped heartbeat must stay silent
+        progress = [o for o in out if o.get("method") == "notifications/progress"]
+        assert len(progress) >= 3, out
+        assert all(o["params"]["progressToken"] == "tok" for o in progress)
+        steps = [o["params"]["progress"] for o in progress]
+        assert steps == sorted(set(steps)), "progress must increase"
+        assert out[-1].get("id") == 7 and "result" in out[-1], "reply comes last"
+
+        # Without a progressToken the client can't receive progress: send none.
+        out.clear()
+        ad._forward_worker(None, sel, call(8))
+        assert [o.get("id") for o in out] == [8], out
+        print("PASS progress heartbeat while a routed call is open")
+    finally:
+        restore()
+        ad.PROGRESS_INTERVAL = saved_interval
+        srv.shutdown()
+
+
 def main():
     reg = tempfile.mkdtemp(prefix="mcprepl-adapter-test-")
     try:
@@ -596,6 +648,7 @@ def main():
         test_spawn_kill(ad, reg)
         test_autokill_and_reap(ad, reg)
         test_cancellation(reg)
+        test_progress_heartbeat(ad)
         print("\nALL ADAPTER ROUTING TESTS PASSED")
         return 0
     finally:

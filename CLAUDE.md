@@ -23,7 +23,7 @@ The server provides:
 julia --project -e "using Pkg; Pkg.test()"
 ```
 
-### Manual Testing  
+### Manual Testing
 Start Julia REPL in project directory:
 ```bash
 julia --project
@@ -141,6 +141,14 @@ transport.
   `interrupt` lands while `exec_repl` is mid-eval. On shutdown `drain_workers`
   lets in-flight replies finish (bounded). Interrupts only land at Julia safepoints
   (e.g. allocations, `sleep`, I/O); a truly tight loop with no safepoint may not.
+
+### Long-running calls
+- The adapter waits on a forwarded call without any timeout of its own. While the
+  call is open, `_progress_heartbeat` sends `notifications/progress` every
+  `PROGRESS_INTERVAL` (60 s) using the request's `progressToken`. That keeps the
+  client's idle timeout from firing (Claude Code: 30 min for silent stdio calls).
+- Claude Code moves MCP calls still running after 2 min into the background and
+  reports the result as a task notification, so a long eval doesn't block the agent.
 
 ### Tool Capabilities
 

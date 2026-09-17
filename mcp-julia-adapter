@@ -87,6 +87,11 @@ _WORKERS = set()             # live forward-worker threads, for graceful drain
 _WORKERS_GUARD = threading.Lock()
 DRAIN_TIMEOUT = 10.0         # seconds to let in-flight replies finish on shutdown
 
+# A long eval sends nothing until it finishes, and the client aborts a call that
+# stays silent for too long (Claude Code: 30 min for stdio servers). While a
+# routed call is open we therefore emit a progress notification every so often.
+PROGRESS_INTERVAL = 60.0     # seconds between progress heartbeats
+
 # Server-level teaser returned from `initialize`, so an agent knows when to reach
 # for the Julia REPL even before any REPL exists.
 ADAPTER_INSTRUCTIONS = (
@@ -257,8 +262,12 @@ def dir_rank(project_dir, cwd):
 
 # --- Talking to a REPL -------------------------------------------------------
 
-def post_to_repl(port, request, timeout=600):
-    """Forward a JSON-RPC request to a REPL's HTTP server; return parsed reply."""
+def post_to_repl(port, request, timeout=None):
+    """Forward a JSON-RPC request to a REPL's HTTP server; return parsed reply.
+
+    With the default `timeout=None` we wait as long as the eval runs; the client
+    decides when a call has taken too long and can cancel it.
+    """
     data = json.dumps(request).encode("utf-8")
     req = urllib.request.Request(
         "http://127.0.0.1:%d" % port,
@@ -911,9 +920,32 @@ def drain_workers(timeout=DRAIN_TIMEOUT):
         t.join(timeout=remaining)
 
 
+def _progress_heartbeat(request, stop):
+    """Emit `notifications/progress` for `request` until `stop` is set.
+
+    Only possible when the client sent a `progressToken` with the call.
+    """
+    meta = (request.get("params") or {}).get("_meta") or {}
+    token = meta.get("progressToken")
+    if token is None:
+        return
+    start = time.time()
+    beats = 0
+    while not stop.wait(PROGRESS_INTERVAL):
+        beats += 1
+        emit({"jsonrpc": "2.0", "method": "notifications/progress",
+              "params": {"progressToken": token, "progress": beats,
+                         "message": "still running (%ds)" % (time.time() - start)}})
+
+
 def _forward_worker(router, selection, request):
     request_id = request.get("id")
     port = selection["port"]
+    # Heartbeats start before we take the port lock, since waiting behind another
+    # eval is just as silent as running one.
+    stop_heartbeat = threading.Event()
+    threading.Thread(target=_progress_heartbeat, args=(request, stop_heartbeat),
+                     daemon=True).start()
     # Serialize evals per REPL: one backend task + one global stdout redirect on
     # the Julia side means two concurrent execute_repllike calls would corrupt
     # each other's captured output. A cancellation still reaches the reader thread
@@ -921,6 +953,7 @@ def _forward_worker(router, selection, request):
     with _port_lock(port):
         try:
             reply = post_to_repl(port, request)
+            stop_heartbeat.set()     # no progress after the final reply
             if reply is not None:
                 emit(reply)
         except urllib.error.URLError:
@@ -933,6 +966,7 @@ def _forward_worker(router, selection, request):
         except Exception as e:
             emit(error_result(request_id, "Internal error: %s" % e))
         finally:
+            stop_heartbeat.set()
             with _INFLIGHT_LOCK:
                 _INFLIGHT.pop(request_id, None)
             with _WORKERS_GUARD:

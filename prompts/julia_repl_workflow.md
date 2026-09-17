@@ -94,6 +94,17 @@ The one exception is a **private REPL you spawned yourself**, which you may mana
   - ❌ Don't add `println("Starting…")` / `@info "Checking…"` to update the user —
     report findings in chat instead.
 
+## Long-running calls
+
+An `exec_repl` call stays open until the code finishes, however long that takes;
+the adapter keeps the call alive with progress notifications. Some clients (e.g.
+Claude Code) move a long call into the background and deliver its result as a
+notification when it completes. Just wait for that result. Don't watch the tmux
+session or poll the REPL to find out whether it's done.
+
+Calls to the same REPL run one at a time. If you send another `exec_repl` while
+one is still running, it waits for the first to finish.
+
 ## Revise.jl integration
 
 - Edits to functions in a package's `src/` (or `ext/`) are picked up automatically.
