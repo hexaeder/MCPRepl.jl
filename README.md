@@ -9,7 +9,10 @@ The code the Agent sends will show up in the REPL as well as your own commands. 
 Ideally, this enables the Agent to, for example, execute and fix testsets interactively one by one, circumventing any time-to-first-plot issues.
 
 > [!TIP]
-> I am not sure how much work I'll put in this package in the future, check out @kahliburke's much more active [fork](https://github.com/kahliburke/MCPRepl.jl).
+> @kahliburke's fork has since grown into [Kaimon.jl](https://github.com/kahliburke/Kaimon.jl), a far more
+> capable (but also more complex) take on the same idea. Check it out if you want more than a shared REPL.
+>
+> MCPRepl.jl itself stays small. I use it daily and keep it maintained, but there are no plans to register it.
 
 ## Showcase
 
@@ -17,35 +20,54 @@ https://github.com/user-attachments/assets/1c7546c4-23a3-4528-b222-fc8635af810d
 
 ## Installation
 
-This package is not registered in the official Julia General registry due to the security implications of its use. To install it, you must do so directly from the source repository.
-
-You can add the package using the Julia package manager:
+This package is not registered in the General registry, and there are no plans to change that.
+Add it straight from GitHub to your global environment, so it is available in every project:
 
 ```julia
 pkg> add https://github.com/hexaeder/MCPRepl.jl
 ```
-or
-```julia
-pkg> dev https://github.com/hexaeder/MCPRepl.jl
-```
+
+Since it is not registered, `Pkg` won't tell you about new versions. Run `pkg> update MCPRepl`
+every now and then to pick up fixes.
 
 ## Usage
-Within Julia, call
-``` julia-repl
-julia> using MCPRepl; MCPRepl.start!()
-```
-to make the REPL discoverable by the adapter.
 
-The MCP server your client connects to is the bundled `mcp-julia-adapter` (a small
-stdio script). It discovers running REPLs, routes calls to the right one, and can
-even spawn private REPLs for an agent when none is running. Register it once with
-Claude Code:
+### 1. Start the server from your `startup.jl`
+
+Every REPL that should be reachable by an agent needs to call `MCPRepl.start!()`. The easiest
+way is to do it in `~/.julia/config/startup.jl`:
+
+```julia
+if Base.isinteractive()
+    try
+        import MCPRepl
+        MCPRepl.start!()
+    catch e
+        println("Failed to start MCPRepl: $e")
+    end
+end
+```
+
+The code the agent sends shows up in your REPL next to your own commands.
+
+### 2. Install the adapter in your coding agent (once)
+
+Your coding agent does not talk to the REPL directly. It launches the bundled
+`mcp-julia-adapter` (a small stdio MCP server), which finds the running REPLs and routes
+calls to them. Register it once by calling
+
+```julia
+julia> import MCPRepl; MCPRepl.setup()
+```
+
+This is an interactive helper that configures Claude Code, Gemini or Codex (pick the scope in
+the menu). For Claude Code you can also do it by hand:
 ```sh
 claude mcp add julia-repl /path/to/MCPRepl/mcp-julia-adapter
 ```
 
-The easiest way is `MCPRepl.setup()`, an interactive helper that configures Claude
-Code / Gemini / Codex with the adapter (choose the scope in the menu).
+That's it. If no REPL is running at all, the agent can also spawn its own private REPL in a
+`tmux` session (see [Private REPLs](#private-agent-spawned-repls)).
 
 ### Codex
 
