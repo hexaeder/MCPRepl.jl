@@ -388,8 +388,8 @@ def inject_adapter_tools(reply):
     """Finalize a forwarded tools/list result: advertise the `repl` routing arg on
     the REPL-bound tools, and append the adapter-local tools.
 
-    The Julia REPLs expose only exec_repl / investigate_environment /
-    remove-trailing-whitespace; each of those is routed by this adapter, so we add
+    The Julia REPLs expose only exec_repl / investigate_environment; each of
+    those is routed by this adapter, so we add
     the optional `repl` argument to its schema. Every adapter-owned tool
     (usage_instructions, list_repls, spawn_repl, kill_repl) is added here so it is
     advertised even when no REPL is running.

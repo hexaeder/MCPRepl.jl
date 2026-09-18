@@ -253,12 +253,12 @@ def test_route_arg_schema(ad):
     reply = {"jsonrpc": "2.0", "id": 1, "result": {"tools": [
         {"name": "exec_repl", "inputSchema": {"type": "object",
             "properties": {"expression": {"type": "string"}}}},
-        {"name": "remove-trailing-whitespace", "inputSchema": {"type": "object",
-            "properties": {"file_path": {"type": "string"}}}},
+        {"name": "investigate_environment", "inputSchema": {"type": "object",
+            "properties": {}}},
     ]}}
     out = ad.inject_adapter_tools(reply)
     tools = {t["name"]: t for t in out["result"]["tools"]}
-    for name in ("exec_repl", "remove-trailing-whitespace"):
+    for name in ("exec_repl", "investigate_environment"):
         props = tools[name]["inputSchema"]["properties"]
         assert "repl" in props and props["repl"]["type"] == "string", name
         # optional: NOT added to required (single-REPL fast path needs no arg)

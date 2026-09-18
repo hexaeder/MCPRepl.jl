@@ -14,7 +14,7 @@ This project provides an MCP server that bridges Claude Code to a running Julia 
 
 The server provides:
 - `exec_repl` tool for remote execution of Julia expressions while preserving REPL state
-- `remove-trailing-whitespace` tool for cleaning up trailing whitespace in files after edits
+- `investigate_environment` tool for inspecting the active project/packages
 
 ## Development Commands
 
@@ -158,14 +158,6 @@ transport.
 - Maintains REPL state between calls
 - Supports Revise.jl for hot reloading of source changes
 - Respects semicolon suppression for output
-
-#### `remove-trailing-whitespace` tool:
-- Removes trailing whitespace from all lines in a file
-- Should be called after AI agents edit files to clean up any trailing spaces
-- For single file edits: Call immediately after editing
-- For multiple file edits: Call once on each modified file at the very end, before handing back to the user
-- Uses `sed` to efficiently remove whitespace similar to Emacs `delete-trailing-whitespace`
-- Handles all types of trailing whitespace (spaces, tabs, mixed)
 
 
 ## Important Constraints
