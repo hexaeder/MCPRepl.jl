@@ -477,7 +477,20 @@ def test_spawn_kill(ad, reg):
         os.remove(toml)
         new = [c for c in calls if c and c[0] == "new-session"]
         assert new and new[0][new[0].index("-c") + 1] == real, new[0]
-        print("PASS spawn_repl / kill_repl (tracked, private-only kill, cwd)")
+
+        # julia_args land right after the binary, where juliaup wants `+channel`.
+        calls.clear()
+        out, restore = _capture(ad)
+        try:
+            ad._handle_spawn_repl(ad.Router(), {
+                "id": 7, "params": {"name": "spawn_repl",
+                                    "arguments": {"project": reg,
+                                                  "julia_args": ["+1.11", "-t", "4"]}}})
+        finally:
+            restore()
+        new = [c for c in calls if c and c[0] == "new-session"]
+        assert new and " julia +1.11 -t 4 --startup-file=no " in " ".join(new[0]), new[0]
+        print("PASS spawn_repl / kill_repl (tracked, private-only kill, cwd, julia_args)")
     finally:
         (ad.run_tmux, ad.shutil.which, ad.SPAWN_TIMEOUT, ad.SPAWN_POLL) = saved
         ad.SPAWNED_SESSIONS.clear()

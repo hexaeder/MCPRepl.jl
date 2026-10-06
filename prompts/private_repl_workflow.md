@@ -35,6 +35,8 @@ discover**: `list_repls` shows the private REPLs *you* spawned, tagged
    to work in the main env, or `test/` to get the test env — that env's deps (test-
    only packages included) are then available, and the REPL's `pwd()` is that
    directory, so relative paths resolve the way `Pkg.test` would run them.
+   Extra julia flags go in `julia_args`, e.g. `["--threads=4"]`, or `["+1.11"]`
+   to pick a juliaup channel.
 2. **Route to it:** pass that word-id as the `repl` argument on **every**
    `exec_repl` call. A private REPL is out of the default pool, so a call without
    `repl=` will **not** reach it — it routes to a shared REPL instead (or errors).

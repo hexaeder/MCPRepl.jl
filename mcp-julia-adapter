@@ -338,6 +338,11 @@ ADAPTER_TOOLS = [
                                      "also starts with that directory as its pwd."},
                          "julia": {"type": "string",
                                    "description": "julia binary to use (default 'julia')."},
+                         "julia_args": {"type": "array", "items": {"type": "string"},
+                                        "description": "Extra command line arguments "
+                                        "for julia, placed right after the binary. "
+                                        "E.g. ['--threads=4'] for threads, or "
+                                        "['+1.11'] to pick a juliaup channel."},
                          "persist": {"type": "boolean",
                                      "description": "Keep the REPL alive after this "
                                      "session exits (default false)."}},
@@ -625,6 +630,9 @@ def _handle_spawn_repl(router, request):
     args = request.get("params", {}).get("arguments", {}) or {}
     project = args.get("project", "")
     julia = args.get("julia") or "julia"
+    julia_args = args.get("julia_args") or []
+    if isinstance(julia_args, str):
+        julia_args = shlex.split(julia_args)
     persist = bool(args.get("persist", False))
 
     if not project:
@@ -663,7 +671,8 @@ def _handle_spawn_repl(router, request):
     # `--startup-file=no`: don't run the user's startup.jl, which commonly calls a
     # (non-private) MCPRepl.start!() and would race/clobber our private one. We
     # control this REPL fully; load Revise best-effort so hot-reload still works.
-    julia_argv = [julia, "--startup-file=no", "--project=" + proj_path, "-i", "-e",
+    # User args go first, since juliaup wants `+channel` right after the binary.
+    julia_argv = [julia, *map(str, julia_args), "--startup-file=no", "--project=" + proj_path, "-i", "-e",
                   "try; using Revise; catch; end; "
                   "using MCPRepl; MCPRepl.start!(private=true)"]
     command = "env " + " ".join(

@@ -132,6 +132,8 @@ the adapter's `spawn_repl` tool: a real interactive Julia session in a detached
 `tmux` session (so you can `tmux attach` to watch or take over). It is hidden from
 the shared pool, reachable only by its word-id, and auto-killed when the client
 session ends (`persist: true` opts out). Kill it explicitly with `kill_repl`.
+Extra julia command line flags can be passed as `julia_args`, e.g.
+`["+1.11", "--threads=4"]` for a juliaup channel with four threads.
 
 ### Cancelling a running eval
 
